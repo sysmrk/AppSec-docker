@@ -1,0 +1,13 @@
+.git
+**/__pycache__
+*.pyc
+.env
+postgres-data
+registry-data
+buildkit-data
+appsec_reports
+appsec_workspaces
+harbor/data
+harbor/logs
+harbor/runtime
+harbor/**/*.tgz

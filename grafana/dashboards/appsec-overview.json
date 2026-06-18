@@ -1,0 +1,281 @@
+{
+  "uid": "appsec-overview",
+  "title": "AppSec Image Security Overview",
+  "tags": ["appsec", "trivy", "copa", "harbor"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": {
+    "from": "now-30d",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "image",
+        "type": "query",
+        "label": "Image",
+        "datasource": { "type": "postgres", "uid": "appsec-postgres" },
+        "query": "SELECT DISTINCT requested_image FROM pipeline_runs ORDER BY 1",
+        "refresh": 1,
+        "includeAll": true,
+        "allValue": "All",
+        "multi": false
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Pipeline Runs",
+      "gridPos": { "x": 0, "y": 0, "w": 4, "h": 4 },
+      "datasource": { "type": "postgres", "uid": "appsec-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT count(*)::bigint AS value FROM pipeline_runs WHERE $__timeFilter(started_at) AND ('$image' = 'All' OR requested_image = '$image')"
+        }
+      ],
+      "options": { "reduceOptions": { "values": false, "calcs": ["lastNotNull"], "fields": "" } }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Original Vulnerabilities",
+      "gridPos": { "x": 4, "y": 0, "w": 5, "h": 4 },
+      "datasource": { "type": "postgres", "uid": "appsec-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT COALESCE(sum(sr.critical_count + sr.high_count + sr.medium_count + sr.low_count + sr.unknown_count), 0)::bigint AS value FROM scan_runs sr JOIN pipeline_runs pr ON pr.id = sr.pipeline_id WHERE sr.phase = 'original' AND sr.status = 'success' AND $__timeFilter(sr.started_at) AND ('$image' = 'All' OR pr.requested_image = '$image')"
+        }
+      ],
+      "options": { "reduceOptions": { "values": false, "calcs": ["lastNotNull"], "fields": "" } }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Fixed By Copa",
+      "gridPos": { "x": 9, "y": 0, "w": 5, "h": 4 },
+      "datasource": { "type": "postgres", "uid": "appsec-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT COALESCE(sum(sd.fixed_count), 0)::bigint AS value FROM scan_diffs sd JOIN pipeline_runs pr ON pr.id = sd.pipeline_id WHERE $__timeFilter(sd.created_at) AND ('$image' = 'All' OR pr.requested_image = '$image')"
+        }
+      ],
+      "options": { "reduceOptions": { "values": false, "calcs": ["lastNotNull"], "fields": "" } }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Remaining After Patch",
+      "gridPos": { "x": 14, "y": 0, "w": 5, "h": 4 },
+      "datasource": { "type": "postgres", "uid": "appsec-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT COALESCE(sum(sd.remaining_count), 0)::bigint AS value FROM scan_diffs sd JOIN pipeline_runs pr ON pr.id = sd.pipeline_id WHERE $__timeFilter(sd.created_at) AND ('$image' = 'All' OR pr.requested_image = '$image')"
+        }
+      ],
+      "options": { "reduceOptions": { "values": false, "calcs": ["lastNotNull"], "fields": "" } }
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Introduced After Patch",
+      "gridPos": { "x": 19, "y": 0, "w": 5, "h": 4 },
+      "datasource": { "type": "postgres", "uid": "appsec-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT COALESCE(sum(sd.introduced_count), 0)::bigint AS value FROM scan_diffs sd JOIN pipeline_runs pr ON pr.id = sd.pipeline_id WHERE $__timeFilter(sd.created_at) AND ('$image' = 'All' OR pr.requested_image = '$image')"
+        }
+      ],
+      "options": { "reduceOptions": { "values": false, "calcs": ["lastNotNull"], "fields": "" } }
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Pipeline Status Over Time",
+      "gridPos": { "x": 0, "y": 4, "w": 12, "h": 8 },
+      "datasource": { "type": "postgres", "uid": "appsec-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "rawSql": "SELECT $__timeGroupAlias(started_at, '1d'), status AS metric, count(*)::bigint AS value FROM pipeline_runs WHERE $__timeFilter(started_at) AND ('$image' = 'All' OR requested_image = '$image') GROUP BY 1, 2 ORDER BY 1"
+        }
+      ],
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
+    },
+    {
+      "id": 7,
+      "type": "barchart",
+      "title": "Vulnerabilities By Severity And Phase",
+      "gridPos": { "x": 12, "y": 4, "w": 12, "h": 8 },
+      "datasource": { "type": "postgres", "uid": "appsec-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT sr.phase AS \"Phase\", COALESCE(sum(sr.critical_count),0)::bigint AS \"Critical\", COALESCE(sum(sr.high_count),0)::bigint AS \"High\", COALESCE(sum(sr.medium_count),0)::bigint AS \"Medium\", COALESCE(sum(sr.low_count),0)::bigint AS \"Low\", COALESCE(sum(sr.unknown_count),0)::bigint AS \"Unknown\" FROM scan_runs sr LEFT JOIN pipeline_runs pr ON pr.id = sr.pipeline_id WHERE sr.status = 'success' AND $__timeFilter(sr.started_at) AND ('$image' = 'All' OR pr.requested_image = '$image') GROUP BY sr.phase ORDER BY sr.phase"
+        }
+      ],
+      "options": {
+        "xField": "Phase",
+        "orientation": "auto",
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      }
+    },
+    {
+      "id": 8,
+      "type": "table",
+      "title": "Image Pipeline Details",
+      "gridPos": { "x": 0, "y": 12, "w": 24, "h": 9 },
+      "datasource": { "type": "postgres", "uid": "appsec-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "WITH original_scan AS (SELECT DISTINCT ON (pipeline_id) * FROM scan_runs WHERE phase = 'original' ORDER BY pipeline_id, started_at DESC), patched_scan AS (SELECT DISTINCT ON (pipeline_id) * FROM scan_runs WHERE phase = 'patched' ORDER BY pipeline_id, started_at DESC), latest_patch AS (SELECT DISTINCT ON (pipeline_id) * FROM patch_runs ORDER BY pipeline_id, started_at DESC), latest_diff AS (SELECT DISTINCT ON (pipeline_id) * FROM scan_diffs ORDER BY pipeline_id, created_at DESC) SELECT pr.started_at AS \"Started\", pr.requested_image AS \"Image\", CASE WHEN pr.requested_image ~ ':[^/]+$' THEN regexp_replace(pr.requested_image, '^.*:', '') ELSE 'latest' END AS \"Version\", pr.status AS \"Pipeline Status\", COALESCE(os.critical_count,0) AS \"Original Critical\", COALESCE(os.high_count,0) AS \"Original High\", COALESCE(os.medium_count,0) AS \"Original Medium\", COALESCE(os.low_count,0) AS \"Original Low\", COALESCE(ps.critical_count + ps.high_count + ps.medium_count + ps.low_count + ps.unknown_count,0) AS \"Patched Total\", COALESCE(ld.fixed_count,0) AS \"Fixed\", COALESCE(ld.remaining_count,0) AS \"Remaining\", COALESCE(ld.introduced_count,0) AS \"Introduced\", lp.status AS \"Copa Status\", lp.patched_image_ref AS \"Patched Image\" FROM pipeline_runs pr LEFT JOIN original_scan os ON os.pipeline_id = pr.id LEFT JOIN patched_scan ps ON ps.pipeline_id = pr.id LEFT JOIN latest_patch lp ON lp.pipeline_id = pr.id LEFT JOIN latest_diff ld ON ld.pipeline_id = pr.id WHERE $__timeFilter(pr.started_at) AND ('$image' = 'All' OR pr.requested_image = '$image') ORDER BY pr.started_at DESC LIMIT 100"
+        }
+      ],
+      "options": { "showHeader": true }
+    },
+    {
+      "id": 9,
+      "type": "barchart",
+      "title": "Copa Fix Result",
+      "gridPos": { "x": 0, "y": 21, "w": 12, "h": 8 },
+      "datasource": { "type": "postgres", "uid": "appsec-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT pr.requested_image AS \"Image\", COALESCE(sum(sd.fixed_count),0)::bigint AS \"Fixed\", COALESCE(sum(sd.remaining_count),0)::bigint AS \"Remaining\", COALESCE(sum(sd.introduced_count),0)::bigint AS \"Introduced\" FROM scan_diffs sd JOIN pipeline_runs pr ON pr.id = sd.pipeline_id WHERE $__timeFilter(sd.created_at) AND ('$image' = 'All' OR pr.requested_image = '$image') GROUP BY pr.requested_image ORDER BY \"Fixed\" DESC LIMIT 20"
+        }
+      ],
+      "options": {
+        "xField": "Image",
+        "orientation": "horizontal",
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      }
+    },
+    {
+      "id": 10,
+      "type": "piechart",
+      "title": "Patch Status",
+      "gridPos": { "x": 12, "y": 21, "w": 6, "h": 8 },
+      "datasource": { "type": "postgres", "uid": "appsec-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT pa.status AS metric, count(*)::bigint AS value FROM patch_runs pa JOIN pipeline_runs pr ON pr.id = pa.pipeline_id WHERE $__timeFilter(pa.started_at) AND ('$image' = 'All' OR pr.requested_image = '$image') GROUP BY pa.status ORDER BY value DESC"
+        }
+      ],
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
+    },
+    {
+      "id": 11,
+      "type": "piechart",
+      "title": "Policy Status",
+      "gridPos": { "x": 18, "y": 21, "w": 6, "h": 8 },
+      "datasource": { "type": "postgres", "uid": "appsec-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT pol.status AS metric, count(*)::bigint AS value FROM policy_results pol JOIN pipeline_runs pr ON pr.id = pol.pipeline_id WHERE $__timeFilter(pol.created_at) AND ('$image' = 'All' OR pr.requested_image = '$image') GROUP BY pol.status ORDER BY value DESC"
+        }
+      ],
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
+    },
+    {
+      "id": 12,
+      "type": "table",
+      "title": "Vulnerability Details",
+      "gridPos": { "x": 0, "y": 29, "w": 24, "h": 9 },
+      "datasource": { "type": "postgres", "uid": "appsec-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT sr.started_at AS \"Scan Time\", sr.phase AS \"Phase\", sr.image_ref AS \"Scanned Image\", CASE WHEN sr.image_ref ~ ':[^/]+$' THEN regexp_replace(sr.image_ref, '^.*:', '') ELSE 'latest' END AS \"Version\", v.severity AS \"Severity\", v.vulnerability_id AS \"Vulnerability\", v.pkg_name AS \"Package\", v.installed_version AS \"Installed\", v.fixed_version AS \"Fixed Version\", v.title AS \"Title\", v.primary_url AS \"URL\" FROM vulnerabilities v JOIN scan_runs sr ON sr.id = v.scan_id LEFT JOIN pipeline_runs pr ON pr.id = sr.pipeline_id WHERE $__timeFilter(sr.started_at) AND ('$image' = 'All' OR pr.requested_image = '$image') ORDER BY CASE v.severity WHEN 'CRITICAL' THEN 1 WHEN 'HIGH' THEN 2 WHEN 'MEDIUM' THEN 3 WHEN 'LOW' THEN 4 ELSE 5 END, sr.started_at DESC LIMIT 500"
+        }
+      ],
+      "options": { "showHeader": true }
+    },
+    {
+      "id": 13,
+      "type": "table",
+      "title": "Top Vulnerable Packages",
+      "gridPos": { "x": 0, "y": 38, "w": 12, "h": 8 },
+      "datasource": { "type": "postgres", "uid": "appsec-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT v.pkg_name AS \"Package\", v.severity AS \"Severity\", count(*)::bigint AS \"Findings\", max(v.fixed_version) AS \"Latest Fixed Version\" FROM vulnerabilities v JOIN scan_runs sr ON sr.id = v.scan_id LEFT JOIN pipeline_runs pr ON pr.id = sr.pipeline_id WHERE $__timeFilter(sr.started_at) AND ('$image' = 'All' OR pr.requested_image = '$image') GROUP BY v.pkg_name, v.severity ORDER BY \"Findings\" DESC LIMIT 50"
+        }
+      ],
+      "options": { "showHeader": true }
+    },
+    {
+      "id": 14,
+      "type": "table",
+      "title": "Patch Runs",
+      "gridPos": { "x": 12, "y": 38, "w": 12, "h": 8 },
+      "datasource": { "type": "postgres", "uid": "appsec-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT pa.started_at AS \"Started\", pa.finished_at AS \"Finished\", pr.requested_image AS \"Source Image\", pa.source_image_ref AS \"Copa Source\", pa.patched_image_ref AS \"Patched Image\", pa.status AS \"Status\", pa.error_message AS \"Error\" FROM patch_runs pa JOIN pipeline_runs pr ON pr.id = pa.pipeline_id WHERE $__timeFilter(pa.started_at) AND ('$image' = 'All' OR pr.requested_image = '$image') ORDER BY pa.started_at DESC LIMIT 100"
+        }
+      ],
+      "options": { "showHeader": true }
+    },
+    {
+      "id": 15,
+      "type": "table",
+      "title": "Consolidated Downloadable Reports",
+      "gridPos": { "x": 0, "y": 46, "w": 24, "h": 9 },
+      "datasource": { "type": "postgres", "uid": "appsec-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "WITH latest_reports AS (SELECT DISTINCT ON (gr.resource_id) gr.id, gr.resource_id, gr.created_at FROM generated_reports gr JOIN pipeline_runs pr_filter ON pr_filter.id::text = gr.resource_id WHERE gr.resource_type = 'pipeline' AND gr.format = 'html' AND pr_filter.status IN ('success','policy_failed','failed') ORDER BY gr.resource_id, gr.created_at DESC), original_scan AS (SELECT DISTINCT ON (pipeline_id) * FROM scan_runs WHERE phase = 'original' ORDER BY pipeline_id, started_at DESC), patched_scan AS (SELECT DISTINCT ON (pipeline_id) * FROM scan_runs WHERE phase = 'patched' ORDER BY pipeline_id, started_at DESC), latest_diff AS (SELECT DISTINCT ON (pipeline_id) * FROM scan_diffs ORDER BY pipeline_id, created_at DESC) SELECT lr.created_at AS \"Created\", pr.requested_image AS \"Image\", CASE WHEN pr.requested_image ~ ':[^/]+$' THEN regexp_replace(pr.requested_image, '^.*:', '') ELSE 'latest' END AS \"Version\", pr.status AS \"Pipeline Status\", COALESCE(os.critical_count + os.high_count + os.medium_count + os.low_count + os.unknown_count, 0) AS \"Original Total\", COALESCE(ps.critical_count + ps.high_count + ps.medium_count + ps.low_count + ps.unknown_count, 0) AS \"Patched Total\", COALESCE(ld.fixed_count,0) AS \"Fixed\", COALESCE(ld.remaining_count,0) AS \"Remaining\", COALESCE(ld.introduced_count,0) AS \"Introduced\", '/appsec-api/api/reports/' || lr.id || '/download' AS \"Download\" FROM latest_reports lr JOIN pipeline_runs pr ON pr.id::text = lr.resource_id LEFT JOIN original_scan os ON os.pipeline_id = pr.id LEFT JOIN patched_scan ps ON ps.pipeline_id = pr.id LEFT JOIN latest_diff ld ON ld.pipeline_id = pr.id WHERE $__timeFilter(lr.created_at) AND ('$image' = 'All' OR pr.requested_image = '$image') ORDER BY lr.created_at DESC LIMIT 100"
+        }
+      ],
+      "fieldConfig": {
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Download" },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Download",
+                    "url": "${__value.raw}"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "options": { "showHeader": true }
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+.env
+data/
+*.pyc
+__pycache__/
+.pytest_cache/
+postgres-data/
+registry-data/
+buildkit-data/
+appsec_reports/
+appsec_workspaces/
+harbor/data/
+harbor/logs/
+harbor/runtime/
+harbor/**/*.tgz

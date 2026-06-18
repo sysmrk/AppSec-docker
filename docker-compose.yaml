@@ -1,0 +1,433 @@
+version: "2.4"
+
+x-runner-build: &runner-build
+  context: .
+  dockerfile: runner/Dockerfile
+  args:
+    COPA_VERSION: ${COPA_VERSION:-0.14.1}
+
+x-runner-env: &runner-env
+  DATABASE_URL: postgresql://${POSTGRES_USER:-appsec}:${POSTGRES_PASSWORD:-appsec-change-me}@postgres:5432/${POSTGRES_DB:-appsec}
+  POSTGRES_HOST: postgres
+  POSTGRES_PORT: "5432"
+  POSTGRES_DB: ${POSTGRES_DB:-appsec}
+  POSTGRES_USER: ${POSTGRES_USER:-appsec}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-appsec-change-me}
+  POSTGRES_PASSWORD_FILE: ${POSTGRES_PASSWORD_FILE:-}
+  TRIVY_IMAGE: ${TRIVY_IMAGE:-aquasec/trivy:latest}
+  TRIVY_DB_REPOSITORY: ${TRIVY_DB_REPOSITORY:-ghcr.io/aquasecurity/trivy-db:2}
+  BUILDKIT_CONTAINER: ${BUILDKIT_CONTAINER:-appsec-buildkit}
+  COPA_TIMEOUT: ${COPA_TIMEOUT:-30m}
+  REGISTRY_HOST: ${REGISTRY_HOST:-localhost:8081}
+  PATCHED_REPOSITORY: ${PATCHED_REPOSITORY:-library/appsec-patched}
+  REPORTS_DIR: /reports
+  REPORTS_VOLUME: ${REPORTS_VOLUME:-appsec_reports}
+  TRIVY_CACHE_VOLUME: ${TRIVY_CACHE_VOLUME:-appsec_trivy_cache}
+  WORKSPACES_VOLUME: ${WORKSPACES_VOLUME:-appsec_workspaces}
+  TOOL_NETWORK: ${TOOL_NETWORK:-appsec-net}
+  WORKSPACES_DIR: /workspaces
+  GITLEAKS_IMAGE: ${GITLEAKS_IMAGE:-zricethezav/gitleaks:latest}
+  APPSEC_ADMIN_API_KEY: ${APPSEC_ADMIN_API_KEY:-appsec-dev-key}
+  APPSEC_ADMIN_API_KEY_FILE: ${APPSEC_ADMIN_API_KEY_FILE:-}
+  APPSEC_ADMIN_PASSWORD: ${APPSEC_ADMIN_PASSWORD:-appsec-admin}
+  APPSEC_ADMIN_PASSWORD_FILE: ${APPSEC_ADMIN_PASSWORD_FILE:-}
+  RETENTION_DAYS: ${RETENTION_DAYS:-30}
+  CI_MAX_HIGH: ${CI_MAX_HIGH:-0}
+  NOTIFY_WEBHOOK_URL: ${NOTIFY_WEBHOOK_URL:-}
+  NOTIFY_TIMEOUT_SECONDS: ${NOTIFY_TIMEOUT_SECONDS:-5}
+  ARTIFACT_STORAGE: ${ARTIFACT_STORAGE:-s3}
+  S3_ENDPOINT_URL: ${S3_ENDPOINT_URL:-http://minio:9000}
+  S3_PUBLIC_ENDPOINT_URL: ${S3_PUBLIC_ENDPOINT_URL:-http://127.0.0.1:9000}
+  S3_REGION: ${S3_REGION:-us-east-1}
+  S3_BUCKET: ${S3_BUCKET:-appsec-artifacts}
+  S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-appsec-minio}
+  S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-appsec-minio-secret}
+  S3_ACCESS_KEY_ID_FILE: ${S3_ACCESS_KEY_ID_FILE:-}
+  S3_SECRET_ACCESS_KEY_FILE: ${S3_SECRET_ACCESS_KEY_FILE:-}
+  POLICY_MAX_CRITICAL: ${POLICY_MAX_CRITICAL:-0}
+  POLICY_MAX_HIGH: ${POLICY_MAX_HIGH:-0}
+  POLICY_MAX_MEDIUM: ${POLICY_MAX_MEDIUM:-999999}
+  POLICY_MAX_LOW: ${POLICY_MAX_LOW:-999999}
+  APPSEC_API_EXTERNAL_PREFIX: ${APPSEC_API_EXTERNAL_PREFIX:-/appsec-api}
+  DOWNLOADS_REQUIRE_AUTH: ${DOWNLOADS_REQUIRE_AUTH:-false}
+
+x-runner-volumes: &runner-volumes
+  - /var/run/docker.sock:/var/run/docker.sock
+  - /usr/bin/docker:/usr/local/bin/docker:ro
+  - appsec_reports:/reports
+  - appsec_workspaces:/workspaces
+  - ./db:/db:ro
+
+x-api-volumes: &api-volumes
+  - appsec_reports:/reports
+  - ./db:/db:ro
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-appsec}
+      POSTGRES_USER: ${POSTGRES_USER:-appsec}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-appsec-change-me}
+      POSTGRES_PASSWORD_FILE: ${POSTGRES_PASSWORD_FILE:-}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks:
+      - appsec-net
+
+  buildkit:
+    image: moby/buildkit:latest
+    container_name: ${BUILDKIT_CONTAINER:-appsec-buildkit}
+    restart: unless-stopped
+    privileged: true
+    entrypoint: ["buildkitd"]
+    volumes:
+      - buildkit-data:/var/lib/buildkit
+    healthcheck:
+      test: ["CMD-SHELL", "buildctl --addr unix:///run/buildkit/buildkitd.sock debug workers >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - appsec-net
+
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    restart: unless-stopped
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-appsec-minio}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-appsec-minio-secret}
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail --silent http://127.0.0.1:9000/minio/health/live >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - appsec-net
+    profiles:
+      - storage
+      - platform
+
+  minio-init:
+    image: minio/mc:RELEASE.2025-04-16T18-13-26Z
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint:
+      - sh
+      - -lc
+      - >
+        mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}" &&
+        mc mb --ignore-existing local/${S3_BUCKET:-appsec-artifacts}
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-appsec-minio}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-appsec-minio-secret}
+    networks:
+      - appsec-net
+    profiles:
+      - storage
+      - platform
+
+  appsec-runner:
+    build: *runner-build
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment: *runner-env
+    volumes: *runner-volumes
+    networks:
+      - appsec-net
+    profiles:
+      - tools
+
+  api:
+    build: *runner-build
+    restart: unless-stopped
+    entrypoint: ["uvicorn", "appsecctl.api:app", "--host", "0.0.0.0", "--port", "8080"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment: *runner-env
+    volumes: *api-volumes
+    expose:
+      - "8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail --silent http://127.0.0.1:8080/health >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    networks:
+      - appsec-net
+    profiles:
+      - platform
+
+  grafana:
+    image: grafana/grafana-oss:11.6.1
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-appsec-grafana}
+      GF_USERS_DEFAULT_THEME: light
+      GF_AUTH_ANONYMOUS_ENABLED: ${GRAFANA_ANONYMOUS_ENABLED:-false}
+      GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL:-http://127.0.0.1:8080}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ${POSTGRES_DB:-appsec}
+      POSTGRES_USER: ${POSTGRES_USER:-appsec}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-appsec-change-me}
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    expose:
+      - "3000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider --quiet http://127.0.0.1:3000/api/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    networks:
+      - appsec-net
+    profiles:
+      - platform
+      - production
+
+  metabase-db-init:
+    image: postgres:16-alpine
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-appsec}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-appsec-change-me}
+      POSTGRES_DB: ${POSTGRES_DB:-appsec}
+      METABASE_DB_NAME: ${METABASE_DB_NAME:-metabase}
+    entrypoint:
+      - sh
+      - -lc
+      - >
+        export PGPASSWORD="$${POSTGRES_PASSWORD}" &&
+        psql -h postgres -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}" -tc
+        "SELECT 1 FROM pg_database WHERE datname = '$${METABASE_DB_NAME}'" | grep -q 1 ||
+        psql -h postgres -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}" -c
+        "CREATE DATABASE \"$${METABASE_DB_NAME}\""
+    networks:
+      - appsec-net
+    profiles:
+      - platform
+      - production
+
+  metabase:
+    image: ${METABASE_IMAGE:-metabase/metabase:v0.62.2.2}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      metabase-db-init:
+        condition: service_completed_successfully
+    environment:
+      MB_DB_TYPE: postgres
+      MB_DB_HOST: postgres
+      MB_DB_PORT: "5432"
+      MB_DB_DBNAME: ${METABASE_DB_NAME:-metabase}
+      MB_DB_USER: ${POSTGRES_USER:-appsec}
+      MB_DB_PASS: ${POSTGRES_PASSWORD:-appsec-change-me}
+      MB_SITE_NAME: ${METABASE_SITE_NAME:-AppSec Analytics}
+    ports:
+      - "127.0.0.1:3001:3000"
+    volumes:
+      - metabase-data:/metabase-data
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider --quiet http://127.0.0.1:3000/api/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 60s
+    networks:
+      - appsec-net
+    profiles:
+      - platform
+      - production
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    depends_on:
+      grafana:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider --quiet http://127.0.0.1:8080/api/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - appsec-net
+    profiles:
+      - platform
+      - production
+
+  worker:
+    build: *runner-build
+    restart: unless-stopped
+    entrypoint: ["python", "-m", "appsecctl.worker"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      buildkit:
+        condition: service_healthy
+    environment:
+      <<: *runner-env
+      WORKER_POLL_SECONDS: ${WORKER_POLL_SECONDS:-5}
+      WORKER_QUEUES: ${WORKER_QUEUES:-image,security}
+    volumes: *runner-volumes
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'from appsecctl import db; c=db.connect(); c.execute(\"select 1\").fetchone(); c.close()'"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks:
+      - appsec-net
+    profiles:
+      - platform
+
+  image-worker:
+    build: *runner-build
+    restart: unless-stopped
+    entrypoint: ["python", "-m", "appsecctl.worker"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      buildkit:
+        condition: service_healthy
+    environment:
+      <<: *runner-env
+      WORKER_POLL_SECONDS: ${WORKER_POLL_SECONDS:-5}
+      WORKER_QUEUES: image
+    volumes: *runner-volumes
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'from appsecctl import db; c=db.connect(); c.execute(\"select 1\").fetchone(); c.close()'"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks:
+      - appsec-net
+    profiles:
+      - production
+
+  security-worker:
+    build: *runner-build
+    restart: unless-stopped
+    entrypoint: ["python", "-m", "appsecctl.worker"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      <<: *runner-env
+      WORKER_POLL_SECONDS: ${WORKER_POLL_SECONDS:-5}
+      WORKER_QUEUES: security
+    volumes: *runner-volumes
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'from appsecctl import db; c=db.connect(); c.execute(\"select 1\").fetchone(); c.close()'"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks:
+      - appsec-net
+    profiles:
+      - production
+
+  scheduler:
+    build: *runner-build
+    restart: unless-stopped
+    entrypoint: ["python", "-m", "appsecctl.scheduler"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      <<: *runner-env
+      SCHEDULER_POLL_SECONDS: ${SCHEDULER_POLL_SECONDS:-60}
+    volumes: *runner-volumes
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'from appsecctl import db; c=db.connect(); c.execute(\"select 1\").fetchone(); c.close()'"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks:
+      - appsec-net
+    profiles:
+      - platform
+
+  trivy-db-updater:
+    image: docker:27-cli
+    restart: unless-stopped
+    command:
+      - sh
+      - -lc
+      - |
+        while true; do
+          docker run --rm \
+            -e TRIVY_DB_REPOSITORY="${TRIVY_DB_REPOSITORY:-ghcr.io/aquasecurity/trivy-db:2}" \
+            -v "${TRIVY_CACHE_VOLUME:-appsec_trivy_cache}:/root/.cache/trivy" \
+            "${TRIVY_IMAGE:-aquasec/trivy:latest}" image --download-db-only;
+          sleep "$${TRIVY_DB_UPDATE_INTERVAL_SECONDS:-21600}";
+        done
+    environment:
+      TRIVY_IMAGE: ${TRIVY_IMAGE:-aquasec/trivy:latest}
+      TRIVY_DB_REPOSITORY: ${TRIVY_DB_REPOSITORY:-ghcr.io/aquasecurity/trivy-db:2}
+      TRIVY_CACHE_VOLUME: ${TRIVY_CACHE_VOLUME:-appsec_trivy_cache}
+      TRIVY_DB_UPDATE_INTERVAL_SECONDS: ${TRIVY_DB_UPDATE_INTERVAL_SECONDS:-21600}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - appsec-net
+    profiles:
+      - maintenance
+
+volumes:
+  postgres-data:
+  buildkit-data:
+  minio-data:
+  appsec_reports:
+    name: ${REPORTS_VOLUME:-appsec_reports}
+  trivy-cache:
+    name: ${TRIVY_CACHE_VOLUME:-appsec_trivy_cache}
+  appsec_workspaces:
+    name: ${WORKSPACES_VOLUME:-appsec_workspaces}
+  grafana-data:
+  metabase-data:
+
+networks:
+  appsec-net:
+    name: ${TOOL_NETWORK:-appsec-net}
+    attachable: true
