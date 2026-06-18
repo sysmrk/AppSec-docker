@@ -164,8 +164,8 @@ def generate_sbom(image_ref: str, phase: str, scan_id: str, pipeline_id: str | N
 
 
 def patched_image_ref(source_image_ref: str, patch_id: str) -> str:
-    registry = env("REGISTRY_HOST", "localhost:5000").rstrip("/")
-    repository = env("PATCHED_REPOSITORY", "appsec-patched").strip("/")
+    registry = env("REGISTRY_HOST", "localhost:8081").rstrip("/")
+    repository = env("PATCHED_REPOSITORY", "library/appsec-patched").strip("/")
     safe_name = (
         source_image_ref.replace("://", "-")
         .replace("/", "-")

@@ -37,6 +37,7 @@
 ```bash
 cp .env.example .env
 make preflight
+make validate
 make init
 ```
 
@@ -448,6 +449,14 @@ Harbor با installer رسمی خودش و Docker Compose تولیدشده تو�
 ./scripts/harbor.sh install
 ./scripts/harbor.sh login
 ./scripts/harbor.sh status
+```
+
+معادل Makefile:
+
+```bash
+make harbor-install
+make harbor-login
+make harbor-status
 ```
 
 آدرس UI:
