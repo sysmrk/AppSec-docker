@@ -256,12 +256,19 @@ CREATE TABLE IF NOT EXISTS generated_reports (
 
 CREATE INDEX IF NOT EXISTS idx_scan_runs_pipeline ON scan_runs(pipeline_id);
 CREATE INDEX IF NOT EXISTS idx_scan_runs_image_phase ON scan_runs(image_id, phase);
+CREATE INDEX IF NOT EXISTS idx_scan_runs_phase_status_started ON scan_runs(phase, status, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_scan_runs_pipeline_phase_started ON scan_runs(pipeline_id, phase, started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_vulnerabilities_scan ON vulnerabilities(scan_id);
 CREATE INDEX IF NOT EXISTS idx_vulnerabilities_cve ON vulnerabilities(vulnerability_id);
+CREATE INDEX IF NOT EXISTS idx_vulnerabilities_severity_pkg ON vulnerabilities(severity, pkg_name);
+CREATE INDEX IF NOT EXISTS idx_vulnerabilities_pkg_severity ON vulnerabilities(pkg_name, severity);
 CREATE INDEX IF NOT EXISTS idx_patch_runs_pipeline ON patch_runs(pipeline_id);
+CREATE INDEX IF NOT EXISTS idx_patch_runs_pipeline_started ON patch_runs(pipeline_id, started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_pipeline_jobs_status_priority ON pipeline_jobs(status, priority, created_at);
 CREATE INDEX IF NOT EXISTS idx_scan_diffs_pipeline ON scan_diffs(pipeline_id);
+CREATE INDEX IF NOT EXISTS idx_scan_diffs_created ON scan_diffs(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_policy_results_pipeline ON policy_results(pipeline_id);
+CREATE INDEX IF NOT EXISTS idx_policy_results_status_created ON policy_results(status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_artifacts_pipeline ON artifacts(pipeline_id);
 CREATE INDEX IF NOT EXISTS idx_scheduled_images_enabled ON scheduled_images(enabled, last_enqueued_at);
 CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
@@ -275,3 +282,6 @@ CREATE INDEX IF NOT EXISTS idx_security_jobs_kind_status ON security_jobs(kind, 
 CREATE INDEX IF NOT EXISTS idx_security_findings_job ON security_findings(job_id);
 CREATE INDEX IF NOT EXISTS idx_accepted_risks_finding ON accepted_risks(finding_id);
 CREATE INDEX IF NOT EXISTS idx_generated_reports_resource ON generated_reports(resource_type, resource_id);
+CREATE INDEX IF NOT EXISTS idx_generated_reports_resource_created ON generated_reports(resource_type, resource_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_pipeline_runs_status_started ON pipeline_runs(status, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_pipeline_runs_requested_started ON pipeline_runs(requested_image, started_at DESC);

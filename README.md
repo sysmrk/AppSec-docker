@@ -36,11 +36,19 @@
 
 ```bash
 cp .env.example .env
-docker-compose -f docker-compose.yaml up -d postgres
+make preflight
+make init
+```
+
+مسیر دستی معادل:
+
+```bash
+docker-compose -f docker-compose.yaml --profile platform up -d postgres buildkit minio minio-init api nginx worker scheduler grafana metabase
 ./scripts/harbor.sh install
 ./scripts/harbor.sh login
 docker-compose -f docker-compose.yaml build appsec-runner
-./scripts/appsecctl.sh init-db
+./scripts/appsecctl.sh migrate
+./scripts/setup-metabase.sh
 ```
 
 در محیط توسعه، API key پیش‌فرض این است:
@@ -77,6 +85,12 @@ password: AppSec-Metabase-2026!
 
 ```bash
 chmod +x scripts/*.sh
+```
+
+برای production از نمونه تنظیمات زیر شروع کنید:
+
+```bash
+cp .env.production.example .env
 ```
 
 ## اجرای کامل pipeline

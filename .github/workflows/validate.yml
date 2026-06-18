@@ -1,0 +1,17 @@
+name: validate
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  config:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate compose
+        run: docker compose -f docker-compose.yaml config >/tmp/appsec-compose.yaml
+      - name: Validate Grafana dashboard JSON
+        run: python -m json.tool grafana/dashboards/appsec-overview.json >/tmp/appsec-dashboard.json
+      - name: Compile Python
+        run: python -m py_compile runner/appsecctl/*.py scripts/setup-metabase.py
