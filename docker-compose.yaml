@@ -65,6 +65,33 @@ x-api-volumes: &api-volumes
   - ./db:/db:ro
 
 services:
+  # Optional: absent from normal 'platform' and 'production' profiles.
+  # HTTP binds to localhost ONLY; use a TLS/OAuth gateway for remote clients.
+  mcp:
+    profiles: ["mcp"]
+    build:
+      context: .
+      dockerfile: integrations/mcp/Dockerfile
+    entrypoint: ["python", "/app/appsec_mcp.py"]
+    command: ["--transport", "http"]
+    environment:
+      APPSEC_MCP_DATABASE_URL: ${APPSEC_MCP_DATABASE_URL:-postgresql://${POSTGRES_USER:-appsec}:${POSTGRES_PASSWORD:-appsec-change-me}@postgres:5432/${POSTGRES_DB:-appsec}}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${APPSEC_MCP_HOST_PORT:-8091}:8090"
+    read_only: true
+    tmpfs:
+      - /tmp
+    user: "65532:65532"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - appsec-net
+
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped

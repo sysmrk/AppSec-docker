@@ -2,7 +2,7 @@ COMPOSE ?= docker-compose
 COMPOSE_FILE ?= docker-compose.yaml
 PROFILE ?= platform
 
-.PHONY: help preflight validate init migrate up down restart ps logs build harbor-install harbor-login harbor-status report-metabase trivy-db clean
+.PHONY: help preflight validate init migrate up down restart ps logs build harbor-install harbor-login harbor-status report-metabase trivy-db mcp-up mcp-down mcp-logs test clean
 
 help:
 	@printf '%s\n' \
@@ -21,7 +21,11 @@ help:
 		'  make harbor-login     Login Docker to local Harbor' \
 		'  make harbor-status    Show Harbor containers' \
 		'  make report-metabase  Provision Metabase dashboards' \
-		'  make trivy-db         Update Trivy vulnerability database'
+		'  make trivy-db         Update Trivy vulnerability database' \
+		'  make mcp-up           Start optional read-only MCP HTTP service' \
+		'  make mcp-down         Stop optional MCP service only' \
+		'  make mcp-logs         Follow optional MCP logs' \
+		'  make test             Run Python security unit tests'
 
 preflight:
 	./scripts/preflight.sh
@@ -70,6 +74,18 @@ report-metabase:
 
 trivy-db:
 	./scripts/update-trivy-db.sh --once
+
+mcp-up:
+	$(COMPOSE) -f $(COMPOSE_FILE) --profile mcp up -d --build mcp
+
+mcp-down:
+	$(COMPOSE) -f $(COMPOSE_FILE) --profile mcp stop mcp
+
+mcp-logs:
+	$(COMPOSE) -f $(COMPOSE_FILE) --profile mcp logs -f --tail=100 mcp
+
+test:
+	PYTHONPATH=runner:integrations/mcp python3 -m unittest discover -s tests -p 'test_*.py' -v
 
 clean:
 	find . -path './harbor/data/database' -prune -o -type d \( -name __pycache__ -o -name .pytest_cache -o -name .mypy_cache \) -exec rm -rf {} +

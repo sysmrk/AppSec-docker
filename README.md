@@ -547,3 +547,16 @@ docs/
 - `APPSEC_SESSION_COOKIE_SECURE=true` for HTTPS deployments; use false for localhost-only HTTP development.
 - Accepted risks require a future expiry datetime with timezone.
 - Docker socket on executors and privileged BuildKit remain high-risk deployment concerns; isolate them on dedicated worker hosts before internet-facing production. See `docs/security-review.md`.
+
+
+## Optional MCP integration (AI access)
+
+MCP is **disabled by default** and is not a dependency of the existing scanner, worker, API, Grafana or Metabase. The separate `mcp` Compose profile exposes read-only tools to MCP-capable AI clients. It cannot run a scan or patch images. Start and stop only when needed:
+
+```bash
+make mcp-up
+make mcp-logs
+make mcp-down
+```
+
+For Claude Desktop STDIO configuration, Streamable HTTP testing, connecting AI clients (including remote-client security limitations) and where to view results, see **[docs/mcp.md](docs/mcp.md)**. The MCP HTTP service binds to `127.0.0.1:8091` only; do not expose it publicly without authenticated HTTPS/OAuth infrastructure. Use a SELECT-only PostgreSQL role for production.

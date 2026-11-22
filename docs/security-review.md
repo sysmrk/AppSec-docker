@@ -35,3 +35,8 @@ PYTHONPATH=runner python3 -m unittest discover -s tests -v
 docker compose --profile platform up -d postgres api nginx
 # Verify unknown user -> 401; cross-project user -> 403; approved user -> success.
 ```
+
+
+## Optional MCP review
+
+The new `integrations/mcp/` service has no Docker socket, report volumes or write tools, uses a read-only PostgreSQL transaction, and has an opt-in Compose profile. It still exposes cross-project aggregates to whoever can connect: do not add it to shared networks or expose publicly without OAuth/TLS and a least-privilege DB account. `docs/mcp.md` provides deployment and AI client instructions. Unit tests verify SQL transaction read-only configuration, input caps and UUID validation.
