@@ -462,6 +462,23 @@
         const failure = w.publish_error || w.patch_error || w.scan_error;
         root.appendChild(node("p", "warning", "Operation failed: " +
           (failure || "See job diagnostics and ask an administrator for the correlation ID.")));
+        if (w.state === "failed" && w.scan_job_status === "failed" &&
+            ["admin", "operator"].includes(state.user?.role)) {
+          root.appendChild(button("Start a NEW scan-only attempt", async () => {
+            if (!window.confirm("This starts a NEW scan-only workflow. No patch or push will be retried. Continue?")) return;
+            try {
+              const response = await request("/api/manual-workflows", {
+                method: "POST",
+                body: JSON.stringify({image: w.requested_image, project_id: w.project_id})
+              });
+              await openGuided(response.id);
+              notification("New scan-only job created. The failed workflow was preserved for audit.");
+            } catch (error) { notification(error.message, true); }
+          }));
+        } else {
+          root.appendChild(node("p", "info-note",
+            "Do not blindly retry a failed patch or registry push. An administrator must reconcile the image and destination first."));
+        }
       }
       if (data.diagnostics?.length) {
         const diagnostics = section(root, "What went wrong and how to fix it");
