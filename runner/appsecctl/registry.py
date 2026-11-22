@@ -12,9 +12,9 @@ _ALIAS = re.compile(r"^[a-z][a-z0-9_-]{1,49}$")
 
 def normalize_host(value: str) -> str:
     raw = value.strip()
-    if raw.startswith("https://"):
+    if raw.lower().startswith("https://"):
         raw = raw[8:]
-    elif raw.startswith("http://"):
+    elif raw.lower().startswith("http://"):
         raise ValueError("Registry must use HTTPS")
     if not raw or any(x in raw for x in "/@?#\\ "):
         raise ValueError("Enter a hostname and optional port, without URL path or credentials")
