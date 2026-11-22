@@ -25,7 +25,7 @@ _CATALOG = [
 def classify(value: Any, stage: str = "execution") -> dict[str, Any]:
     raw = str(value or "")
     for code, pattern, title, hint, retryable in _CATALOG:
-        if re.search(pattern, raw, flags=re.IGNORECASE):
+        if raw.startswith(code + ":") or re.search(pattern, raw, flags=re.IGNORECASE):
             return {"code": code, "title": title, "hint": hint, "retryable": retryable, "stage": stage}
     return {
         "code": "OPERATION_FAILED", "title": "Operation could not be completed",
