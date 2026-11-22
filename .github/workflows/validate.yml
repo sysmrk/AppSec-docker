@@ -98,6 +98,11 @@ jobs:
                   raise AssertionError('duplicate approval was accepted')
               except RuntimeError:
                   pass
-              print('Postgres migrations, UI queries, heartbeats, manual approval and single-attempt patch verified')
+              from runpy import run_path
+              charts = run_path("scripts/setup-metabase.py", run_name="appsec_chart_validation")
+              for group in ("CARDS", "MANUAL_CARDS", "TREND_CARDS"):
+                  for name, sql, *_ in charts[group]:
+                      conn.execute("EXPLAIN " + sql)
+              print('Postgres migrations, manual approvals and all Metabase SQL charts verified')
           PY
           python -m alembic -c alembic.ini upgrade head
