@@ -126,20 +126,20 @@ def start(args) -> None:
 
 def stop(_args) -> None:
     check_prerequisites()
-    compose("--profile", "platform", "--profile", "mcp", "stop")
+    compose("--profile", "platform", "--profile", "patch", "--profile", "mcp", "stop")
     print("AppSec containers stopped. Named data volumes are preserved.")
 
 
 def status(_args) -> None:
     check_prerequisites()
-    compose("--profile", "platform", "--profile", "mcp", "ps")
+    compose("--profile", "platform", "--profile", "patch", "--profile", "mcp", "ps")
 
 
 def logs(args) -> None:
     if args.service not in SERVICE_CHOICES:
         raise RuntimeError("Unknown service; use one of: " + ", ".join(SERVICE_CHOICES))
     check_prerequisites()
-    compose("--profile", "platform", "--profile", "mcp", "logs", "-f", "--tail", "80", args.service)
+    compose("--profile", "platform", "--profile", "patch", "--profile", "mcp", "logs", "-f", "--tail", "80", args.service)
 
 
 def doctor(_args) -> None:
@@ -188,7 +188,7 @@ def doctor(_args) -> None:
                 show(name, "FAIL", "Cannot execute check")
     try:
         proc = subprocess.run(
-            ["docker", "compose", "-f", str(COMPOSE_FILE), "--profile", "platform", "--profile", "mcp", "ps", "--format", "json"],
+            ["docker", "compose", "-f", str(COMPOSE_FILE), "--profile", "platform", "--profile", "patch", "--profile", "mcp", "ps", "--format", "json"],
             cwd=ROOT, capture_output=True, text=True, timeout=20, check=False,
         )
         if proc.returncode == 0:
