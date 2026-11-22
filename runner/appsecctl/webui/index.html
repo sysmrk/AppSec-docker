@@ -28,9 +28,11 @@
       <div class="brand"><div class="mark">◆</div><div><strong>APPSEC</strong><span>CONTROL CENTER</span></div></div>
       <nav aria-label="Main navigation">
         <button class="nav-item active" data-view="overview"><span>▦</span> Overview</button>
-        <button class="nav-item" data-view="scan"><span>⊕</span> Scan image</button>
+        <button class="nav-item" data-view="scan"><span>⊕</span> New manual scan</button>
+        <button class="nav-item" data-view="guided"><span>▤</span> My workflows</button>
         <button class="nav-item" data-view="secrets"><span>⌘</span> Scan repository</button>
         <button class="nav-item" data-view="results"><span>≡</span> Results</button>
+        <button class="nav-item" data-view="settings"><span>⚙</span> Administration</button>
         <button class="nav-item" data-view="health"><span>♡</span> System health</button>
         <button class="nav-item" data-view="integrations"><span>⬡</span> Integrations</button>
       </nav>
@@ -67,21 +69,28 @@
           <div class="table-wrap"><table><thead><tr><th>Repository</th><th>Status</th><th>Findings</th><th>Started</th><th></th></tr></thead><tbody id="security-body"></tbody></table></div>
         </section>
         <section id="view-scan" class="view" hidden>
-          <div class="page-heading"><div><p class="eyebrow">CONTAINER SECURITY</p><h1>Scan an image</h1><p class="muted">Scan, build an SBOM, evaluate policy and save the report. No patching by default.</p></div></div>
+          <div class="page-heading"><div><p class="eyebrow">START HERE</p><h1>New manual image scan</h1><p class="muted">No CI/CD required. Start with a real registry image, review findings, then decide what happens next.</p></div></div>
           <form id="image-form" class="panel form-panel">
-            <label for="image-reference">Container image reference</label>
-            <input id="image-reference" placeholder="registry.example.com/team/service:version" required minlength="1" maxlength="1024" spellcheck="false">
-            <p class="hint">Use an image available to your configured Docker / registry environment.</p>
-            <label for="image-project">Project</label>
-            <select id="image-project"><option value="">Shared / unassigned</option></select>
-            <div class="choice"><input type="checkbox" id="advanced-toggle"><label for="advanced-toggle">Show advanced options</label></div>
-            <div id="advanced-box" class="advanced-box" hidden>
-              <label for="image-mode">Execution mode</label>
-              <select id="image-mode"><option value="scan">Scan only (recommended)</option><option value="patch">Scan + Patch + Push + Rescan</option></select>
-              <div id="patch-warning" class="warning" hidden>Advanced operation: Copa will modify and push a new image to the configured registry. Requires available BuildKit and registry credentials.</div>
+            <label for="image-reference">Container image (name:tag or digest)</label>
+            <input id="image-reference" placeholder="registry.example.com/team/service:1.4.0" required minlength="1" maxlength="1024" spellcheck="false">
+            <p class="hint">Enter a reference accessible to Docker on the worker. This does not upload an image archive.</p>
+            <label for="image-project">Project / team (optional)</label>
+            <select id="image-project"><option value="">Private to you / admin</option></select>
+            <div class="guided-intro"><strong>What happens next?</strong>
+              <ol>
+                <li>Trivy scans the image and generates an SBOM</li>
+                <li>AppSec checks the policy and saves the results</li>
+                <li>You review the CVEs and choose to finish or approve patch + registry push</li>
+                <li>If approved, Copa patches, pushes, rescans and compares findings</li>
+              </ol>
             </div>
-            <div class="form-actions"><button type="submit" class="primary">Start image scan</button><span class="muted small-text">Results are stored in AppSec.</span></div>
+            <div class="form-actions"><button type="submit" class="primary">Start guided scan</button><span class="muted small-text">Patch and push are never automatic.</span></div>
           </form>
+        </section>
+        <section id="view-guided" class="view" hidden>
+          <div class="page-heading"><div><p class="eyebrow">MANUAL OPERATIONS</p><h1>My workflows</h1><p class="muted">Continue existing scans and provide approvals in the browser.</p></div><button id="guided-refresh" class="outline">↻ Refresh</button></div>
+          <div class="table-wrap"><table><thead><tr><th>Image</th><th>Current step</th><th>Policy</th><th>Created</th><th></th></tr></thead><tbody id="guided-list"></tbody></table></div>
+          <div id="guided-detail" class="panel result-panel"><div class="empty-state">Select a workflow to see progress, results and approval controls.</div></div>
         </section>
         <section id="view-secrets" class="view" hidden>
           <div class="page-heading"><div><p class="eyebrow">SOURCE CODE SECURITY</p><h1>Scan a repository</h1><p class="muted">Use Gitleaks to detect exposed secrets. Stored findings do not include secret values.</p></div></div>
@@ -111,6 +120,43 @@
           <div class="section-heading"><h2>Worker &amp; scheduler heartbeats</h2></div>
           <div class="table-wrap"><table><thead><tr><th>Service</th><th>Instance</th><th>Last heartbeat</th><th>Status</th></tr></thead><tbody id="heartbeats-body"></tbody></table></div>
           <p class="hint">An older heartbeat does not prove a worker failed: it may be busy scanning. Verify with <code>./appsec doctor</code> and <code>./appsec logs worker</code>. The API never accesses Docker Socket.</p>
+        </section>
+        <section id="view-settings" class="view" hidden>
+          <div class="page-heading"><div><p class="eyebrow">ADMINISTRATION</p><h1>Projects & policies</h1><p class="muted">Configure Project ownership and security gates without editing raw database records.</p></div></div>
+          <div class="integration-grid">
+            <form id="team-form" class="panel form-panel"><h2>Create team</h2>
+              <label for="team-name">Team name</label><input id="team-name" required minlength="2">
+              <label for="team-description">Description</label><input id="team-description">
+              <button type="submit" class="primary">Create team</button>
+            </form>
+            <form id="project-form" class="panel form-panel"><h2>Create project</h2>
+              <label for="new-project-name">Name</label><input id="new-project-name" required minlength="2">
+              <label for="new-project-slug">Slug (unique)</label><input id="new-project-slug" required minlength="2" pattern="[a-z0-9-]+">
+              <label for="new-project-team">Owning team</label><select id="new-project-team" required><option value="">Select a team</option></select>
+              <button type="submit" class="primary">Create project</button>
+            </form>
+            <form id="policy-form" class="panel form-panel"><h2>Security policy</h2>
+              <label for="policy-project">Project</label><select id="policy-project"><option value="">Global default (admin)</option></select>
+              <label for="policy-name">Policy name</label><input id="policy-name" value="security-gate" required minlength="2">
+              <div class="inline-fields">
+                <div><label for="policy-critical">Maximum Critical</label><input type="number" id="policy-critical" min="0" value="0" required></div>
+                <div><label for="policy-high">Maximum High</label><input type="number" id="policy-high" min="0" value="0" required></div>
+                <div><label for="policy-medium">Maximum Medium</label><input type="number" id="policy-medium" min="0" value="999999" required></div>
+                <div><label for="policy-low">Maximum Low</label><input type="number" id="policy-low" min="0" value="999999" required></div>
+              </div>
+              <p class="hint">A newly created policy is versioned and used for subsequent scans.</p>
+              <button type="submit" class="primary">Save policy</button>
+            </form>
+            <div class="panel"><h2>Team membership</h2>
+              <p class="muted">Review users and grant Project access through team membership.</p>
+              <form id="team-member-form" class="form-panel flat-form">
+                <label for="member-team">Team</label><select id="member-team" required></select>
+                <label for="member-user">User</label><select id="member-user" required></select>
+                <label for="member-role">Team role</label><select id="member-role"><option value="viewer">Viewer</option><option value="member">Member</option><option value="maintainer">Maintainer</option><option value="owner">Owner</option></select>
+                <button class="primary" type="submit">Add / update membership</button>
+              </form>
+            </div>
+          </div>
         </section>
         <section id="view-integrations" class="view" hidden>
           <div class="page-heading"><div><p class="eyebrow">ADVANCED</p><h1>Integrations</h1><p class="muted">Optional components remain separate from normal image scanning.</p></div></div>
