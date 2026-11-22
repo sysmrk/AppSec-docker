@@ -33,6 +33,10 @@ def main() -> int:
             log_event("worker.image.claimed", job_id=job_id, image=image_ref)
 
             try:
+                if str(job.get("mode")) in ("patch", "continue_patch") and (
+                    os.environ.get("APPSEC_PATCH_ENABLED", "false").lower() not in ("1", "true", "yes")
+                ):
+                    raise RuntimeError("patch and registry push disabled on this worker")
                 if job.get("mode") == "continue_patch":
                     if not job.get("pipeline_id"):
                         raise RuntimeError("approved patch job has no original pipeline")
