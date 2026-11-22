@@ -7,6 +7,7 @@
   <title>AppSec Control Center</title>
   <link rel="stylesheet" href="./assets/styles.css">
   <script src="./assets/app.js" defer></script>
+  <script src="./assets/workspace.js" defer></script>
 </head>
 <body>
   <div id="login-screen" class="login-screen" hidden>
@@ -30,11 +31,16 @@
         <button class="nav-item active" data-view="overview"><span>▦</span> Overview</button>
         <button class="nav-item" data-view="scan"><span>⊕</span> New manual scan</button>
         <button class="nav-item" data-view="guided"><span>▤</span> My workflows</button>
+        <button class="nav-item" data-view="inventory"><span>▣</span> Images & scans</button>
+        <button class="nav-item" data-view="approvals"><span>✓</span> Approvals</button>
         <button class="nav-item" data-view="secrets"><span>⌘</span> Scan repository</button>
         <button class="nav-item" data-view="results"><span>≡</span> Results</button>
         <button class="nav-item" data-view="settings"><span>⚙</span> Administration</button>
+        <button class="nav-item" data-view="users"><span>♙</span> Users & access</button>
+        <button class="nav-item" data-view="registries"><span>▥</span> Registries</button>
         <button class="nav-item" data-view="health"><span>♡</span> System health</button>
         <button class="nav-item" data-view="integrations"><span>⬡</span> Integrations</button>
+        <button class="nav-item" data-view="profile"><span>◉</span> My profile</button>
       </nav>
       <div class="sidebar-foot">
         <a id="metabase-link" href="#" target="_blank" rel="noopener">Metabase ↗</a>
@@ -84,13 +90,32 @@
                 <li>If approved, Copa patches, pushes, rescans and compares findings</li>
               </ol>
             </div>
-            <div class="form-actions"><button type="submit" class="primary">Start guided scan</button><span class="muted small-text">Patch and push are never automatic.</span></div>
+            <div class="form-actions">
+              <button id="scan-preflight" type="button" class="outline">Check readiness</button>
+              <button type="submit" class="primary">Start guided scan</button>
+            </div>
+            <div id="scan-preflight-result" class="preflight-box" role="status" hidden></div>
+            <p class="hint">A readiness check validates configuration and Worker heartbeat, not actual image pull or registry credentials.</p>
           </form>
         </section>
         <section id="view-guided" class="view" hidden>
           <div class="page-heading"><div><p class="eyebrow">MANUAL OPERATIONS</p><h1>My workflows</h1><p class="muted">Continue existing scans and provide approvals in the browser.</p></div><button id="guided-refresh" class="outline">↻ Refresh</button></div>
           <div class="table-wrap"><table><thead><tr><th>Image</th><th>Current step</th><th>Policy</th><th>Created</th><th></th></tr></thead><tbody id="guided-list"></tbody></table></div>
           <div id="guided-detail" class="panel result-panel"><div class="empty-state">Select a workflow to see progress, results and approval controls.</div></div>
+        </section>
+        <section id="view-inventory" class="view" hidden>
+          <div class="page-heading"><div><p class="eyebrow">IMAGE INVENTORY</p><h1>Images & scans</h1><p class="muted">Real scanned images, security history and CVE changes between scans.</p></div><button id="inventory-refresh" class="outline">↻ Refresh</button></div>
+          <form id="inventory-search-form" class="filters">
+            <input id="inventory-search" type="search" placeholder="Search image, repository, tag or digest" aria-label="Search image inventory" maxlength="120">
+            <button class="outline" type="submit">Search</button>
+          </form>
+          <div class="table-wrap"><table><thead><tr><th>Image</th><th>Runs</th><th>Latest state</th><th>Critical</th><th>High</th><th>Last scan</th><th></th></tr></thead><tbody id="inventory-body"></tbody></table></div>
+          <div class="row-controls"><button id="inventory-prev" class="outline small">Previous</button><span id="inventory-page" class="muted">Page 1</span><button id="inventory-next" class="outline small">Next</button></div>
+          <div id="inventory-detail" class="panel result-panel"><div class="empty-state">Select an image for version history and scan comparison.</div></div>
+        </section>
+        <section id="view-approvals" class="view" hidden>
+          <div class="page-heading"><div><p class="eyebrow">HUMAN DECISIONS</p><h1>Approvals</h1><p class="muted">Only actual workflows awaiting scan review or separate publication approval.</p></div><button id="approvals-refresh" class="outline">↻ Refresh</button></div>
+          <div class="table-wrap"><table><thead><tr><th>Image</th><th>Required decision</th><th>Policy</th><th>Created</th><th></th></tr></thead><tbody id="approvals-body"></tbody></table></div>
         </section>
         <section id="view-secrets" class="view" hidden>
           <div class="page-heading"><div><p class="eyebrow">SOURCE CODE SECURITY</p><h1>Scan a repository</h1><p class="muted">Use Gitleaks to detect exposed secrets. Stored findings do not include secret values.</p></div></div>
@@ -120,6 +145,35 @@
           <div class="section-heading"><h2>Worker &amp; scheduler heartbeats</h2></div>
           <div class="table-wrap"><table><thead><tr><th>Service</th><th>Instance</th><th>Last heartbeat</th><th>Status</th></tr></thead><tbody id="heartbeats-body"></tbody></table></div>
           <p class="hint">An older heartbeat does not prove a worker failed: it may be busy scanning. Verify with <code>./appsec doctor</code> and <code>./appsec logs worker</code>. The API never accesses Docker Socket.</p>
+        </section>
+        <section id="view-users" class="view" hidden>
+          <div class="page-heading"><div><p class="eyebrow">IDENTITY GOVERNANCE</p><h1>Users & access</h1><p class="muted">Account lifecycle, roles, active sessions and one-time API keys.</p></div><button id="users-refresh" class="outline">↻ Refresh</button></div>
+          <div class="table-wrap"><table><thead><tr><th>User</th><th>Role</th><th>Status</th><th>Last login</th><th></th></tr></thead><tbody id="users-body"></tbody></table></div>
+          <div id="user-detail" class="panel result-panel"><div class="empty-state">Select a user to review access and security actions. Create new users in Administration.</div></div>
+        </section>
+        <section id="view-registries" class="view" hidden>
+          <div class="page-heading"><div><p class="eyebrow">REGISTRY GOVERNANCE</p><h1>Registries</h1><p class="muted">Configure trusted HTTPS registries and approved publishing scope. Credentials stay on the worker or Secret Manager.</p></div></div>
+          <form id="registry-form" class="panel form-panel">
+            <label for="registry-name">Registry alias</label><input id="registry-name" required pattern="[a-z][a-z0-9_-]+" placeholder="production-harbor" maxlength="50">
+            <label for="registry-host">Registry hostname and optional port</label><input id="registry-host" required placeholder="harbor.internal.example:443" maxlength="255">
+            <label for="registry-project">Project scope</label><select id="registry-project"><option value="">Shared registry (all projects)</option></select>
+            <label class="approval-checkbox"><input type="checkbox" id="registry-allow-push"><span>Allow push configuration (still requires explicit human approval and worker credentials)</span></label>
+            <button type="submit" class="primary">Register HTTPS registry</button>
+          </form>
+          <div class="section-heading"><h2>Configured registry endpoints</h2></div>
+          <div class="table-wrap"><table><thead><tr><th>Alias</th><th>Host</th><th>Scope</th><th>Push configuration</th><th></th></tr></thead><tbody id="registries-body"></tbody></table></div>
+          <p class="hint">Registering a host does not grant Docker credentials, test TLS or perform registry operations.</p>
+        </section>
+        <section id="view-profile" class="view" hidden>
+          <div class="page-heading"><div><p class="eyebrow">ACCOUNT SECURITY</p><h1>My profile</h1><p class="muted">Change your password and close all previous sessions.</p></div></div>
+          <form id="profile-password-form" class="panel form-panel">
+            <div id="profile-rotation-hint" class="warning" hidden>Your account requires a password change before AppSec operations can continue.</div>
+            <label for="profile-current-password">Current password</label><input id="profile-current-password" type="password" autocomplete="current-password" required>
+            <label for="profile-new-password">New password (12+ characters)</label><input id="profile-new-password" type="password" autocomplete="new-password" required minlength="12">
+            <label for="profile-confirm-password">Confirm new password</label><input id="profile-confirm-password" type="password" autocomplete="new-password" required minlength="12">
+            <button type="submit" class="primary">Change password and sign in again</button>
+            <div id="profile-feedback" class="info-note" role="status"></div>
+          </form>
         </section>
         <section id="view-settings" class="view" hidden>
           <div class="page-heading"><div><p class="eyebrow">ADMINISTRATION</p><h1>Projects & policies</h1><p class="muted">Configure Project ownership and security gates without editing raw database records.</p></div></div>
