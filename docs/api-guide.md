@@ -1,6 +1,6 @@
 # AppSec API Guide
 
-این داکیومنت برای استفاده دستی، automation و اتصال ابزارهای دیگر به API پروژه است.
+این راهنمای REST API برای Automation و CI/CD است؛ کاربران عادی می‌توانند از رابط وب [AppSec Control Center](user-guide.md) در آدرس `http://127.0.0.1:8080` استفاده کنند.
 
 ## آدرس و احراز هویت
 
@@ -33,7 +33,7 @@ curl http://127.0.0.1:8080/appsec-api/metrics
 curl -X POST http://127.0.0.1:8080/appsec-api/pipelines \
   -H 'X-API-Key: appsec-dev-key' \
   -H 'Content-Type: application/json' \
-  -d '{"image":"alpine:3.19","priority":100}'
+  -d '{"image":"registry.example.com/team/api:1.4.0","priority":100,"mode":"scan"}'
 ```
 
 دیدن jobها:
@@ -195,3 +195,27 @@ curl -H 'X-API-Key: appsec-dev-key' \
 ## اتصال AI با MCP
 
 API فعلی همان API معمول FastAPI است. MCP یک سرویس مستقل و اختیاری از پروفایل `mcp` است. تنظیم و آموزش اتصال Claude Desktop، MCP Inspector و AIهای remote در [mcp.md](mcp.md) آمده است.
+
+
+## Scan-only default and explicit patching
+
+New `POST /appsec-api/pipelines` requests default to `mode=scan`: Trivy, SBOM, policy and report, with **no automatic patch or push**. Advanced patch requests require a running privileged patch executor (`./appsec start --patching`), approved registry credentials, and `confirm_patch=true`:
+
+```bash
+curl -X POST http://127.0.0.1:8080/appsec-api/pipelines \
+  -H "X-API-Key: ${APPSEC_API_KEY}" \
+  -H 'Content-Type: application/json' \
+  -d '{"image":"registry.example.com/team/api:1.4.0","mode":"patch","confirm_patch":true}'
+```
+
+## Control Center read endpoints
+
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /appsec-api/api/ui/overview` | Project-filtered summary, recent runs and jobs |
+| `GET /appsec-api/api/ui/pipelines/{id}` | Compact pipeline details without Trivy raw JSON |
+| `GET /appsec-api/api/ui/scans/{id}/vulnerabilities` | CVEs, severity filter, up to 200 records |
+| `GET /appsec-api/api/ui/security-jobs/{id}` | Redacted Gitleaks findings |
+| `GET /appsec-api/api/ui/capabilities` | Patch functionality status |
+
+All endpoints require a valid AppSec session or API Key. UI lives at `/`, Grafana at `/grafana/`.
