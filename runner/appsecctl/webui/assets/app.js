@@ -4,7 +4,7 @@
   const prefix = location.pathname.startsWith("/appsec-api/") ? "/appsec-api" : "";
   const $ = (id) => document.getElementById(id);
   const app = $("app"), loginScreen = $("login-screen"), notice = $("global-notice");
-  const state = { user: null, overview: null, view: "overview", result: null };
+  const state = { user: null, overview: null, view: "overview", result: null, selectedWorkflow: null, workflowState: null, patchEnabled: false };
   const date = (value) => value ? new Date(value).toLocaleString() : "—";
   const text = (value) => value == null || value === "" ? "—" : String(value);
   const node = (tag, css, value) => {
@@ -49,14 +49,20 @@
     state.user = user;
     $("current-user").textContent = user.username + " · " + user.role;
     document.querySelector('[data-view="health"]').hidden = user.role !== "admin";
+    document.querySelector('[data-view="settings"]').hidden = user.role !== "admin";
+    const readOnly = user.role === "viewer";
+    document.querySelector('[data-view="scan"]').hidden = readOnly;
+    document.querySelector('[data-view="secrets"]').hidden = readOnly;
     loginScreen.hidden = true; app.hidden = false;
   }
   function selectView(view) {
     state.view = view;
     document.querySelectorAll(".view").forEach(v => v.hidden = v.id !== "view-" + view);
     document.querySelectorAll(".nav-item").forEach(n => n.classList.toggle("active", n.dataset.view === view));
-    $("breadcrumb").textContent = ({ overview: "Overview", scan: "Scan image", secrets: "Scan repository", results: "Results", health: "System health", integrations: "Integrations" })[view] || "AppSec";
+    $("breadcrumb").textContent = ({ overview: "Overview", scan: "Scan image", secrets: "Scan repository", results: "Results", guided: "My workflows", settings: "Administration", health: "System health", integrations: "Integrations" })[view] || "AppSec";
     if (view === "health") refreshSystemHealth().catch(error => notification(error.message, true));
+    if (view === "guided") refreshGuided().catch(error => notification(error.message, true));
+    if (view === "settings" && state.user?.role === "admin") loadAdminData().catch(error => notification(error.message, true));
     quiet();
   }
   async function refreshHealth() {
@@ -134,12 +140,7 @@
   }
   async function loadCapabilities() {
     const features = await request("/api/ui/capabilities");
-    const option = $("image-mode").querySelector('option[value="patch"]');
-    option.disabled = !features.patch_enabled;
-    $("patch-warning").textContent = features.patch_enabled
-      ? "Advanced operation: Copa will patch and push a new image to the configured registry. Confirm before running."
-      : "Patching is disabled. An administrator must start the platform with ./appsec start --patching and configure registry credentials.";
-    if (!features.patch_enabled) $("image-mode").value = "scan";
+    state.patchEnabled = Boolean(features.patch_enabled);
   }
   async function loadProjects() {
     const projects = await request("/api/projects");
@@ -261,6 +262,218 @@
       reports.appendChild(links.childNodes.length ? links : node("p", "info-note", "No generated reports yet."));
     } catch (error) { root.textContent = error.message; notification(error.message, true); }
   }
+
+  function stepItem(container, name, detail, status) {
+    const li = node("li", "manual-step " + status);
+    const dot = node("span", "step-dot", status === "done" ? "✓" : status === "running" ? "…" : "○");
+    const body = node("div");
+    body.appendChild(node("strong", "", name));
+    body.appendChild(node("p", "muted small-text", detail));
+    li.appendChild(dot);
+    li.appendChild(body);
+    container.appendChild(li);
+  }
+
+  async function refreshGuided() {
+    const workflows = await request("/api/manual-workflows?limit=80");
+    const body = $("guided-list");
+    clear(body);
+    if (!workflows.length) empty(body, "No manual workflows. Create one from New manual scan.", 5);
+    workflows.forEach(w => {
+      const row = node("tr");
+      cell(row, w.requested_image, "wide-text");
+      const c = cell(row, ""); c.appendChild(statusPill(w.state));
+      cell(row, w.pipeline_status || "—");
+      cell(row, date(w.created_at));
+      const act = cell(row, "");
+      act.appendChild(button("Open workflow →", () => openGuided(w.id)));
+      body.appendChild(row);
+    });
+  }
+
+  async function decideGuided(workflowId, action) {
+    if (action === "approve_patch" && !state.patchEnabled) {
+      notification("Patching is disabled by the administrator. Run ./appsec start --patching after configuring registry credentials.", true);
+      return;
+    }
+    if (action === "approve_patch") {
+      const checked = document.getElementById("approval-confirm");
+      if (!checked || !checked.checked) {
+        notification("Please explicitly check the registry push approval box first.", true);
+        return;
+      }
+      if (!window.confirm("This will patch the scanned image and PUSH a new image to your configured registry. Continue?")) return;
+    }
+    if (action === "cancel" && !window.confirm("Cancel this queued scan?")) return;
+    const payload = { action, confirm_push: action === "approve_patch" };
+    try {
+      await request("/api/manual-workflows/" + encodeURIComponent(workflowId) + "/decision", {
+        method: "POST", body: JSON.stringify(payload)
+      });
+      await openGuided(workflowId);
+      await refreshGuided();
+      notification(action === "approve_patch"
+        ? "Patch and registry push were approved and queued. The result will appear here."
+        : action === "finish" ? "Workflow completed without modifying the registry." : "Queued scan canceled.");
+    } catch (error) { notification(error.message, true); }
+  }
+
+  async function openGuided(workflowId, silent = false) {
+    selectView("guided");
+    state.selectedWorkflow = workflowId;
+    const root = $("guided-detail");
+    if (!silent) root.textContent = "Loading workflow details…";
+    try {
+      const data = await request("/api/manual-workflows/" + encodeURIComponent(workflowId));
+      const w = data.workflow, pipeline = data.pipeline;
+      state.workflowState = w.state;
+      state.patchEnabled = Boolean(data.patch_enabled);
+      clear(root);
+      root.appendChild(node("p", "eyebrow", "MANUAL IMAGE WORKFLOW"));
+      root.appendChild(node("h2", "", w.requested_image));
+      root.appendChild(node("p", "info-note", "Workflow ID: " + w.id + " · Created: " + date(w.created_at)));
+      const summary = node("div", "result-stats");
+      for (const [title, value] of [["Current state", w.state], ["Policy result", w.pipeline_status || "Not evaluated"], ["Patch allowed", data.patch_enabled ? "Enabled" : "Disabled"]]) {
+        const c = node("div", "mini-stat"); c.appendChild(node("strong", "", value));
+        c.appendChild(node("span", "", title)); summary.appendChild(c);
+      }
+      root.appendChild(summary);
+      const scans = pipeline?.scans || [], artifacts = pipeline?.artifacts || [], patches = pipeline?.patches || [], diffs = pipeline?.diffs || [];
+      const orig = scans.find(s => s.phase === "original"), patched = scans.find(s => s.phase === "patched");
+      const sbomReady = artifacts.some(a => a.kind === "sbom" && (!orig || a.scan_id === orig.id));
+      const sec = section(root, "Step-by-step progress");
+      const ol = node("ol", "manual-timeline");
+      const scanFailed = w.scan_job_status === "failed";
+      stepItem(ol, "1. Queue and scan image", "Trivy inspects the actual image and saves vulnerability findings.", scanFailed ? "failed" : w.scan_job_status === "success" ? "done" : w.scan_job_status === "running" ? "running" : "waiting");
+      stepItem(ol, "2. Generate SBOM and evaluate policy", "CycloneDX, severity counts and security rules.", sbomReady && pipeline?.policies?.length ? "done" : scanFailed ? "failed" : w.scan_job_status === "running" ? "running" : "waiting");
+      stepItem(ol, "3. Human review and decision", "Inspect CVEs; finish without changes or approve an explicit patch and registry push.", w.decision ? "done" : w.state === "awaiting_approval" ? "running" : "waiting");
+      stepItem(ol, "4. Optional patch and push", "Copa and BuildKit patch only after your approval; registry writes require confirmation.", w.decision === "finish" ? "skipped" : w.patch_job_status === "success" ? "done" : w.patch_job_status === "failed" ? "failed" : w.decision === "approve_patch" ? "running" : "waiting");
+      stepItem(ol, "5. Optional rescan and comparison", "Trivy rescans the published image; fixed, remaining and introduced CVEs are recorded.", w.decision === "finish" ? "skipped" : diffs.length > 0 && patched ? "done" : w.decision === "approve_patch" ? "running" : "waiting");
+      stepItem(ol, "6. Reports and finish", "Download saved HTML reports and CycloneDX SBOM; review final policy state.", w.state === "completed" ? "done" : "waiting");
+      sec.appendChild(ol);
+      if (orig) {
+        const results = section(root, "Initial scan results");
+        showMetrics(results, [["Critical", orig.critical_count], ["High", orig.high_count], ["Medium", orig.medium_count], ["Low", orig.low_count]]);
+        results.appendChild(button("View CVE table and complete reports →", () => openPipeline(w.pipeline_id)));
+      }
+      if (diffs.length) {
+        const d = diffs[diffs.length - 1];
+        const result = section(root, "After approval: vulnerability changes");
+        showMetrics(result, [["Fixed", d.fixed_count], ["Remaining", d.remaining_count], ["Introduced", d.introduced_count]]);
+        result.appendChild(button("Open final scan results →", () => openPipeline(w.pipeline_id)));
+      }
+      if (w.state === "awaiting_approval") {
+        const controls = section(root, "Your decision is required");
+        controls.appendChild(node("p", "info-note", "Nothing has been patched or pushed. Review the scan before continuing."));
+        const actionRow = node("div", "approval-actions");
+        const finish = node("button", "outline", "✓ Finish without patching");
+        finish.type = "button"; finish.addEventListener("click", () => decideGuided(w.id, "finish"));
+        actionRow.appendChild(finish);
+        if (data.patch_enabled) {
+          const warning = node("div", "warning",
+            "Registry destination: " + (data.registry_destination || "not configured") +
+            ". This operation modifies and pushes a new image. Only approve if you have registry write permission.");
+          controls.appendChild(warning);
+          const label = node("label", "approval-checkbox");
+          const checkbox = document.createElement("input");
+          checkbox.type = "checkbox"; checkbox.id = "approval-confirm";
+          label.appendChild(checkbox);
+          label.appendChild(node("span", "", "I understand and explicitly approve patching and pushing to this registry."));
+          controls.appendChild(label);
+          const approve = node("button", "danger-button", "Approve patch + registry push");
+          approve.type = "button"; approve.addEventListener("click", () => decideGuided(w.id, "approve_patch"));
+          actionRow.appendChild(approve);
+        } else {
+          controls.appendChild(node("p", "info-note", "Patching is disabled in this deployment. You can safely finish now; an administrator can enable patching later."));
+        }
+        controls.appendChild(actionRow);
+      }
+      if (w.state === "queued" && (state.user?.role === "admin" || state.user?.role === "operator")) {
+        const cancel = node("button", "outline", "Cancel queued scan");
+        cancel.addEventListener("click", () => decideGuided(w.id, "cancel"));
+        root.appendChild(cancel);
+      }
+      if (w.state === "failed") {
+        root.appendChild(node("p", "warning", "Operation failed: " + (w.patch_error || w.scan_error || "Check worker logs for details.")));
+      }
+      if (pipeline?.reports?.length || pipeline?.artifacts?.length) {
+        const files = section(root, "Saved reports and SBOM");
+        const links = node("div", "results-list");
+        for (const r of (pipeline?.reports || [])) {
+          const a = node("a", "mini-link", "Report · " + r.format + " ↗");
+          a.href = prefix + "/api/reports/" + encodeURIComponent(r.id) + "/download";
+          a.target = "_blank"; a.rel = "noopener"; links.appendChild(a);
+        }
+        for (const r of (pipeline?.artifacts || [])) {
+          const a = node("a", "mini-link", r.kind + " · " + r.format + " ↗");
+          a.href = prefix + "/api/artifacts/" + encodeURIComponent(r.id) + "/download";
+          a.target = "_blank"; a.rel = "noopener"; links.appendChild(a);
+        }
+        files.appendChild(links);
+      }
+    } catch (error) {
+      if (!silent) root.textContent = error.message;
+      notification(error.message, true);
+    }
+  }
+
+  function replaceOptions(id, rows, placeholder, labelKey = "name") {
+    const control = $(id), previous = control.value;
+    clear(control);
+    if (placeholder) {
+      const option = document.createElement("option");
+      option.value = ""; option.textContent = placeholder; control.appendChild(option);
+    }
+    rows.forEach(r => {
+      const option = document.createElement("option");
+      option.value = r.id; option.textContent = r[labelKey] || r.username || r.id;
+      control.appendChild(option);
+    });
+    if ([...control.options].some(o => o.value === previous)) control.value = previous;
+  }
+
+  async function loadAdminData() {
+    if (state.user?.role !== "admin") return;
+    const [teams, projects, users] = await Promise.all([
+      request("/api/teams"), request("/api/projects"), request("/api/users")
+    ]);
+    replaceOptions("new-project-team", teams, "Select a team");
+    replaceOptions("member-team", teams);
+    replaceOptions("member-user", users, "Select user", "username");
+    replaceOptions("policy-project", projects, "Global default (admin)");
+  }
+
+  function bindForm(id, buildPayload, endpoint, success) {
+    $(id).addEventListener("submit", async event => {
+      event.preventDefault();
+      try {
+        await request(endpoint, { method: "POST", body: JSON.stringify(buildPayload()) });
+        notification(success);
+        await loadAdminData();
+        await loadProjects();
+      } catch (error) { notification(error.message, true); }
+    });
+  }
+
+  bindForm("team-form", () => ({
+    name: $("team-name").value.trim(), description: $("team-description").value.trim() || null
+  }), "/api/teams", "Team created.");
+  bindForm("project-form", () => ({
+    name: $("new-project-name").value.trim(), slug: $("new-project-slug").value.trim(),
+    team_id: $("new-project-team").value
+  }), "/api/projects", "Project created.");
+  bindForm("team-member-form", () => ({
+    user_id: $("member-user").value, role: $("member-role").value
+  }), "__team_members_dynamic__", "Membership added.");
+  bindForm("policy-form", () => ({
+    name: $("policy-name").value.trim(), project_id: $("policy-project").value || null,
+    rules: {
+      max_critical: Number($("policy-critical").value),
+      max_high: Number($("policy-high").value),
+      max_medium: Number($("policy-medium").value),
+      max_low: Number($("policy-low").value)
+    }
+  }), "/api/policies", "Policy saved.");
   $("login-form").addEventListener("submit", async (event) => {
     event.preventDefault(); $("login-error").textContent = "";
     try {
@@ -276,21 +489,15 @@
   document.querySelectorAll("[data-view]").forEach(button => button.addEventListener("click", () => selectView(button.dataset.view)));
   $("refresh-button").addEventListener("click", async () => { quiet(); try { await refreshOverview(); } catch (e) { notification(e.message, true); } });
   $("health-refresh-button").addEventListener("click", async () => { try { await refreshSystemHealth(); } catch (e) { notification(e.message, true); } });
-  $("advanced-toggle").addEventListener("change", () => {
-    const enabled = $("advanced-toggle").checked;
-    $("advanced-box").hidden = !enabled;
-    if (!enabled) $("image-mode").value = "scan";
-    $("patch-warning").hidden = $("image-mode").value !== "patch";
-  });
-  $("image-mode").addEventListener("change", () => $("patch-warning").hidden = $("image-mode").value !== "patch");
+  $("guided-refresh").addEventListener("click", async () => { try { await refreshGuided(); if (state.selectedWorkflow) await openGuided(state.selectedWorkflow); } catch (e) { notification(e.message, true); } });
   $("image-form").addEventListener("submit", async event => {
     event.preventDefault();
-    const mode = $("advanced-toggle").checked ? $("image-mode").value : "scan";
-    if (mode === "patch" && !window.confirm("This will attempt to patch an image and push it to the configured registry. Continue?")) return;
-    const payload = { image: $("image-reference").value.trim(), mode, confirm_patch: mode === "patch", project_id: $("image-project").value || null };
+    if (!state.user || state.user.role === "viewer") return notification("Viewer cannot start scans.", true);
+    const payload = { image: $("image-reference").value.trim(), project_id: $("image-project").value || null };
     try {
-      const result = await request("/pipelines", { method: "POST", body: JSON.stringify(payload) });
-      selectView("overview"); await refreshOverview(); notification("Image job queued (" + result.mode + "). Job ID: " + result.job_id);
+      const result = await request("/api/manual-workflows", { method: "POST", body: JSON.stringify(payload) });
+      await openGuided(result.id);
+      notification("Your scan is queued. AppSec will wait for your decision before any patch or registry push.");
     } catch (error) { notification(error.message, true); }
   });
   $("repo-form").addEventListener("submit", async event => {
@@ -317,8 +524,14 @@
   }
   initialize();
   window.setInterval(() => {
-    if (!state.user || document.hidden || state.view !== "overview") return;
-    refreshOverview().catch(() => {});
-    refreshHealth();
+    if (!state.user || document.hidden) return;
+    if (state.view === "overview") {
+      refreshOverview().catch(() => {});
+      refreshHealth();
+    }
+    if (state.view === "guided" && state.selectedWorkflow && !["awaiting_approval", "completed", "failed", "canceled"].includes(state.workflowState)) {
+      openGuided(state.selectedWorkflow, true).catch(() => {});
+      refreshGuided().catch(() => {});
+    }
   }, 20000);
 })();
