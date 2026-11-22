@@ -536,3 +536,14 @@ docs/
 - [Production Roadmap](docs/production-roadmap.md)
 - [Operations Runbook](docs/operations-runbook.md)
 - [Enterprise Features](docs/enterprise-features.md)
+
+
+## Security remediation (2026-11)
+
+- Secrets detected by Gitleaks are redacted in persisted JSON and finding evidence. Previously generated reports, artifacts, S3 objects and backups may still contain leaked values: **rotate real credentials and purge old copies**. Run `./scripts/appsecctl.sh migrate` to scrub historical database fields.
+- Report/scan/artifact downloads require authentication; UUID links alone never grant access. Grafana direct report links now require a logged-in API session, or download through `curl -H 'X-API-Key: ...'`.
+- Project-scoped jobs/reports now require membership; global (unassigned) jobs remain visible to authenticated users. Treat global jobs as shared data.
+- Git repository scanning only accepts HTTPS URLs on `SECURITY_ALLOWED_GIT_HOSTS`; configure your internal Git host explicitly and restrict worker egress at the firewall.
+- `APPSEC_SESSION_COOKIE_SECURE=true` for HTTPS deployments; use false for localhost-only HTTP development.
+- Accepted risks require a future expiry datetime with timezone.
+- Docker socket on executors and privileged BuildKit remain high-risk deployment concerns; isolate them on dedicated worker hosts before internet-facing production. See `docs/security-review.md`.

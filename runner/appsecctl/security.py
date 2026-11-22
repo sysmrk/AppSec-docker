@@ -9,6 +9,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from . import db
+from .sanitization import MASK, redact_gitleaks_report, validate_repo_target
 
 
 def env(name: str, default: str) -> str:
@@ -33,7 +34,7 @@ def prepare_repo(target: str, job_id: str) -> Path:
     dest = base / job_id
     if dest.exists():
         shutil.rmtree(dest)
-    run_command(["git", "clone", "--depth", "1", target, str(dest)])
+    run_command(["git", "clone", "--depth", "1", validate_repo_target(target), str(dest)])
     return dest
 
 
@@ -62,11 +63,10 @@ def parse_gitleaks(report: list[dict]) -> list[dict]:
                 "title": item.get("Description") or item.get("RuleID"),
                 "description": item.get("Description"),
                 "location": f"{item.get('File', '')}:{item.get('StartLine', 1)}",
-                "evidence": item.get("Match"),
+                "evidence": MASK if item.get("Match") or item.get("Secret") else None,
                 "metadata": {
                     "commit": item.get("Commit"),
                     "author": item.get("Author"),
-                    "secret": item.get("Secret"),
                 },
             }
         )
@@ -123,10 +123,14 @@ def execute_security_job(job_id: str) -> str:
                     "--report-path",
                     f"/reports/{report_file}",
                     "--no-git",
+                    "--redact=100",
                 ],
                 allow_failure=True,
             )
-            raw = json.loads(report_path.read_text(encoding="utf-8")) if report_path.exists() else []
+            if not report_path.exists():
+                raise RuntimeError("Gitleaks did not generate a report")
+            raw = redact_gitleaks_report(json.loads(report_path.read_text(encoding="utf-8")))
+            report_path.write_text(json.dumps(raw, indent=2), encoding="utf-8")
             findings = parse_gitleaks(raw)
         else:
             raise RuntimeError(f"unsupported security job kind: {kind}")

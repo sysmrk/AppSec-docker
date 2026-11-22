@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
@@ -8,6 +9,7 @@ import os
 
 from fastapi import Request
 from fastapi import Cookie, Depends, FastAPI, Header, HTTPException
+from pydantic import field_validator
 from fastapi.responses import FileResponse, RedirectResponse, Response
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
 from pydantic import BaseModel, Field
@@ -17,6 +19,7 @@ from .artifacts import presigned_download_url
 from .logging_utils import log_event
 from .reports import notify, write_html_report, write_security_sarif
 from .security import enqueue_security_job
+from .sanitization import validate_repo_target
 
 
 app = FastAPI(title="AppSec Pipeline API", version="0.1.0")
@@ -85,7 +88,14 @@ class PolicyRequest(BaseModel):
 class AcceptRiskRequest(BaseModel):
     reason: str = Field(min_length=3)
     owner: str = Field(min_length=1)
-    expires_at: str | None = None
+    expires_at: datetime
+
+    @field_validator("expires_at")
+    @classmethod
+    def require_future_expiry(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value <= datetime.now(timezone.utc):
+            raise ValueError("expires_at must be a future timezone-aware datetime")
+        return value
 
 
 class UserRequest(BaseModel):
@@ -128,6 +138,35 @@ def require_role(*roles: str):
     return dependency
 
 
+def require_project(conn, user: dict[str, Any], project_id: Any, write: bool = False) -> None:
+    # NULL means legacy/global content: visible to authenticated users.
+    if project_id and not db.user_can_access_project(conn, user, str(project_id), write=write):
+        raise HTTPException(status_code=403, detail="project access denied")
+
+
+def require_resource(conn, user: dict[str, Any], kind: str, identifier: str, write: bool = False) -> None:
+    queries = {
+        "pipeline": "SELECT project_id FROM pipeline_runs WHERE id::text = %s",
+        "pipeline_job": "SELECT project_id FROM pipeline_jobs WHERE id::text = %s",
+        "security_job": "SELECT project_id FROM security_jobs WHERE id::text = %s",
+        "finding": """SELECT j.project_id FROM security_findings f
+                     JOIN security_jobs j ON j.id = f.job_id WHERE f.id::text = %s""",
+        "scan": """SELECT p.project_id FROM scan_runs s
+                   LEFT JOIN pipeline_runs p ON p.id = s.pipeline_id WHERE s.id::text = %s""",
+        "artifact": """SELECT COALESCE(p.project_id, p2.project_id) AS project_id
+                       FROM artifacts a LEFT JOIN pipeline_runs p ON p.id = a.pipeline_id
+                       LEFT JOIN scan_runs s ON s.id = a.scan_id
+                       LEFT JOIN pipeline_runs p2 ON p2.id = s.pipeline_id
+                       WHERE a.id::text = %s""",
+    }
+    if kind not in queries:
+        raise HTTPException(status_code=404, detail="unsupported resource")
+    row = conn.execute(queries[kind], (identifier,)).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="resource not found")
+    require_project(conn, user, row["project_id"], write=write)
+
+
 @app.get("/")
 def index() -> dict[str, str]:
     return {"service": "appsec-api", "status": "ok"}
@@ -158,7 +197,7 @@ def login(request: LoginRequest, response: Response) -> dict[str, Any]:
         token,
         httponly=True,
         samesite="lax",
-        secure=False,
+        secure=os.environ.get("APPSEC_SESSION_COOKIE_SECURE", "true").lower() in ("1", "true", "yes"),
         expires=expires_at,
         path="/",
     )
@@ -195,12 +234,13 @@ def create_pipeline(
 @app.get("/jobs")
 def list_jobs(limit: int = 20, user: dict[str, Any] = Depends(current_user)) -> list[dict[str, Any]]:
     with db.connect() as conn:
-        return db.list_jobs(conn, limit)
+        return db.list_jobs(conn, limit, user)
 
 
 @app.post("/jobs/{job_id}/stop")
 def stop_pipeline_job(job_id: str, user: dict[str, Any] = Depends(require_role("admin", "operator"))) -> dict[str, str]:
     with db.connect() as conn:
+        require_resource(conn, user, "pipeline_job", job_id, write=True)
         if not db.cancel_pipeline_job(conn, job_id):
             raise HTTPException(status_code=409, detail="only queued pipeline jobs can be stopped")
         db.insert_audit(conn, str(user["id"]), "pipeline_job.stop", "pipeline_job", job_id, {})
@@ -210,6 +250,7 @@ def stop_pipeline_job(job_id: str, user: dict[str, Any] = Depends(require_role("
 @app.delete("/jobs/{job_id}")
 def delete_pipeline_job(job_id: str, user: dict[str, Any] = Depends(require_role("admin", "operator"))) -> dict[str, str]:
     with db.connect() as conn:
+        require_resource(conn, user, "pipeline_job", job_id, write=True)
         if not db.delete_queued_pipeline_job(conn, job_id):
             raise HTTPException(status_code=409, detail="only queued pipeline jobs can be deleted")
         db.insert_audit(conn, str(user["id"]), "pipeline_job.delete", "pipeline_job", job_id, {})
@@ -222,6 +263,7 @@ def get_pipeline(pipeline_id: str, user: dict[str, Any] = Depends(current_user))
         pipeline = db.get_pipeline(conn, pipeline_id)
         if not pipeline:
             raise HTTPException(status_code=404, detail="pipeline not found")
+        require_project(conn, user, pipeline.get("project_id"))
         payload = db.pipeline_summary(conn, pipeline_id)
     payload["reports"] = reports_with_downloads(payload.get("reports", []))
     return payload
@@ -294,6 +336,10 @@ def create_security_job(
     with db.connect() as conn:
         if request.project_id and not db.user_can_access_project(conn, user, request.project_id, write=True):
             raise HTTPException(status_code=403, detail="project access denied")
+    try:
+        validate_repo_target(request.target)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
     job_id = enqueue_security_job(request.kind, request.target, str(user["id"]), request.priority, request.profile, request.project_id)
     with db.connect() as conn:
         db.insert_audit(conn, str(user["id"]), "security.enqueue", "security_job", job_id, request.model_dump())
@@ -365,12 +411,13 @@ def create_policy(request: PolicyRequest, user: dict[str, Any] = Depends(require
 @app.get("/api/security-jobs")
 def security_jobs(limit: int = 50, user: dict[str, Any] = Depends(current_user)) -> list[dict[str, Any]]:
     with db.connect() as conn:
-        return db.list_security_jobs(conn, limit)
+        return db.list_security_jobs(conn, limit, user)
 
 
 @app.post("/api/security-jobs/{job_id}/stop")
 def stop_security_job(job_id: str, user: dict[str, Any] = Depends(require_role("admin", "operator"))) -> dict[str, str]:
     with db.connect() as conn:
+        require_resource(conn, user, "security_job", job_id, write=True)
         if not db.cancel_security_job(conn, job_id):
             raise HTTPException(status_code=409, detail="only queued security jobs can be stopped")
         db.insert_audit(conn, str(user["id"]), "security_job.stop", "security_job", job_id, {})
@@ -380,6 +427,7 @@ def stop_security_job(job_id: str, user: dict[str, Any] = Depends(require_role("
 @app.delete("/api/security-jobs/{job_id}")
 def delete_security_job(job_id: str, user: dict[str, Any] = Depends(require_role("admin", "operator"))) -> dict[str, str]:
     with db.connect() as conn:
+        require_resource(conn, user, "security_job", job_id, write=True)
         if not db.delete_queued_security_job(conn, job_id):
             raise HTTPException(status_code=409, detail="only queued security jobs can be deleted")
         db.insert_audit(conn, str(user["id"]), "security_job.delete", "security_job", job_id, {})
@@ -390,6 +438,8 @@ def delete_security_job(job_id: str, user: dict[str, Any] = Depends(require_role
 def security_job(job_id: str, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
     with db.connect() as conn:
         detail = db.security_job_detail(conn, job_id)
+        if detail:
+            require_project(conn, user, detail["job"].get("project_id"))
     if not detail:
         raise HTTPException(status_code=404, detail="security job not found")
     detail["reports"] = reports_with_downloads(detail.get("reports", []))
@@ -403,12 +453,13 @@ def accept_finding(
     user: dict[str, Any] = Depends(require_role("admin", "operator")),
 ) -> dict[str, Any]:
     with db.connect() as conn:
+        require_resource(conn, user, "finding", finding_id, write=True)
         risk_id = db.accept_security_finding(
             conn,
             finding_id,
             request.reason,
             request.owner,
-            request.expires_at,
+            request.expires_at.isoformat(),
             str(user["id"]),
         )
         db.insert_audit(conn, str(user["id"]), "risk.accept", "security_finding", finding_id, request.model_dump())
@@ -418,6 +469,7 @@ def accept_finding(
 @app.post("/api/security-jobs/{job_id}/reports/html")
 def security_html_report(job_id: str, user: dict[str, Any] = Depends(current_user)) -> dict[str, str]:
     with db.connect() as conn:
+        require_resource(conn, user, "security_job", job_id)
         detail = db.security_job_detail(conn, job_id)
     if not detail:
         raise HTTPException(status_code=404, detail="security job not found")
@@ -432,6 +484,8 @@ def security_html_report(job_id: str, user: dict[str, Any] = Depends(current_use
 
 @app.post("/api/security-jobs/{job_id}/reports/sarif")
 def security_sarif_report(job_id: str, user: dict[str, Any] = Depends(current_user)) -> dict[str, str]:
+    with db.connect() as conn:
+        require_resource(conn, user, "security_job", job_id)
     path = write_security_sarif(job_id)
     with db.connect() as conn:
         report = db.latest_generated_report(conn, "security_job", job_id, "sarif")
@@ -441,6 +495,7 @@ def security_sarif_report(job_id: str, user: dict[str, Any] = Depends(current_us
 @app.post("/api/pipelines/{pipeline_id}/reports/html")
 def pipeline_html_report(pipeline_id: str, user: dict[str, Any] = Depends(current_user)) -> dict[str, str]:
     with db.connect() as conn:
+        require_resource(conn, user, "pipeline", pipeline_id)
         payload = db.pipeline_summary(conn, pipeline_id)
     if not payload.get("pipeline"):
         raise HTTPException(status_code=404, detail="pipeline not found")
@@ -456,20 +511,24 @@ def pipeline_html_report(pipeline_id: str, user: dict[str, Any] = Depends(curren
 @app.get("/api/pipelines/{pipeline_id}/reports")
 def pipeline_reports(pipeline_id: str, user: dict[str, Any] = Depends(current_user)) -> list[dict[str, Any]]:
     with db.connect() as conn:
+        require_resource(conn, user, "pipeline", pipeline_id)
         return reports_with_downloads(db.list_generated_reports(conn, "pipeline", pipeline_id))
 
 
 @app.get("/api/security-jobs/{job_id}/reports")
 def security_reports(job_id: str, user: dict[str, Any] = Depends(current_user)) -> list[dict[str, Any]]:
     with db.connect() as conn:
+        require_resource(conn, user, "security_job", job_id)
         return reports_with_downloads(db.list_generated_reports(conn, "security_job", job_id))
 
 
 @app.get("/api/reports/{report_id}/download")
 def download_report(report_id: str, request: Request):
-    require_download_auth(request)
+    user = require_download_auth(request)
     with db.connect() as conn:
         report = db.generated_report(conn, report_id)
+        if report:
+            require_resource(conn, user, report["resource_type"], report["resource_id"])
     if not report:
         raise HTTPException(status_code=404, detail="report not found")
     return download_path(str(report["path"]))
@@ -477,8 +536,9 @@ def download_report(report_id: str, request: Request):
 
 @app.get("/api/artifacts/{artifact_id}/download")
 def download_artifact(artifact_id: str, request: Request):
-    require_download_auth(request)
+    user = require_download_auth(request)
     with db.connect() as conn:
+        require_resource(conn, user, "artifact", artifact_id)
         artifact = db.artifact(conn, artifact_id)
     if not artifact:
         raise HTTPException(status_code=404, detail="artifact not found")
@@ -487,8 +547,9 @@ def download_artifact(artifact_id: str, request: Request):
 
 @app.get("/api/scans/{scan_id}/report/download")
 def download_scan_report(scan_id: str, request: Request):
-    require_download_auth(request)
+    user = require_download_auth(request)
     with db.connect() as conn:
+        require_resource(conn, user, "scan", scan_id)
         try:
             scan = db.get_scan(conn, scan_id)
         except RuntimeError:
@@ -532,10 +593,9 @@ def external_api_path(path: str) -> str:
     return f"{prefix}{path}"
 
 
-def require_download_auth(request: Request) -> None:
-    if os.environ.get("DOWNLOADS_REQUIRE_AUTH", "false").lower() not in ("1", "true", "yes"):
-        return
-    current_user(
+def require_download_auth(request: Request) -> dict[str, Any]:
+    # A UUID or artifact URL is not an authentication mechanism.
+    return current_user(
         x_api_key=request.headers.get("X-API-Key"),
         appsec_session=request.cookies.get("appsec_session"),
     )

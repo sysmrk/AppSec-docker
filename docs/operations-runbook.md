@@ -62,3 +62,14 @@ Do not remove named volumes unless data loss is intended.
 - Put workers on dedicated hosts when possible.
 - Use a real secret manager for production secrets.
 - Expose API only behind TLS and identity-aware proxy.
+
+
+## Security upgrade: redact historical secrets
+
+1. Back up PostgreSQL securely and restrict access to existing report volumes/S3/backup snapshots.
+2. Run `./scripts/appsecctl.sh migrate` (migration 0006 scrubs Gitleaks raw_report and evidence/secret metadata stored in PostgreSQL).
+3. Delete/regenerate reports that may contain raw credentials from pre-upgrade runs, including remote S3 objects and archival backups; **rotate exposed tokens/passwords**, because deleting reports does not revoke credentials.
+4. Configure `SECURITY_ALLOWED_GIT_HOSTS`, `APPSEC_SESSION_COOKIE_SECURE=true` behind TLS and enforce report authentication.
+5. Validate with `PYTHONPATH=runner python3 -m unittest discover -s tests -v`, then exercise the API with distinct users in different projects.
+
+Limitation: Existing generated HTML/SARIF and Gitleaks JSON files are not automatically rewritten by the DB migration. Do not share old download links.

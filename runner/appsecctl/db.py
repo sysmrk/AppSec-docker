@@ -15,6 +15,8 @@ import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
+from .sanitization import sanitize_security_detail
+
 
 def database_url() -> str:
     url = os.environ.get("DATABASE_URL")
@@ -726,15 +728,23 @@ def fail_job(conn: psycopg.Connection, job_id: str, message: str) -> None:
     )
 
 
-def list_jobs(conn: psycopg.Connection, limit: int = 20) -> list[dict[str, Any]]:
+def list_jobs(conn: psycopg.Connection, limit: int = 20, user: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    is_admin = user is None or user.get("role") == "admin"
+    user_id = str(user["id"]) if user else None
     rows = conn.execute(
         """
-        SELECT id, requested_image, status, priority, attempts, max_attempts, pipeline_id, project_id, last_error, created_at, started_at, finished_at
-        FROM pipeline_jobs
-        ORDER BY created_at DESC
+        SELECT j.id, j.requested_image, j.status, j.priority, j.attempts, j.max_attempts,
+               j.pipeline_id, j.project_id, j.last_error, j.created_at, j.started_at, j.finished_at
+        FROM pipeline_jobs j
+        WHERE %s OR j.project_id IS NULL OR EXISTS (
+            SELECT 1 FROM projects p
+            JOIN team_members tm ON tm.team_id = p.team_id
+            WHERE p.id = j.project_id AND tm.user_id = %s
+        )
+        ORDER BY j.created_at DESC
         LIMIT %s
         """,
-        (limit,),
+        (is_admin, user_id, max(1, min(limit, 100))),
     ).fetchall()
     return [dict(row) for row in rows]
 
@@ -1066,18 +1076,25 @@ def insert_security_findings(
         )
 
 
-def list_security_jobs(conn: psycopg.Connection, limit: int = 50) -> list[dict[str, Any]]:
+def list_security_jobs(conn: psycopg.Connection, limit: int = 50, user: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    is_admin = user is None or user.get("role") == "admin"
+    user_id = str(user["id"]) if user else None
     rows = conn.execute(
         """
         SELECT sj.id, sj.kind, sj.target, sj.status, sj.finding_count, sj.high_count, sj.medium_count,
                sj.low_count, sj.info_count, sj.started_at, sj.finished_at, sj.error_message,
-               u.username AS requested_by
+               sj.project_id, u.username AS requested_by
         FROM security_jobs sj
         LEFT JOIN users u ON u.id = sj.requested_by
+        WHERE %s OR sj.project_id IS NULL OR EXISTS (
+            SELECT 1 FROM projects p
+            JOIN team_members tm ON tm.team_id = p.team_id
+            WHERE p.id = sj.project_id AND tm.user_id = %s
+        )
         ORDER BY sj.started_at DESC
         LIMIT %s
         """,
-        (limit,),
+        (is_admin, user_id, max(1, min(limit, 100))),
     ).fetchall()
     return [dict(row) for row in rows]
 
@@ -1125,7 +1142,7 @@ def security_job_detail(conn: psycopg.Connection, job_id: str) -> dict[str, Any]
         (job_id,),
     ).fetchall()
     reports = list_generated_reports(conn, "security_job", job_id)
-    return {"job": dict(job), "findings": [dict(row) for row in findings], "reports": reports}
+    return sanitize_security_detail({"job": dict(job), "findings": [dict(row) for row in findings], "reports": reports})
 
 
 def accept_security_finding(
