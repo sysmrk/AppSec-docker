@@ -97,7 +97,7 @@ def get_pipeline(pipeline_id: str) -> dict[str, Any]:
 
 @mcp.tool()
 def list_image_vulnerabilities(
-    pipeline_id: str, phase: str = "patched", limit: int = 30
+    pipeline_id: str, phase: str = "original", limit: int = 30
 ) -> dict[str, Any]:
     """Return CVE/package/version findings for original or patched scans, max 100."""
     if phase not in ("original", "patched", "manual"):
