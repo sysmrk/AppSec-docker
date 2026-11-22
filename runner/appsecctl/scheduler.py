@@ -21,6 +21,8 @@ def main() -> int:
     print(f"scheduler started; polling every {interval}s", flush=True)
 
     while True:
+        with db.connect() as conn:
+            db.record_service_heartbeat(conn, "scheduler", os.environ.get("HOSTNAME", "scheduler"))
         count = enqueue_due()
         if count:
             print(f"enqueued {count} scheduled image(s)", flush=True)
