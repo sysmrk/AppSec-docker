@@ -2,7 +2,7 @@ COMPOSE ?= docker compose
 COMPOSE_FILE ?= docker-compose.yaml
 PROFILE ?= platform
 
-.PHONY: help preflight validate init migrate up down restart ps logs build harbor-install harbor-login harbor-status report-metabase trivy-db mcp-up mcp-down mcp-logs test clean
+.PHONY: help setup doctor preflight validate init migrate up down restart ps logs build harbor-install harbor-login harbor-status report-metabase trivy-db mcp-up mcp-down mcp-logs test clean
 
 help:
 	@printf '%s\n' \
@@ -26,6 +26,12 @@ help:
 		'  make mcp-down         Stop optional MCP service only' \
 		'  make mcp-logs         Follow optional MCP logs' \
 		'  make test             Run Python security unit tests'
+
+setup:
+	./appsec setup
+
+doctor:
+	./appsec doctor
 
 preflight:
 	./scripts/preflight.sh

@@ -25,3 +25,7 @@ jobs:
           PYTHONPATH=runner:integrations/mcp python -m unittest discover -s tests -p 'test_*.py' -v
       - name: Compile optional MCP module
         run: python -m py_compile integrations/mcp/appsec_mcp.py
+      - name: Check first-party UI JavaScript syntax
+        run: node --check runner/appsecctl/webui/assets/app.js
+      - name: Validate CLI syntax
+        run: python -m py_compile appsec

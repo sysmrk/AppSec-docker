@@ -169,6 +169,10 @@ def doctor(_args) -> None:
             show(".env file permissions", "WARN", "Run chmod 600 .env")
         if settings.get("APPSEC_SESSION_COOKIE_SECURE") == "false":
             show("Session cookies", "WARN", "HTTP localhost only; enable Secure behind HTTPS")
+        if settings.get("MINIO_ROOT_PASSWORD") != settings.get("S3_SECRET_ACCESS_KEY"):
+            show("MinIO credentials", "WARN", "Local S3 access requires matching credentials or a dedicated service account")
+        if settings.get("APPSEC_PATCH_ENABLED", "false").lower() in ("1", "true", "yes"):
+            show("Patch executor", "WARN", "Privileged BuildKit must run on isolated hosts")
     if not shutil.which("docker"):
         show("Docker CLI", "FAIL", "Install Docker Engine with Compose v2")
     else:
@@ -182,6 +186,27 @@ def doctor(_args) -> None:
                 show(name, "OK" if result.returncode == 0 else "FAIL", "" if result.returncode == 0 else "Check Docker or configuration")
             except (OSError, subprocess.TimeoutExpired):
                 show(name, "FAIL", "Cannot execute check")
+    try:
+        proc = subprocess.run(
+            ["docker", "compose", "-f", str(COMPOSE_FILE), "--profile", "platform", "--profile", "mcp", "ps", "--format", "json"],
+            cwd=ROOT, capture_output=True, text=True, timeout=20, check=False,
+        )
+        if proc.returncode == 0:
+            import json
+            raw = proc.stdout.strip()
+            if raw:
+                entries = json.loads(raw) if raw.startswith("[") else [json.loads(line) for line in raw.splitlines()]
+                by_service = {entry.get("Service", ""): entry for entry in entries}
+                for name in ("postgres", "api", "nginx", "worker", "scheduler", "grafana", "minio"):
+                    entry = by_service.get(name)
+                    status = str(entry.get("State", "")) if entry else ""
+                    health = str(entry.get("Health", "")) if entry else ""
+                    healthy = status == "running" and health not in ("unhealthy", "starting")
+                    show("Container " + name, "OK" if healthy else "WARN",
+                         (status + (" / " + health if health else "")) if entry else "not started")
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        show("Container diagnostics", "WARN", "Could not parse Compose status")
+
     try:
         with urllib.request.urlopen("http://127.0.0.1:8080/appsec-api/health", timeout=5) as response:
             payload = response.read(1024)
