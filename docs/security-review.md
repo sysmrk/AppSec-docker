@@ -2,7 +2,7 @@
 
 Scope: default branch code, Compose config, API, DB, secret scanning, CI and MCP design. Static review only: no Docker runtime or live Postgres/Harbor/BuildKit tests performed.
 
-## Changes in this hardening branch
+## Implemented changes on main
 
 | Severity | Finding | Remediation | Verification |
 | --- | --- | --- | --- |
@@ -24,7 +24,7 @@ Scope: default branch code, Compose config, API, DB, secret scanning, CI and MCP
 - DB cleanup does **not** scrub old report files, S3 objects or backups. Rotate secrets and purge/expire those copies under retention policy.
 - Existing global jobs remain shared across authenticated users; assign a Project for tenant isolation.
 - RBAC, CSRF, brute-force throttling, email/webhook SSRF, disaster recovery, vulnerability DB freshness and image signature verification require dedicated end-to-end review.
-- Tests here are source/logic-only; actual scan, Copa patch, registry push and database migration must be validated in an isolated test deployment before production sign-off.
+- CI applies migrations to actual PostgreSQL and validates Metabase card SQL with EXPLAIN. Full image scan, Copa patch, registry push, browser interaction and upgrade against production datasets still require staging verification.
 
 ## Review checklist
 
@@ -51,3 +51,12 @@ The CI test suite includes a real MCP STDIO tools/list handshake (no Postgres re
 
 
 System Health records DB heartbeats (migration 0008), not OS or Docker Socket access. Worker heartbeats can be stale while a scan is busy. The UI avoids declaring a worker down based solely on this information. Operational monitoring and alerting remain separate production concerns.
+
+
+## Manual UI and sole Metabase analytics (2026-11-22)
+
+Grafana has been removed from Compose, Nginx and tracked provisioning. Its old named Docker volume is intentionally preserved to avoid data loss. Metabase is the only dashboard system, with Security Overview, Manual Operations and Vulnerability Trends dashboards. The cards are SQL-checked in CI, but Metabase's independent authentication and global database visibility require a restricted account and ideally a SELECT-only database role for production.
+
+Manual workflows persist a scan-only job, user/Project identity, human finish or approve-patch decision, approving user/time and optional **single-attempt** patch/push continuation. Original scan and policy status must be completed before approval. Backend requires role/Project write authorization, explicit confirmation and active patch setting; Worker also checks the feature flag. Project access is rechecked against current team membership, and unassigned manual runs are private to creator/admin.
+
+**Remaining production risks:** scanning Worker Docker Socket privilege, privileged BuildKit isolation, missing OIDC/MFA/CSRF hardening, cross-Project analytics access, image signing and digest pinning, full real Docker/Harbor/Copa/browser E2E tests and backup/restore validation. No demos or fake findings are created.
