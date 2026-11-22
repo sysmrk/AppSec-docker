@@ -1,88 +1,39 @@
-# Real Image Security Workflows
+# Manual workflow state machine and approvals
 
-AppSec offers two entrypoints:
-
-1. **Manual Control Center** for users without CI/CD, with persisted human review and consent
-2. **CLI/API** for CI/CD integrations and batch automation
-
-Both use PostgreSQL jobs, Trivy, CycloneDX SBOM and the security policy engine. There is no demo mode or generated fixture data.
-
-## Manual workflow: start to finish
+The default path is read-only with respect to registries; Docker may still pull images and scanner feeds.
 
 ```text
-Create workflow (Image + optional Project)
-    |
-    v
-Queued scan -> Trivy Original Scan -> CycloneDX SBOM -> Policy -> Report
-    |
-    v
-Awaiting explicit user decision
-    |                                    |
-    | Finish without modifying image    | Approve patch + registry push
-    v                                    v
-Completed, report retained       Single-attempt continue_patch job
-                                        |
-                                        v
-                           Copa + opt-in BuildKit -> Registry Push
-                                        |
-                                        v
-                           Trivy Patched Rescan -> SBOM -> CVE Diff
-                                        |
-                                        v
-                                Final Policy + Report
+Create -> Queued -> Scan original -> SBOM -> Policy -> Review
+                                                    |        |
+                                                 Finish    Prepare patch [human approval #1]
+                                                    |        |
+                                                 Complete  Copa / local image
+                                                             |
+                                                        Rescan + SBOM
+                                                             |
+                                                     CVE diff + Policy
+                                                             |
+                                            +----------------+----------------+
+                                            |                                 |
+                                        Failed policy                     Policy passed
+                                            |                                 |
+                                      Block publication                  Final review
+                                            |                                 |
+                                      Finish locally            +------------+------------+
+                                                                |                         |
+                                                           Keep local only         Publish [approval #2]
+                                                                |                         |
+                                                             Complete       Approved registry, single push
+                                                                                           |
+                                                                                  Published / uncertain
 ```
 
-**Only the first half runs automatically.** Patch/Push must be enabled by the administrator with `./appsec start --patching` AND explicitly confirmed in the UI. Approval is recorded with user ID and timestamp. A potentially partial registry write is **never automatically retried** by the continuation job.
+**First approval** authorizes *local patch preparation*, not publication. **Second approval** authorizes a Registry write only after a successful patched scan and policy; the destination must be registered with `allow_push`. Optional `APPSEC_REQUIRE_SECOND_APPROVER=true` requires the publication authorizer to differ from the patch reviewer. API and Worker validate server-side, not just JavaScript.
 
-Use Control Center **New manual scan** → **My workflows**. You can see queue state, scan counts, file links and pending human decisions. Image input is a **registry reference**, not an archive upload.
+State data resides in `manual_workflows`, `pipeline_jobs`, `patch_runs`, `scan_runs`, `scan_diffs`, `policy_results` and `audit_logs`. Statuses include queued, scanning, awaiting_approval, patch_queued/running/failed, awaiting_publication, publication_blocked, publish_queued/publishing/published/publish_failed, completed_without_publish, completed and canceled. API decision actions: `finish`, `approve_patch` (requires `confirm_patch=true`), `approve_publish` (requires `confirm_push=true`), `skip_publish`, `cancel` (only queued).
 
-## Manual workflow API
+A publication job has `max_attempts=1`; a failed or uncertain registry push must be reconciled manually. The worker may need access to its local prepared image between approval steps. In multi-host deployments, use host affinity or a trusted staging registry with controlled promotion before scaling horizontally; local Docker caches are not portable.
 
-```bash
-# Create a scan-only manual workflow
-curl -X POST http://127.0.0.1:8080/appsec-api/api/manual-workflows \
-  -H "X-API-Key: $APPSEC_API_KEY" -H 'Content-Type: application/json' \
-  -d '{"image":"registry.example.com/team/api:1.4.0","project_id":null}'
+CLI/CI flows still support scan-only defaults via `./scripts/appsecctl.sh run IMAGE` and `./scripts/appsecctl.sh ci image IMAGE`. The legacy explicit one-shot `--patch` CLI can perform both Patch and Push and must be restricted to trusted automation operators. The human-guided two-step safety model applies to the Control Center workflow.
 
-# List authorized workflows
-curl -H "X-API-Key: $APPSEC_API_KEY" \
-  http://127.0.0.1:8080/appsec-api/api/manual-workflows
-
-# Inspect one workflow; use returned id
-curl -H "X-API-Key: $APPSEC_API_KEY" \
-  http://127.0.0.1:8080/appsec-api/api/manual-workflows/WORKFLOW_UUID
-
-# Save the decision without patching:
-curl -X POST -H "X-API-Key: $APPSEC_API_KEY" -H 'Content-Type: application/json' \
-  -d '{"action":"finish"}' \
-  http://127.0.0.1:8080/appsec-api/api/manual-workflows/WORKFLOW_UUID/decision
-
-# Advanced: requires --patching and explicit push approval
-curl -X POST -H "X-API-Key: $APPSEC_API_KEY" -H 'Content-Type: application/json' \
-  -d '{"action":"approve_patch","confirm_push":true}' \
-  http://127.0.0.1:8080/appsec-api/api/manual-workflows/WORKFLOW_UUID/decision
-```
-
-Only Admins and Operators with write permission can decide; viewers cannot. Unassigned manual workflows are private to their creator/admin. Members who lose Project access also lose access to that Project's workflows. Invalid or duplicate decisions are rejected.
-
-## CLI and CI/CD (noninteractive)
-
-```bash
-./scripts/appsecctl.sh run registry.example.com/team/api:1.4.0
-./scripts/appsecctl.sh ci image registry.example.com/team/api:1.4.0
-./scripts/appsecctl.sh enqueue registry.example.com/team/api:1.4.0
-```
-
-These default to **scan-only**. The advanced one-shot CLI uses `run ... --patch` only with an isolated executor and explicitly configured registry permissions. The public API `POST /appsec-api/pipelines` requires `mode=patch` plus `confirm_patch=true` to execute patching; it is separate from the guided workflow.
-
-Scheduled scans also default to scan-only. Existing queued jobs from before the migration may preserve prior patch mode, but Workers now independently enforce the patch feature flag before any write.
-
-## Outputs
-
-- Original and optional patched `scan_runs` with severity counts
-- Vulnerabilities with package, installed/fixed versions and severity
-- HTML report and CycloneDX SBOM
-- Policy results and violations
-- Optional patch run and before/after `scan_diffs`
-- Manual workflow approval audit trail
-- Aggregate analysis in Metabase, never an approval mechanism
+No synthetic CVEs, placeholder image states or test results are shown to users. The preflight check deliberately marks actual pull/authentication as **unverified** until a real scan.

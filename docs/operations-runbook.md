@@ -1,69 +1,75 @@
-# Operations Runbook
+# Operations Runbook — installation and recovery
 
-## Installation: first start
+## Start without CI/CD
 
-Requirements: Linux/WSL2, Docker with Compose v2, Git, Python 3.10+, a real registry/image source, network access or internal mirrors for Trivy databases.
+Prerequisites: Linux/WSL2, Docker Engine/Desktop with Compose v2, Git, Python 3.10+, registry image reachability and Trivy DB/mirror access.
 
 ```bash
 git clone https://github.com/sysmrk/AppSec-docker.git
 cd AppSec-docker
+./appsec wizard
+```
+
+The wizard confirms a scan-only startup, generates credentials and Fernet MFA key if `.env` is missing, then starts PostgreSQL, MinIO, API, Worker, Scheduler, Nginx and Metabase. **It never overwrites `.env`.** Alternative individual commands:
+
+```bash
 ./appsec setup
 ./appsec start
 ./appsec doctor
+./appsec credentials
 ```
 
-This uses `main`. The setup creates `.env` with random credentials, never overwrites an existing one and does **not** add sample data. Start runs migrations and brings up PostgreSQL, MinIO, FastAPI, Nginx, Worker, Scheduler and **Metabase**. Grafana has been removed. Privileged BuildKit and MCP stay off unless explicitly requested.
+AppSec UI: `http://127.0.0.1:8080`. Metabase: `http://127.0.0.1:3001`. Normal startup does not launch privileged BuildKit or the read-only MCP integration.
 
-AppSec UI: `http://127.0.0.1:8080`. Metabase UI: `http://127.0.0.1:3001`. Obtain both initial credentials with `./appsec credentials` (trusted interactive terminal).
-
-## Operations
+## Everyday operations
 
 ```bash
 ./appsec status
 ./appsec doctor
-./appsec logs api
 ./appsec logs worker
+./appsec logs api
 ./appsec logs scheduler
 ./appsec logs metabase
 ./appsec stop
 ```
 
-`make init`/`make up` remain compatibility aliases; `make mcp-up` is the optional read-only AI integration. Metabase dashboards are provisioned by `scripts/setup-metabase.sh`, automatically invoked on each startup (idempotent card/dashboard lookup).
+Use Control Center **System health** to inspect live PostgreSQL heartbeat/queue information. A busy worker can have a stale heartbeat; use Docker `ps` and logs for deeper diagnostics. Error codes and corrective hints are described in [User Guide](user-guide.md).
 
-## Manual workflow state
-
-The UI queues a regular `scan` job and saves a row in `manual_workflows`. A worker executes Scan + SBOM + Policy + Report. On successful completion, the row becomes **awaiting_approval**. Operator can **finish** or **approve_patch** from the UI. Approval creates a `continue_patch` job bound to the **existing pipeline ID**, with `max_attempts=1`. The worker enforces `APPSEC_PATCH_ENABLED=true`; otherwise it rejects the job. The saved decision and approving identity are audited.
-
-## Optional patch and registry writes
+## Prepare patch and publish
 
 ```bash
 ./appsec start --patching
 ```
 
-Use only on an approved isolated host. Configure registry authentication as in [registry guide](registry.md). The control center still requires two explicit UI acknowledgments. No default auto-Push.
+Only run privileged BuildKit on isolated trusted workers. An Admin must register the exact destination HTTPS hostname in **Registries**, mark `allow_push` and separately configure Registry credentials on the Worker. The first approval creates a local prepared image and rescans; second approval publishes only after passing policy. To require distinct reviewers in an organization:
 
-## Existing deployment upgrade
+```env
+APPSEC_REQUIRE_SECOND_APPROVER=true
+```
 
-1. Back up PostgreSQL, reports, S3/MinIO artifacts and current `.env`.
-2. Inspect **existing queued Patch jobs**: historical jobs may retain their previous mode. Workers reject writes while `APPSEC_PATCH_ENABLED=false`, but review them before re-enabling patching.
-3. Update the reviewed release on `main`. Run `./appsec start` to apply Alembic migrations through 0009.
-4. Verify admin login, Project RBAC, manual scanning, approval, report downloads and Metabase dashboards. Test any live migration first in staging.
-5. If upgrading an old `.env`, supply a strong `METABASE_ADMIN_PASSWORD` (at least 16 characters) and correct `METABASE_ADMIN_EMAIL`; do not rely on old hard-coded values.
-6. Remove obsolete Grafana URLs, containers and configuration. **Do not automatically delete the old Grafana Docker volume**, because it might hold data the operator wants to export.
-7. Previous Gitleaks file/S3/backups may contain raw secrets. Rotate compromised credentials and remove old copies; migration 0006 sanitizes only PostgreSQL fields.
-8. Enable secure session cookies when serving HTTPS: `APPSEC_SESSION_COOKIE_SECURE=true`. Restrict Metabase and AppSec endpoints to approved identity-aware network access.
+If push fails, check Registry for a partially published tag/digest. Do not automatically retry. Local prepared images can be lost if the Docker host changes: a multi-host architecture needs worker affinity or a controlled staging registry and promotion.
 
-## Health and monitoring
+## Identity and encryption
 
-`./appsec doctor` checks actual Docker, Compose, containers, API, database and Metabase HTTP health. Admin-only **System health** uses worker/scheduler heartbeat timestamps stored in PostgreSQL. A stale timestamp can indicate a busy worker, not necessarily a failed container.
+Human users can be disabled, reset, rotated or revoked in **Users & access**. New human users must change temporary passwords at first login. Optional MFA TOTP secrets are encrypted with `APPSEC_MFA_ENCRYPTION_KEY` (created on new `./appsec setup`). Back up this key separately from the DB; losing it makes existing enrolled TOTP secrets undecryptable. Existing installations upgrading from older versions must provision a Fernet key (32 random bytes base64 URL-safe) if enabling MFA.
 
-Metabase provides three preconfigured analytics dashboards; see [Metabase guide](metabase.md). SQL reports are **read-only** and are not an approval mechanism.
+Built-in MFA is not a replacement for enterprise OIDC/SSO. Metabase accounts and the optional MCP DB role are independent of AppSec user sessions.
 
-## Production considerations
+## Upgrade / migration
 
-- Worker Docker Socket and privileged BuildKit are sensitive execution interfaces; isolate workers.
-- Rotate all bootstrap passwords; use an enterprise secret manager.
-- Put a hardened authenticated TLS reverse proxy in front of any remote access; default listeners bind only to loopback.
-- Scope registry credentials to permitted namespaces; sign and promote images through your established controls.
-- Test backup/restore, rollback, CVE-feed freshness, S3 retention, CSRF, rate limits and multi-tenant RBAC before production approval.
-- MCP stays optional and requires a SELECT-only DB role plus strong remote authentication.
+1. Back up PostgreSQL, MinIO/S3 data, reports, credentials, MFA key and Docker volumes; test restore in staging.
+2. Review old queued `patch` jobs; with patching disabled Worker refuses them, but enabling it later may allow historical jobs.
+3. Update the tested version of `main` or checkout a release tag; run `./appsec start` to apply Alembic migrations.
+4. Check schema revisions 0010 (user lifecycle), 0011 (separate publication), 0012 (registries/inventory), 0013 (MFA) and review the approved policy.
+5. Verify login, first-password-change path, MFA enrollment/recovery, user disabling, Registry registration, manual scan, final publication approval and downloads in a staging environment.
+6. Metabase is the only dashboard (Grafana removed previously). Existing Grafana volumes are preserved for manual cleanup if needed.
+7. Old Gitleaks reports/S3/backups may contain secrets that DB migrations cannot remove. Rotate exposed credentials, purge old copies.
+
+## Production limitations
+
+- Worker mounts Docker Socket and optional BuildKit is privileged; isolate these workloads.
+- Current built-in account management, TOTP and lockout are not external OIDC/LDAP/SAML federation.
+- Metabase has a separate authentication model and global analytics; use a dedicated SELECT-only PostgreSQL role and restrict its network/user access.
+- CSRF browser-write protection uses a custom header and SameSite cookies. Review full CSRF/session protection and rate limiting during security acceptance.
+- Full Docker/Trivy/Copa/Harbor/browser E2E testing, backup/restore, HA and image digest/signature verification remain production gates.
+- Browser GUI does not upload Docker TAR archives; it accepts Registry image references only.

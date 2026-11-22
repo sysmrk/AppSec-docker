@@ -1,84 +1,98 @@
 # AppSec Control Center
 
-**Container and repository security for humans and CI/CD.** Scan actual registry images with Trivy, generate CycloneDX SBOMs, check policy, inspect CVEs and reports, and optionally patch/push through Copa. Use the built-in guided web UI or the existing CLI/API. Everything is backed by real PostgreSQL data: **there is no demo mode or synthetic result generation.**
+AppSec is a self-hosted, human-first application for **real** container and repository security operations. You do **not** need GitLab/Jenkins or a CI/CD pipeline to scan an image, inspect CVEs, build a locally patched image, and approve a Registry push. A separate CLI and API remain available for automation.
 
-**Analytics:** Metabase is the only dashboard product. Startup provisions three dashboards: **AppSec Security Overview**, **AppSec Manual Operations**, and **AppSec Vulnerability Trends**. Grafana has been removed. **AI/MCP** remains completely optional.
+**No demo mode or artificial scan data.** Reports come from Trivy, Gitleaks, Policy and the AppSec PostgreSQL database. Metabase is the **only analytics product**; Grafana was removed. An optional **read-only** MCP integration can expose analytics to an authorized AI client.
 
-> Status: development release. GitHub Actions tests syntax, unit contracts, DB migrations, manual workflow transactions, and analytics SQL. A production-like Docker/Harbor/Copa/browser end-to-end signoff is still required. See [Security Review](docs/security-review.md).
+> **Engineering status:** Release candidate for a larger product workflow, **not yet certified production-ready**. Unit tests, PostgreSQL migrations and SQL analytics run in GitHub Actions. Full Docker/Trivy/Copa/Harbor browser acceptance, isolated workers, and external SSO/OIDC are still open production gates.
 
-## Quick start (no CI/CD needed)
+## First installation
 
-Requirements: Linux or WSL2, Docker Engine or Docker Desktop, **Docker Compose v2**, Git, Python 3.10+, reachable registry images and access to the Trivy vulnerability database (or configured internal mirrors).
+Requires Linux/WSL2, Docker Engine/Desktop with Docker Compose **v2**, Python 3.10+, Git and access to approved registry images/Trivy vulnerability databases.
 
 ```bash
 git clone https://github.com/sysmrk/AppSec-docker.git
 cd AppSec-docker
+./appsec wizard
+```
+
+The interactive wizard validates Docker, generates random local credentials and an MFA encryption key in `.env` (without overwriting existing configuration), explains what will start, and runs the **scan-only** platform after confirmation. For manual operations instead:
+
+```bash
 ./appsec setup
 ./appsec start
 ./appsec doctor
+./appsec credentials
 ```
 
-Open **http://127.0.0.1:8080** on the host. Your local admin username is `admin`; use `./appsec credentials` in a trusted interactive terminal to view the initial password. The same command shows Metabase login details. Do not paste or commit secrets.
+AppSec UI: **http://127.0.0.1:8080**. Metabase Analytics: **http://127.0.0.1:3001** (own login). The initial AppSec username is `admin`. See generated initial credentials with `./appsec credentials` only on a trusted terminal.
 
-`./appsec setup` generates random passwords and API keys in `.env` with mode 0600, without overwriting existing credentials. `./appsec start` applies database migrations and starts API, Worker, Scheduler, MinIO, Nginx **and Metabase**, then provisions real analytics dashboards. No images or findings are preloaded.
+## Human-guided image workflow
 
-For remote access, use an approved HTTPS proxy and set `APPSEC_SESSION_COOKIE_SECURE=true`. The default web listeners bind to **127.0.0.1**, not the public Internet.
+1. **New manual scan**: supply an actual image reference such as `harbor.example.org/team/api:1.4.0`; choose an optional Project. The form accepts registry references, **not a TAR upload**.
+2. **Check readiness**: see actual Worker heartbeat and registered Registry metadata, clearly distinguishing unverified image pull.
+3. **Scan**: Trivy finds CVEs, creates CycloneDX SBOM, applies Policy and stores reports without patching or pushing.
+4. **Review**: use **My workflows** or **Approvals** to read severity counts, package fixes, scan details and reports.
+5. **Prepare patch** (optional): after explicit approval, Copa/BuildKit creates a **local** patched image. Trivy rescans it, compares fixed/remaining/introduced CVEs and evaluates the final Policy. **Nothing has been pushed.**
+6. **Approve publication** (separately): a valid, policy-passed prepared image can be published only after a second explicit confirmation and an Admin-approved Registry destination. Production can require **two distinct approvers** using `APPSEC_REQUIRE_SECOND_APPROVER=true`. Or choose **Finish without publishing**.
+7. **Publish and report**: an authorized Worker publishes with a single-attempt job. Ambiguous Registry errors are never automatically retried. Errors include stable codes and plain-language troubleshooting hints.
 
-## Manual image workflow — fully in the browser
+Patch preparation and publication require opt-in privileged BuildKit: `./appsec start --patching`, approved Registry credentials available to the Worker, and Registry metadata marked `allow_push`. Default installation remains scan-only.
 
-1. Sign in and select **New manual scan**.
-2. Enter an **image reference** available to the worker's registry credentials, such as `registry.example.org/team/api:1.4.0`; choose a Project if applicable.
-3. Click **Start guided scan**. The job runs Trivy → SBOM → Policy → Report, without any image modification.
-4. Open **My workflows** to follow queued, running and completed steps. Review vulnerabilities, policy results and downloadable files.
-5. At **Awaiting approval**, choose **Finish without patching**, or, only if an administrator explicitly enabled patching, check the registry-write acknowledgement and **Approve patch + registry push**.
-6. On approval, the worker continues the **same pipeline**, using its original scan to run Copa → Push → Patched Rescan → SBOM → CVE Diff → Final Policy/Report. This stage is queued once; there is no automatic retry of a potentially non-idempotent registry push.
-7. See progress and results in the same workflow. User identity, decision and time are stored for audit.
+## Main navigation
 
-The UI accepts **image references**, not Docker tar uploads. For local-only images, load the image on the scanning worker or push it to an approved registry before starting. No CI/CD pipeline is required.
-
-Repository scans are available in **Scan repository** and use Gitleaks with redacted findings. Administrators can use **Administration** for teams, projects, users, membership and severity-threshold policies. Viewers can inspect only permitted data, not start scans.
-
-## Common commands
-
-| Command | Function |
+| Screen | Purpose |
 | --- | --- |
-| `./appsec setup` | First-run secure configuration, preserves existing `.env` |
-| `./appsec start` | Start scanning platform **and Metabase** |
-| `./appsec doctor` | Diagnose Docker, Compose, containers, API/DB and Metabase |
-| `./appsec status` | Check actual containers |
-| `./appsec logs worker` | Inspect scanner problems |
-| `./appsec credentials` | View AppSec/Metabase admin credentials locally |
-| `./appsec stop` | Stop services without deleting named volumes |
-| `./appsec start --patching` | **Explicitly** enable privileged BuildKit and registry-write workflow |
-| `make mcp-up` / `make mcp-down` | Opt-in read-only AI MCP service |
+| Overview | Live queue, recent scans and security findings |
+| New manual scan | Guided, non-CI/CD image scanning with readiness check |
+| My workflows | Scan stages, CVEs, safe decisions, patch and publication status |
+| Images & scans | Image inventory, history, search, two-scan CVE comparison |
+| Approvals | Authorized pending manual decisions |
+| Scan repository | HTTPS Git repository Gitleaks scan and redacted findings |
+| Results | CVE details, policy, SBOM, patch diff and report downloads |
+| Users & access (admin) | User lifecycle, roles, sessions, password reset, API key rotation |
+| Registries (admin) | HTTPS Registry metadata and explicit push authorization |
+| Administration (admin) | Teams, Projects, policies and new human account creation |
+| My profile | Password changes, encrypted authenticator MFA, recovery codes |
+| System health (admin) | Real Worker/Scheduler heartbeats and queues |
+| Integrations | Metabase, optional read-only MCP |
 
-Metabase runs at **http://127.0.0.1:3001**. Sign in using the credentials created by `setup`. Dashboards are saved and can be expanded there; the Control Center remains the recommended interface for actual security operations and approvals.
+## User and enterprise safety
 
-For automated CI/CD, `./scripts/appsecctl.sh ci image "$IMAGE_REF"` or the `POST /appsec-api/pipelines` REST endpoint remain supported; both use scan-only defaults. The old one-shot Patch+Push path is advanced and must be selected explicitly.
+The built-in identity model supports `admin`, `operator`, `viewer`, Project/Team membership, disabling accounts, safe last-admin protection, session revocation, API key rotation, login lockout and mandatory first-login password change for new users. Human API keys are **not issued by default**.
 
-## Safety and upgrades
+Optional authenticator MFA supports encrypted TOTP secrets, replay prevention and one-time recovery codes. `./appsec setup` generates the encryption key for a fresh installation; back up that key securely before production. MFA enrollment and account actions are audited. It is **not** equivalent to corporate OIDC/LDAP/SAML SSO.
 
-- Privileged **BuildKit is off by default**. The Worker still has Docker Socket access to run Trivy and is a high-trust component: isolate it from sensitive workloads.
-- Workflow approvals are persisted and require operator/admin privileges and Project write access. A manual workflow in a Project is visible to current team members; an unassigned workflow is visible only to its creator and admins.
-- Before upgrading existing deployments, back up PostgreSQL and object storage, inspect queued legacy Patch jobs and test migrations. Migration **0009** adds manual workflow state and a one-time continuation mode.
-- Historical Gitleaks exports/files/S3 objects/backups may contain secrets. Rotate exposed credentials and remove old stored copies; database redaction cannot purge old files.
-- Metabase authentication is independent of AppSec accounts. Restrict access: it is a **global analytics** view, not per-Project RBAC. Do not publish the Metabase port without identity controls.
-- Grafana is **no longer included or started**. Its previously existing Docker volume is not automatically deleted (to avoid data loss).
-- Release policy: changes are committed directly to `main`. GitHub Actions creates an annotated **`change-<SHA>` tag for every main commit**, plus semantic release tags from `VERSION`.
+All data-changing cookie-session requests require a first-party browser header. Report downloads require valid identity and access. The Worker still has Docker Socket privileges for scanners; **production isolation remains essential**. Metabase has independent authentication and globally scoped analytics, so restrict its users and use SELECT-only DB credentials in production.
+
+## Commands
+
+| Command | Description |
+| --- | --- |
+| `./appsec wizard` | Guided first run (starts scan-only after confirmation) |
+| `./appsec setup` | Generate secure `.env`, never overwrite existing config |
+| `./appsec start` | Start standard platform, migrate DB, provision Metabase |
+| `./appsec start --patching` | Enable optional privileged patch executor |
+| `./appsec doctor` | Check Docker, API/DB, workers, Metabase and configuration |
+| `./appsec status` / `./appsec logs worker` | Inspect actual execution health |
+| `./appsec stop` | Stop containers, preserve named volumes |
+| `make mcp-up` / `make mcp-down` | Opt-in read-only AI adapter |
+| `./scripts/appsecctl.sh ci image IMAGE` | Scan-only CI security gate |
 
 ## Documentation
 
-| Guide | Contents |
-| --- | --- |
-| [User Guide](docs/user-guide.md) | Manual UI, approvals, CVE reports, administration |
-| [Operations Runbook](docs/operations-runbook.md) | Install, migrate, monitor and troubleshoot |
-| [Workflow](docs/workflow.md) | Scan, review, approve, patch, rescan, finish |
-| [Architecture](docs/architecture.md) | API, Worker, queue, permissions and dependencies |
-| [Metabase analytics](docs/metabase.md) | Three dashboards, provisioning and access |
-| [API](docs/api-guide.md) | REST endpoints, sessions and automation |
-| [CI and Policy](docs/ci-policy-guide.md) | Scan gates and pipeline integration |
-| [Registry](docs/registry.md) | Optional Harbor/Copa/BuildKit patching |
-| [Database](docs/database.md) | Tables, workflows, migration versions |
-| [Optional MCP](docs/mcp.md) | Local AI, Inspector, secure remote access |
-| [Security Review](docs/security-review.md) | Fixed and remaining risks |
-| [Production Roadmap](docs/production-roadmap.md) | Open production gates |
+- [Human User Guide](docs/user-guide.md)
+- [Workflow State and Approval Guide](docs/workflow.md)
+- [Installation & Operations Runbook](docs/operations-runbook.md)
+- [Registry & Publication](docs/registry.md)
+- [User Identity & Enterprise Controls](docs/enterprise-features.md)
+- [Image Inventory & Diagnostics](docs/image-inventory.md)
+- [Metabase Analytics](docs/metabase.md)
+- [API Guide](docs/api-guide.md)
+- [Database & Migrations](docs/database.md)
+- [Architecture](docs/architecture.md)
+- [CI Security Gate](docs/ci-policy-guide.md)
+- [Optional MCP / AI](docs/mcp.md)
+- [Security Review](docs/security-review.md) / [Production Roadmap](docs/production-roadmap.md)
+
+**Versioning:** changes are committed directly to `main` and annotated `change-<SHA>` tags are created automatically by GitHub Actions. The `VERSION` file controls semantic version tags. Always inspect CI and test in staging before deploying to a sensitive environment.
