@@ -100,6 +100,28 @@ def setup(_args) -> None:
     print("For an HTTPS deployment, set APPSEC_SESSION_COOKIE_SECURE=true before use.")
 
 
+def wizard(args) -> None:
+    """Human-friendly guided first run, no patching or registry publication."""
+    print("AppSec onboarding wizard — real services, no demo data", flush=True)
+    check_prerequisites()
+    if not ENV_FILE.exists():
+        setup(args)
+    else:
+        print("Using existing .env; existing credentials remain untouched.")
+    print("\nPlan: start PostgreSQL, MinIO, API, Workers and Metabase (scan-only).")
+    print("AppSec UI: http://127.0.0.1:8080; Metabase: http://127.0.0.1:3001")
+    print("Registry push and MCP will remain disabled.")
+    if not args.yes:
+        if not sys.stdin.isatty():
+            raise RuntimeError("Interactive terminal required; use ./appsec wizard --yes to confirm startup")
+        if input("Start the platform using this configuration? [y/N] ").strip().lower() != "y":
+            print("No containers started. You can run ./appsec start later.")
+            return
+    start(argparse.Namespace(patching=False, analytics=True))
+    print("\nNext: open the Control Center and choose 'New manual scan'.")
+    print("If something fails, run ./appsec doctor and ./appsec logs worker.")
+
+
 def start(args) -> None:
     if not ENV_FILE.exists():
         raise RuntimeError(".env missing. Run './appsec setup' first.")
@@ -243,6 +265,8 @@ def main() -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     for name in ("setup", "stop", "status", "doctor", "credentials"):
         sub.add_parser(name)
+    wizard_parser = sub.add_parser("wizard", help="Guided first run: checks, secure config and scan-only startup")
+    wizard_parser.add_argument("--yes", action="store_true", help="Confirm scan-only startup for unattended setup")
     start_parser = sub.add_parser("start", help="Start real AppSec services and migrate the DB")
     start_parser.add_argument("--analytics", action="store_true", help="Legacy compatibility; Metabase is enabled by default")
     start_parser.add_argument("--patching", action="store_true", help="Enable privileged BuildKit and explicit patch/push mode")
@@ -250,7 +274,7 @@ def main() -> int:
     logs_parser.add_argument("service", choices=SERVICE_CHOICES)
     args = parser.parse_args()
     commands = {
-        "setup": setup, "start": start, "stop": stop,
+        "setup": setup, "wizard": wizard, "start": start, "stop": stop,
         "status": status, "doctor": doctor, "credentials": credentials, "logs": logs,
     }
     try:
