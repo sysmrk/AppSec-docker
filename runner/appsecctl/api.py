@@ -872,6 +872,7 @@ def external_api_path(path: str) -> str:
 def require_download_auth(request: Request) -> dict[str, Any]:
     # A UUID or artifact URL is not an authentication mechanism.
     return current_user(
+        request=request,
         x_api_key=request.headers.get("X-API-Key"),
         appsec_session=request.cookies.get("appsec_session"),
     )
