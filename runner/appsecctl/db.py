@@ -104,7 +104,7 @@ def secret_or_env(name: str, default: str | None = None) -> str | None:
 def user_by_api_key(conn: psycopg.Connection, api_key: str) -> dict[str, Any] | None:
     row = conn.execute(
         """
-        SELECT id, username, display_name, role, disabled, created_at, last_seen_at
+        SELECT id, username, display_name, role, disabled, must_change_password, created_at, last_seen_at
         FROM users
         WHERE api_key_hash = %s AND disabled = false
         """,
@@ -119,17 +119,33 @@ def user_by_api_key(conn: psycopg.Connection, api_key: str) -> dict[str, Any] | 
 def authenticate_user(conn: psycopg.Connection, username: str, password: str) -> dict[str, Any] | None:
     row = conn.execute(
         """
-        SELECT id, username, display_name, role, disabled, created_at, last_seen_at, password_hash
+        SELECT id, username, display_name, role, disabled, must_change_password, failed_login_count, locked_until, created_at, last_seen_at, password_hash
         FROM users
         WHERE username = %s AND disabled = false
         """,
         (username,),
     ).fetchone()
-    if not row or not verify_password(password, row.get("password_hash")):
+    if not row:
         return None
-    conn.execute("UPDATE users SET last_seen_at = now() WHERE id = %s", (row["id"],))
+    locked_until = row.get("locked_until")
+    if locked_until is not None and locked_until > datetime.now(timezone.utc):
+        return None
+    if not verify_password(password, row.get("password_hash")):
+        conn.execute("""
+            UPDATE users SET failed_login_count = failed_login_count + 1,
+              locked_until = CASE WHEN failed_login_count + 1 >= 5
+                THEN now() + interval '15 minutes' ELSE NULL END
+            WHERE id = %s
+        """, (row["id"],))
+        return None
+    conn.execute("""
+        UPDATE users SET last_seen_at = now(), failed_login_count = 0,
+          locked_until = NULL WHERE id = %s
+    """, (row["id"],))
     result = dict(row)
     result.pop("password_hash", None)
+    result.pop("failed_login_count", None)
+    result.pop("locked_until", None)
     return result
 
 
@@ -149,7 +165,7 @@ def create_session(conn: psycopg.Connection, user_id: str, hours: int = 12) -> t
 def user_by_session(conn: psycopg.Connection, token: str) -> dict[str, Any] | None:
     row = conn.execute(
         """
-        SELECT u.id, u.username, u.display_name, u.role, u.disabled, u.created_at, u.last_seen_at
+        SELECT u.id, u.username, u.display_name, u.role, u.disabled, u.must_change_password, u.created_at, u.last_seen_at
         FROM session_tokens st
         JOIN users u ON u.id = st.user_id
         WHERE st.token_hash = %s
@@ -899,8 +915,9 @@ def list_audit_logs(conn: psycopg.Connection, limit: int = 100) -> list[dict[str
 def list_users(conn: psycopg.Connection) -> list[dict[str, Any]]:
     rows = conn.execute(
         """
-        SELECT id, username, display_name, role, disabled, created_at, last_seen_at
-        FROM users
+        SELECT id, username, display_name, role, disabled, must_change_password,
+               failed_login_count, locked_until, password_changed_at, api_key_rotated_at,
+               created_at, last_seen_at\n        FROM users
         ORDER BY created_at
         """
     ).fetchall()
@@ -1391,3 +1408,96 @@ def service_health_summary(conn: psycopg.Connection) -> dict[str, Any]:
         "secret_queue": [dict(row) for row in security],
         "note": "A stale heartbeat may indicate a busy worker; verify with ./appsec status and logs.",
     }
+
+def update_user_admin(
+    conn: psycopg.Connection, user_id: str, actor_id: str,
+    *, display_name: str | None = None, role: str | None = None,
+    disabled: bool | None = None,
+) -> dict[str, Any] | None:
+    # Lock ALL active admins to prevent concurrent requests removing the last one.
+    active_admins = conn.execute(
+        "SELECT id FROM users WHERE role='admin' AND disabled=false FOR UPDATE"
+    ).fetchall()
+    row = conn.execute(
+        "SELECT id, username, display_name, role, disabled FROM users WHERE id=%s FOR UPDATE",
+        (user_id,),
+    ).fetchone()
+    if not row:
+        return None
+    future_role = role if role is not None else row["role"]
+    future_disabled = disabled if disabled is not None else row["disabled"]
+    if str(user_id) == str(actor_id) and (future_disabled or future_role != "admin"):
+        raise ValueError("Administrators cannot disable or demote their own account")
+    if row["role"] == "admin" and not row["disabled"] and (
+        future_role != "admin" or future_disabled
+    ) and len(active_admins) <= 1:
+        raise ValueError("At least one active administrator must remain")
+    conn.execute("""
+        UPDATE users SET display_name=COALESCE(%s, display_name),
+          role=COALESCE(%s, role), disabled=COALESCE(%s, disabled)
+        WHERE id=%s
+    """, (display_name, role, disabled, user_id))
+    if future_disabled or future_role != row["role"]:
+        conn.execute(
+            "UPDATE session_tokens SET revoked_at=now() WHERE user_id=%s AND revoked_at IS NULL",
+            (user_id,),
+        )
+    if future_disabled:
+        # A disabled account cannot authenticate with either session or API key.
+        conn.execute(
+            "UPDATE users SET locked_until=NULL, failed_login_count=0 WHERE id=%s",
+            (user_id,),
+        )
+    return dict(conn.execute("""
+        SELECT id, username, display_name, role, disabled, must_change_password
+        FROM users WHERE id=%s
+    """, (user_id,)).fetchone())
+
+
+def reset_user_password(conn: psycopg.Connection, user_id: str, password: str) -> bool:
+    row = conn.execute("""
+        UPDATE users SET password_hash=%s, must_change_password=true,
+          failed_login_count=0, locked_until=NULL, password_changed_at=now()
+        WHERE id=%s RETURNING id
+    """, (password_hash(password), user_id)).fetchone()
+    if not row:
+        return False
+    conn.execute(
+        "UPDATE session_tokens SET revoked_at=now() WHERE user_id=%s AND revoked_at IS NULL",
+        (user_id,),
+    )
+    return True
+
+
+def rotate_user_api_key(conn: psycopg.Connection, user_id: str) -> str | None:
+    value = secrets.token_urlsafe(48)
+    row = conn.execute("""
+        UPDATE users SET api_key_hash=%s, api_key_rotated_at=now()
+        WHERE id=%s RETURNING id
+    """, (api_key_hash(value), user_id)).fetchone()
+    return value if row else None
+
+
+def revoke_all_sessions(conn: psycopg.Connection, user_id: str) -> int:
+    rows = conn.execute(
+        """UPDATE session_tokens SET revoked_at=now()
+           WHERE user_id=%s AND revoked_at IS NULL RETURNING id""",
+        (user_id,),
+    ).fetchall()
+    return len(rows)
+
+
+def list_user_sessions(conn: psycopg.Connection, user_id: str) -> list[dict[str, Any]]:
+    return [dict(row) for row in conn.execute("""
+        SELECT id, created_at, expires_at, revoked_at
+        FROM session_tokens WHERE user_id=%s
+        ORDER BY created_at DESC LIMIT 50
+    """, (user_id,)).fetchall()]
+
+
+def list_user_memberships(conn: psycopg.Connection, user_id: str) -> list[dict[str, Any]]:
+    return [dict(row) for row in conn.execute("""
+        SELECT t.id AS team_id, t.name AS team_name, tm.role
+        FROM team_members tm JOIN teams t ON t.id=tm.team_id
+        WHERE tm.user_id=%s ORDER BY t.name
+    """, (user_id,)).fetchall()]
