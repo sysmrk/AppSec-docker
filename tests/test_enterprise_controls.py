@@ -61,9 +61,47 @@ class EnterpriseContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "own account"):
             db.update_user_admin(conn, "admin-id", "admin-id", role="viewer")
 
-    def test_mfa_not_fake_configured(self):
-        # This release does not claim a working external OIDC or MFA provider.
-        self.assertEqual(manual_workflows._state({"scan_job_status": "queued"}), "queued")
+    def test_mfa_encryption_and_replay_protection(self):
+        import os
+        from cryptography.fernet import Fernet
+        import pyotp
+        from appsecctl import mfa
+        key = Fernet.generate_key().decode("ascii")
+        secret = mfa.generate_secret()
+        with patch.dict(os.environ, {"APPSEC_MFA_ENCRYPTION_KEY": key}):
+            ciphertext = mfa.encrypt_secret(secret)
+            self.assertNotEqual(ciphertext, secret)
+            self.assertNotIn(secret, ciphertext)
+            self.assertEqual(mfa.decrypt_secret(ciphertext), secret)
+        now = 1800000000
+        step = now // 30
+        code = pyotp.TOTP(secret).at(now)
+        self.assertEqual(mfa.totp_step(secret, code, -1, now), step)
+        self.assertIsNone(mfa.totp_step(secret, code, step, now))
+        self.assertIsNone(mfa.totp_step(secret, "not-a-code", -1, now))
+        with patch.dict(os.environ, {"APPSEC_MFA_ENCRYPTION_KEY": Fernet.generate_key().decode("ascii")}):
+            with self.assertRaises(RuntimeError):
+                mfa.decrypt_secret(ciphertext)
+
+    def test_mfa_recovery_codes_only_have_hashes_in_database(self):
+        import hashlib
+        import os
+        import pyotp
+        from cryptography.fernet import Fernet
+        from appsecctl import mfa
+        secret = mfa.generate_secret()
+        with patch.dict(os.environ, {"APPSEC_MFA_ENCRYPTION_KEY": Fernet.generate_key().decode("ascii")}):
+            conn = MagicMock()
+            conn.execute.return_value.fetchone.return_value = {"mfa_pending_enc": mfa.encrypt_secret(secret)}
+            with patch.object(mfa, "totp_step", return_value=100):
+                codes = mfa.confirm_enrollment(conn, "00000000-0000-0000-0000-000000000001", "012345")
+            self.assertEqual(len(codes), 8)
+            self.assertEqual(len(set(codes)), 8)
+            self.assertTrue(all(len(c) == 12 for c in codes))
+            sql_calls = [call for call in conn.execute.call_args_list if "INSERT INTO mfa_recovery_codes" in call.args[0]]
+            self.assertEqual(len(sql_calls), 8)
+            self.assertEqual(sql_calls[0].args[1][2], hashlib.sha256(codes[0].encode()).hexdigest())
+            self.assertNotEqual(sql_calls[0].args[1][2], codes[0])
 
 
 if __name__ == "__main__":
