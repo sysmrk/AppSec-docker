@@ -1356,3 +1356,38 @@ def pipeline_summary(conn: psycopg.Connection, pipeline_id: str) -> dict[str, An
         "artifacts": artifacts,
         "reports": reports,
     }
+
+
+def record_service_heartbeat(conn: psycopg.Connection, service: str, instance: str) -> None:
+    """Record liveness without giving the API access to the Docker daemon."""
+    conn.execute(
+        """INSERT INTO service_heartbeats(service, instance, last_seen)
+           VALUES (%s, %s, now())
+           ON CONFLICT (service, instance) DO UPDATE SET last_seen = now()""",
+        (service[:80], instance[:150]),
+    )
+
+
+def service_health_summary(conn: psycopg.Connection) -> dict[str, Any]:
+    heartbeats = conn.execute(
+        """SELECT service, instance, last_seen,
+                  EXTRACT(EPOCH FROM (now() - last_seen))::int AS seconds_ago
+           FROM service_heartbeats
+           WHERE last_seen > now() - interval '24 hours'
+           ORDER BY service, last_seen DESC LIMIT 40"""
+    ).fetchall()
+    queues = conn.execute(
+        """SELECT status, count(*)::int AS count FROM pipeline_jobs
+           GROUP BY status ORDER BY status"""
+    ).fetchall()
+    security = conn.execute(
+        """SELECT status, count(*)::int AS count FROM security_jobs
+           GROUP BY status ORDER BY status"""
+    ).fetchall()
+    return {
+        "database": "connected",
+        "heartbeats": [dict(row) for row in heartbeats],
+        "pipeline_queue": [dict(row) for row in queues],
+        "secret_queue": [dict(row) for row in security],
+        "note": "A stale heartbeat may indicate a busy worker; verify with ./appsec status and logs.",
+    }
