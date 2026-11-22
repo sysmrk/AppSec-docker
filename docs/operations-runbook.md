@@ -79,3 +79,8 @@ For reverse proxy/remote use: keep AppSec loopback-only or inside a trusted netw
 - Old report URLs must not be treated as credentials; all report downloads need an authenticated AppSec session or API key.
 - Existing global/unassigned Project data remains shared with all authenticated AppSec accounts.
 - Keep image/scanner signatures and version digest pinning under review.
+
+
+## System health page
+
+An administrator can open **System health** in the web UI to inspect real queue counts and Worker/Scheduler heartbeat times (migration 0008). The UI does not get Docker Socket access. If heartbeat timestamps are old, check `./appsec doctor` and `./appsec logs worker`; a long-running scan can temporarily prevent heartbeat updates.
