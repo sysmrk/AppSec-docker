@@ -12,7 +12,7 @@ help:
 		'  ./appsec doctor     Diagnose Docker, API and background services' \
 		'  ./appsec credentials  Show admin credentials on a trusted terminal' \
 		'  make preflight        Check host requirements and ports' \
-		'  make validate         Validate compose, Python syntax and Grafana JSON' \
+		'  make validate         Validate Compose, Python and JavaScript' \
 		'  make init             Start core services and initialize database' \
 		'  make migrate          Run database migrations' \
 		'  make up               Start platform profile' \
@@ -43,16 +43,16 @@ preflight:
 validate:
 	$(COMPOSE) -f $(COMPOSE_FILE) config >/dev/null
 	python3 -m py_compile runner/appsecctl/*.py scripts/setup-metabase.py
-	python3 -m json.tool grafana/dashboards/appsec-overview.json >/dev/null
+	node --check runner/appsecctl/webui/assets/app.js
 
 init:
-	./appsec start --analytics
+	./appsec start
 
 migrate:
 	./scripts/appsecctl.sh migrate
 
 up:
-	./appsec start --analytics
+	./appsec start
 
 down:
 	./scripts/down.sh

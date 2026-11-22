@@ -208,42 +208,6 @@ services:
     profiles:
       - platform
 
-  grafana:
-    image: grafana/grafana-oss:11.6.1
-    restart: unless-stopped
-    depends_on:
-      postgres:
-        condition: service_healthy
-    environment:
-      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-appsec-grafana}
-      GF_USERS_DEFAULT_THEME: light
-      GF_AUTH_ANONYMOUS_ENABLED: ${GRAFANA_ANONYMOUS_ENABLED:-false}
-      GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL:-http://127.0.0.1:8080/grafana/}
-      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
-      POSTGRES_HOST: postgres
-      POSTGRES_PORT: "5432"
-      POSTGRES_DB: ${POSTGRES_DB:-appsec}
-      POSTGRES_USER: ${POSTGRES_USER:-appsec}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-appsec-change-me}
-    volumes:
-      - grafana-data:/var/lib/grafana
-      - ./grafana/provisioning:/etc/grafana/provisioning:ro
-      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
-    expose:
-      - "3000"
-    healthcheck:
-      test: ["CMD-SHELL", "wget --spider --quiet http://127.0.0.1:3000/grafana/api/health || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 12
-      start_period: 20s
-    networks:
-      - appsec-net
-    profiles:
-      - platform
-      - production
-
   metabase-db-init:
     image: postgres:16-alpine
     depends_on:
@@ -305,8 +269,6 @@ services:
     image: nginx:1.27-alpine
     restart: unless-stopped
     depends_on:
-      grafana:
-        condition: service_healthy
       api:
         condition: service_healthy
     ports:
@@ -452,7 +414,6 @@ volumes:
     name: ${TRIVY_CACHE_VOLUME:-appsec_trivy_cache}
   appsec_workspaces:
     name: ${WORKSPACES_VOLUME:-appsec_workspaces}
-  grafana-data:
   metabase-data:
 
 networks:
