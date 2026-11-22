@@ -11,6 +11,7 @@ from fastapi import Request
 from fastapi import Cookie, Depends, FastAPI, Header, HTTPException
 from pydantic import field_validator
 from fastapi.responses import FileResponse, RedirectResponse, Response
+from fastapi.staticfiles import StaticFiles
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
 from pydantic import BaseModel, Field
 
@@ -618,3 +619,85 @@ def cleanup(days: int = 30, user: dict[str, Any] = Depends(require_role("admin")
 def test_webhook(user: dict[str, Any] = Depends(require_role("admin"))) -> dict[str, str]:
     notify("appsec.test", {"user": user["username"]})
     return {"status": "sent_if_configured"}
+
+
+# First-party UI. No separate frontend runtime, external CDN, or demo dataset.
+WEB_ROOT = Path(__file__).with_name("webui")
+app.mount("/ui/assets", StaticFiles(directory=str(WEB_ROOT / "assets")), name="ui-assets")
+
+
+@app.get("/ui/", include_in_schema=False)
+def appsec_control_center() -> FileResponse:
+    return FileResponse(WEB_ROOT / "index.html", media_type="text/html")
+
+
+@app.get("/ui", include_in_schema=False)
+def appsec_control_center_redirect() -> RedirectResponse:
+    return RedirectResponse("/ui/")
+
+
+@app.get("/api/ui/overview")
+def ui_overview(user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    """Lightweight, tenant-aware overview for the first-party UI."""
+    from .ui_queries import overview_data
+
+    with db.connect() as conn:
+        return overview_data(conn, user)
+
+
+@app.get("/api/ui/pipelines/{pipeline_id}")
+def ui_pipeline(
+    pipeline_id: str, user: dict[str, Any] = Depends(current_user)
+) -> dict[str, Any]:
+    """Compact result without raw Trivy JSON; access-scoped by pipeline."""
+    from .ui_queries import pipeline_details
+
+    with db.connect() as conn:
+        require_resource(conn, user, "pipeline", pipeline_id)
+        return pipeline_details(conn, pipeline_id)
+
+
+@app.get("/api/ui/scans/{scan_id}/vulnerabilities")
+def ui_scan_vulnerabilities(
+    scan_id: str,
+    severity: str | None = None,
+    limit: int = 100,
+    user: dict[str, Any] = Depends(current_user),
+) -> dict[str, Any]:
+    from .ui_queries import scan_vulnerabilities
+
+    with db.connect() as conn:
+        require_resource(conn, user, "scan", scan_id)
+        if severity and severity not in ("CRITICAL", "HIGH", "MEDIUM", "LOW", "UNKNOWN"):
+            raise HTTPException(status_code=422, detail="unknown severity")
+        return scan_vulnerabilities(conn, scan_id, severity, limit)
+
+
+@app.get("/api/ui/security-jobs/{job_id}")
+def ui_security_job(
+    job_id: str, user: dict[str, Any] = Depends(current_user)
+) -> dict[str, Any]:
+    with db.connect() as conn:
+        require_resource(conn, user, "security_job", job_id)
+        detail = db.security_job_detail(conn, job_id)
+        if not detail:
+            raise HTTPException(status_code=404, detail="job not found")
+    job = detail["job"]
+    safe_job = {
+        key: job.get(key) for key in (
+            "id", "kind", "target", "status", "finding_count", "high_count",
+            "medium_count", "low_count", "started_at", "finished_at",
+            "error_message", "project_id",
+        )
+    }
+    safe_findings = [
+        {key: finding.get(key) for key in (
+            "id", "rule_id", "severity", "title", "location", "created_at"
+        )}
+        for finding in detail.get("findings", [])
+    ]
+    return {
+        "job": safe_job,
+        "findings": safe_findings,
+        "reports": reports_with_downloads(detail.get("reports", [])),
+    }
