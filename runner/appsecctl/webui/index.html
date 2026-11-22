@@ -19,6 +19,12 @@
       <input id="username" name="username" autocomplete="username" required autofocus>
       <label for="password">Password</label>
       <input id="password" type="password" name="password" autocomplete="current-password" required>
+      <div id="login-mfa-block" hidden>
+        <label for="login-otp">Authenticator / recovery code</label>
+        <input id="login-otp" inputmode="numeric" autocomplete="one-time-code"
+          placeholder="6-digit code or recovery code" minlength="6" maxlength="16">
+        <p class="hint">Required only for accounts with MFA enabled.</p>
+      </div>
       <p id="login-error" class="error" role="alert"></p>
       <button type="submit" class="primary wide">Sign in</button>
       <p class="tiny muted">Uses your existing AppSec account. No sample data or external AI account required.</p>
@@ -173,6 +179,40 @@
             <label for="profile-confirm-password">Confirm new password</label><input id="profile-confirm-password" type="password" autocomplete="new-password" required minlength="12">
             <button type="submit" class="primary">Change password and sign in again</button>
             <div id="profile-feedback" class="info-note" role="status"></div>
+          </form>
+          <div class="section-heading"><h2>Authenticator security (MFA)</h2></div>
+          <div id="profile-mfa-status" class="panel">Loading MFA status…</div>
+          <form id="mfa-enroll-form" class="panel form-panel">
+            <p class="muted">Use your phone's authenticator app for a second factor on login. Recovery codes are generated only after confirmation.</p>
+            <label for="mfa-enroll-password">Current password</label>
+            <input id="mfa-enroll-password" type="password" autocomplete="current-password" required>
+            <button type="submit" class="primary">Set up authenticator MFA</button>
+          </form>
+          <div id="mfa-setup-result" class="panel" hidden>
+            <h2>Configure your authenticator</h2>
+            <p class="hint">Add an account in your authenticator app using this secret (or provisioning URI). Do not share or screenshot it.</p>
+            <pre id="mfa-secret-value" class="one-time-secret"></pre>
+            <button id="mfa-secret-copy" class="outline" type="button">Copy secret</button>
+            <form id="mfa-confirm-form" class="form-panel flat-form">
+              <label for="mfa-confirm-code">6-digit code from your authenticator</label>
+              <input id="mfa-confirm-code" inputmode="numeric" autocomplete="one-time-code" required minlength="6" maxlength="6">
+              <button class="primary" type="submit">Verify and enable MFA</button>
+            </form>
+          </div>
+          <div id="mfa-recovery-result" class="panel" hidden>
+            <h2>One-time recovery codes</h2>
+            <p class="warning">Save these codes offline. Each code can be used once. They will not be displayed again.</p>
+            <pre id="mfa-recovery-values" class="one-time-secret"></pre>
+            <button type="button" id="mfa-recovery-confirm" class="primary">I've saved my codes — sign in again</button>
+          </div>
+          <form id="mfa-disable-form" class="panel form-panel" hidden>
+            <h2>Disable MFA</h2>
+            <p class="muted">Disabling MFA requires your password and a fresh authenticator or recovery code.</p>
+            <label for="mfa-disable-password">Current password</label>
+            <input id="mfa-disable-password" type="password" autocomplete="current-password" required>
+            <label for="mfa-disable-code">Authenticator or recovery code</label>
+            <input id="mfa-disable-code" minlength="6" maxlength="16" required>
+            <button type="submit" class="danger-button">Disable MFA and revoke sessions</button>
           </form>
         </section>
         <section id="view-settings" class="view" hidden>
