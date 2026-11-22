@@ -327,13 +327,13 @@ curl -L -H 'X-API-Key: appsec-dev-key' \
 
 ## False Positive و Accepted Risk
 
-برای accepted risk از API استفاده کنید. هر accept شامل reason، owner و audit log است:
+برای accepted risk از API استفاده کنید. هر accept شامل reason، owner، تاریخ انقضای آینده با timezone و audit log است:
 
 ```bash
 curl -X POST http://127.0.0.1:8080/appsec-api/api/security-findings/<finding-id>/accept \
   -H 'X-API-Key: appsec-dev-key' \
   -H 'Content-Type: application/json' \
-  -d '{"reason":"false positive in test fixture","owner":"appsec"}'
+  -d '{"reason":"false positive in test fixture","owner":"appsec","expires_at":"2027-01-01T00:00:00Z"}'
 ```
 
 ## Notification و Retention
