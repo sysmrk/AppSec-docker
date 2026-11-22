@@ -24,7 +24,9 @@ jobs:
       - name: Compile optional MCP module
         run: python -m py_compile integrations/mcp/appsec_mcp.py
       - name: Check first-party UI JavaScript syntax
-        run: node --check runner/appsecctl/webui/assets/app.js
+        run: |
+          node --check runner/appsecctl/webui/assets/app.js
+          node --check runner/appsecctl/webui/assets/workspace.js
       - name: Validate CLI syntax
         run: python -m py_compile appsec
 
@@ -98,11 +100,60 @@ jobs:
                   raise AssertionError('duplicate approval was accepted')
               except RuntimeError:
                   pass
+              # Real SQL inventory and registry governance checks.
+              from appsecctl import inventory, registry
+              rows = inventory.list_images(conn, user, search="nginx")
+              assert rows["items"] and rows["items"][0]["name"] == 'nginx:stable'
+              image_history = inventory.image_history(conn, user, image_id)
+              assert image_history
+              reg = registry.create(conn, "enterprise-harbor", "harbor.example.org:443",
+                                    None, True, str(user["id"]))
+              assert reg["host"] == "harbor.example.org:443"
+              checks = registry.preflight(conn, "harbor.example.org:443/org/api:1", user)
+              assert any(c["name"] == "Image pull" and c["status"] == "unverified" for c in checks["checks"])
+
+              # Simulate prepared image, but do NOT perform any Docker/registry write.
+              from uuid import uuid4
+              patched_id = str(uuid4())
+              patch_id = str(uuid4())
+              source_id = '00000000-0000-0000-0000-000000000011'
+              db.insert_patch_started(conn, patch_id, pipeline_id, source_id,
+                                      "nginx:stable", "harbor.example.org:443/org/api:patched")
+              db.update_patch_success(conn, patch_id, None)
+              conn.execute("""
+                  UPDATE patch_runs SET local_image_ref='local-patched:1',
+                         publication_status='prepared' WHERE id=%s
+              """, (patch_id,))
+              db.insert_scan_started(conn, patched_id, pipeline_id, image_id, 'local-patched:1', 'patched')
+              db.update_scan_success(conn, patched_id, '/reports/patched.json',
+                                     {'Results': []}, {'CRITICAL': 0, 'HIGH': 0})
+              db.insert_policy_result(conn, pipeline_id, patched_id, 'passed',
+                                      {'max_critical': 0}, [])
+              conn.execute("UPDATE pipeline_jobs SET status='success' WHERE id=%s", (result["patch_job_id"],))
+              assert mw.get_workflow(conn, session["id"], user)["state"] == "awaiting_publication"
+              publication = mw.decide(conn, session["id"], user, "approve_publish", True)
+              assert publication["state"] == "publish_queued"
+              pub = conn.execute("SELECT mode, max_attempts FROM pipeline_jobs WHERE id=%s",
+                                 (publication["publish_job_id"],)).fetchone()
+              assert pub["mode"] == "publish_patch" and pub["max_attempts"] == 1
+              try:
+                  mw.decide(conn, session["id"], user, "approve_publish", True)
+                  raise AssertionError('duplicate registry publication accepted')
+              except RuntimeError:
+                  pass
+
+              # Account lifecycle: disable and rotate token with revocation.
+              created_id = db.create_user(conn, "ci-worker-user", "CI Worker", "operator",
+                                          "ci-example-secret-api-key", "ci-example-passphrase-long")
+              created = db.update_user_admin(conn, created_id, str(user["id"]), disabled=True)
+              assert created["disabled"] is True
+              assert db.user_by_api_key(conn, "ci-example-secret-api-key") is None
+
               from runpy import run_path
               charts = run_path("scripts/setup-metabase.py", run_name="appsec_chart_validation")
               for group in ("CARDS", "MANUAL_CARDS", "TREND_CARDS"):
                   for name, sql, *_ in charts[group]:
                       conn.execute("EXPLAIN " + sql)
-              print('Postgres migrations, manual approvals and all Metabase SQL charts verified')
+              print('PostgreSQL migrations, guided approval, registry gate, inventory, users and Metabase SQL verified')
           PY
           python -m alembic -c alembic.ini upgrade head
