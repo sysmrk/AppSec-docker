@@ -447,7 +447,7 @@
     $(id).addEventListener("submit", async event => {
       event.preventDefault();
       try {
-        await request(endpoint, { method: "POST", body: JSON.stringify(buildPayload()) });
+        await request(typeof endpoint === "function" ? endpoint() : endpoint, { method: "POST", body: JSON.stringify(buildPayload()) });
         notification(success);
         await loadAdminData();
         await loadProjects();
@@ -464,7 +464,7 @@
   }), "/api/projects", "Project created.");
   bindForm("team-member-form", () => ({
     user_id: $("member-user").value, role: $("member-role").value
-  }), "__team_members_dynamic__", "Membership added.");
+  }), () => "/api/teams/" + encodeURIComponent($("member-team").value) + "/members", "Membership added.");
   bindForm("policy-form", () => ({
     name: $("policy-name").value.trim(), project_id: $("policy-project").value || null,
     rules: {
