@@ -87,6 +87,13 @@ class PipelineRequest(BaseModel):
     confirm_patch: bool = False
 
 
+class RegistryRequest(BaseModel):
+    name: str = Field(min_length=2, max_length=50)
+    host: str = Field(min_length=3, max_length=255)
+    project_id: str | None = None
+    allow_push: bool = False
+
+
 class ManualWorkflowRequest(BaseModel):
     image: str = Field(min_length=1, max_length=1024)
     project_id: str | None = None
@@ -966,3 +973,98 @@ def decide_manual_workflow(
             {"confirmed_patch": request.confirm_patch, "confirmed_push": request.confirm_push},
         )
     return result
+
+
+@app.get("/api/registries")
+def ui_registries(user: dict[str, Any] = Depends(current_user)) -> list[dict[str, Any]]:
+    from . import registry
+    with db.connect() as conn:
+        return registry.list_registries(conn, user)
+
+
+@app.post("/api/registries", status_code=201)
+def add_registry(
+    request: RegistryRequest, actor: dict[str, Any] = Depends(require_role("admin")),
+) -> dict[str, Any]:
+    from . import registry
+    with db.connect() as conn:
+        require_project(conn, actor, request.project_id, write=True)
+        try:
+            record = registry.create(conn, request.name, request.host,
+                                     request.project_id, request.allow_push, str(actor["id"]))
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
+        db.insert_audit(conn, str(actor["id"]), "registry.create", "registry", str(record["id"]), {
+            "host": record["host"], "allow_push": request.allow_push,
+        })
+    return record
+
+
+@app.delete("/api/registries/{registry_id}")
+def delete_registry(
+    registry_id: str, actor: dict[str, Any] = Depends(require_role("admin")),
+) -> dict[str, str]:
+    with db.connect() as conn:
+        record = conn.execute(
+            "DELETE FROM registry_connections WHERE id::text=%s RETURNING host",
+            (registry_id,),
+        ).fetchone()
+        if not record:
+            raise HTTPException(status_code=404, detail="registry not found")
+        db.insert_audit(conn, str(actor["id"]), "registry.delete", "registry", registry_id, {
+            "host": record["host"],
+        })
+    return {"status": "deleted"}
+
+
+@app.get("/api/preflight/image")
+def ui_preflight_image(
+    image: str, user: dict[str, Any] = Depends(current_user),
+) -> dict[str, Any]:
+    from . import registry
+    with db.connect() as conn:
+        try:
+            return registry.preflight(conn, image, user)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
+
+
+@app.get("/api/images")
+def ui_image_inventory(
+    q: str = "", limit: int = 30, offset: int = 0,
+    user: dict[str, Any] = Depends(current_user),
+) -> dict[str, Any]:
+    from . import inventory
+    with db.connect() as conn:
+        return inventory.list_images(conn, user, q, limit, offset)
+
+
+@app.get("/api/images/{image_id}/history")
+def ui_image_history(
+    image_id: str, limit: int = 50,
+    user: dict[str, Any] = Depends(current_user),
+) -> list[dict[str, Any]]:
+    from . import inventory
+    with db.connect() as conn:
+        try:
+            result = inventory.image_history(conn, user, image_id, limit)
+        except ValueError:
+            raise HTTPException(status_code=404, detail="image not found") from None
+    if not result:
+        raise HTTPException(status_code=404, detail="image not found or access denied")
+    return result
+
+
+@app.get("/api/images/compare/scans")
+def ui_compare_scans(
+    from_scan: str, to_scan: str, limit: int = 100,
+    user: dict[str, Any] = Depends(current_user),
+) -> dict[str, Any]:
+    from . import inventory
+    with db.connect() as conn:
+        require_resource(conn, user, "scan", from_scan)
+        require_resource(conn, user, "scan", to_scan)
+        try:
+            return inventory.compare(conn, from_scan, to_scan, limit)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="invalid scan identifiers") from None

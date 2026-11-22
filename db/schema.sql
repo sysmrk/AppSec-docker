@@ -329,3 +329,15 @@ CREATE TABLE IF NOT EXISTS manual_workflows (
 );
 CREATE INDEX IF NOT EXISTS idx_manual_workflows_creator_created ON manual_workflows(created_by, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_manual_workflows_project_created ON manual_workflows(project_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS registry_connections (
+    id UUID PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    host TEXT NOT NULL UNIQUE,
+    project_id UUID REFERENCES projects(id) ON DELETE SET NULL,
+    allow_push BOOLEAN NOT NULL DEFAULT false,
+    created_by UUID REFERENCES users(id),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_scans_image_started ON scan_runs(image_id, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_pipeline_image_started ON pipeline_runs(source_image_id, started_at DESC);

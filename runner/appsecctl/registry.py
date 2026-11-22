@@ -21,7 +21,11 @@ def normalize_host(value: str) -> str:
     if not _HOSTNAME.fullmatch(raw):
         raise ValueError("Invalid registry hostname")
     parsed = urlsplit("https://" + raw)
-    if not parsed.hostname or (parsed.port is not None and not (1 <= parsed.port <= 65535)):
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError("Invalid registry port") from exc
+    if not parsed.hostname or (port is not None and not (1 <= port <= 65535)):
         raise ValueError("Invalid registry host or port")
     return raw.lower().rstrip(".")
 

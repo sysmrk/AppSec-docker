@@ -81,7 +81,7 @@ def compare(conn, left: str, right: str, limit: int = 100) -> dict[str, Any]:
         FROM vulnerabilities WHERE scan_id IN (%s,%s)
     """, tuple(ids)).fetchall()
     def key(row):
-        return (row["vulnerability_id"], row["pkg_name"], row["target"])
+        return (str(row["vulnerability_id"] or ""), str(row["pkg_name"] or ""), str(row["target"] or ""))
     before = {key(r): dict(r) for r in rows if r["scan_id"] == ids[0]}
     after = {key(r): dict(r) for r in rows if r["scan_id"] == ids[1]}
     cap = max(1, min(limit, 200))
