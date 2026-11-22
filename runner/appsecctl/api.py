@@ -93,7 +93,8 @@ class ManualWorkflowRequest(BaseModel):
 
 
 class ManualDecisionRequest(BaseModel):
-    action: str = Field(pattern="^(finish|approve_patch|cancel)$")
+    action: str = Field(pattern="^(finish|approve_patch|cancel|approve_publish|skip_publish)$")
+    confirm_patch: bool = False
     confirm_push: bool = False
 
 
@@ -943,11 +944,13 @@ def decide_manual_workflow(
     user: dict[str, Any] = Depends(require_role("admin", "operator")),
 ) -> dict[str, Any]:
     from . import manual_workflows as mw
-    if request.action == "approve_patch":
-        if not request.confirm_push:
-            raise HTTPException(status_code=422, detail="registry push requires explicit confirmation")
+    if request.action in ("approve_patch", "approve_publish"):
+        if request.action == "approve_patch" and not request.confirm_patch:
+            raise HTTPException(status_code=422, detail="image preparation requires confirm_patch=true")
+        if request.action == "approve_publish" and not request.confirm_push:
+            raise HTTPException(status_code=422, detail="registry publication requires confirm_push=true")
         if os.environ.get("APPSEC_PATCH_ENABLED", "false").lower() not in ("1", "true", "yes"):
-            raise HTTPException(status_code=409, detail="patching disabled; start AppSec with --patching")
+            raise HTTPException(status_code=409, detail="patch executor disabled; ask an administrator to start --patching")
     with db.connect() as conn:
         try:
             result = mw.decide(conn, workflow_id, user, request.action, request.confirm_push)
@@ -960,6 +963,6 @@ def decide_manual_workflow(
         db.insert_audit(
             conn, str(user["id"]), "manual." + request.action,
             "manual_workflow", workflow_id,
-            {"confirmed_push": request.confirm_push},
+            {"confirmed_patch": request.confirm_patch, "confirmed_push": request.confirm_push},
         )
     return result
