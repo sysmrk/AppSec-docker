@@ -63,3 +63,8 @@ Trivy به صورت container اجرا می‌شود و Copa داخل runner ن�
 ## Scheduler
 
 سرویس `scheduler` جدول `scheduled_images` را بررسی می‌کند و وقتی زمان اجرای یک image برسد، یک job جدید در صف می‌سازد.
+
+
+## Optional MCP adapter
+
+A separate Compose `mcp` profile adds a read-only Model Context Protocol service for AI clients. It is not part of the default AppSec pipeline, does not mount Docker socket or report volumes and performs only bounded SELECT queries against PostgreSQL. It offers local STDIO transport and localhost-bound Streamable HTTP (`127.0.0.1:8091/mcp`); no scan/patch/push tool exists. See [MCP guide](mcp.md) and [security review](security-review.md). Treat all data as cross-project security analytics and require identity-aware OAuth at any external gateway.

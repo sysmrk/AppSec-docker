@@ -111,13 +111,7 @@ curl -L \
 
 همین لینک در Grafana داخل جدول `Consolidated Downloadable Reports` هم نمایش داده می‌شود.
 
-نکته امنیتی: چون Grafana برای data link نمی‌تواند header سفارشی `X-API-Key` ارسال کند، دانلودها به صورت پیش‌فرض بدون auth ولی با شناسه UUID غیرقابل حدس فعال هستند. برای اجباری کردن auth مقدار زیر را در `.env` بگذارید:
-
-```env
-DOWNLOADS_REQUIRE_AUTH=true
-```
-
-در این حالت دانلود با curl و API key کار می‌کند، ولی لینک مستقیم داخل Grafana فقط وقتی باز می‌شود که کاربر session معتبر API داشته باشد.
+نکته امنیتی: همه دانلودها **همیشه نیاز به احراز هویت دارند**؛ شناسه UUID مجوز دسترسی محسوب نمی‌شود. مقدار قدیمی `DOWNLOADS_REQUIRE_AUTH=false` دیگر احراز هویت را خاموش نمی‌کند. برای دریافت گزارش از `curl` با `X-API-Key` استفاده کنید یا ابتدا Session معتبر API بسازید. لینک مستقیم Grafana بدون Session معتبر API کار نمی‌کند. دسترسی به منابع Project-scoped باید با عضویت در همان Project سازگار باشد؛ منابع بدون Project داده‌های Shared هستند.
 
 ## Secret scanning
 
@@ -187,3 +181,17 @@ curl -H 'X-API-Key: appsec-dev-key' \
 - خروجی SBOM را به inventory سازمان وصل کنید تا بفهمید کدام package آسیب‌پذیر در چند image تکرار شده است.
 - بعد از patch موفق، image جدید را با tag استاندارد به Harbor بفرستید و deploymentها فقط از namespace امن pull کنند.
 - برای incident response، با CVE جدید در API/Grafana سرچ کنید و سریع بفهمید کدام imageها آلوده‌اند.
+
+
+## تغییرات امنیتی API
+
+- Endpointهای `/api/dashboard`، `/api/history`، `/api/teams` و `/api/audit-logs` فقط برای `admin` هستند تا تجمیع داده‌های Projectهای مختلف برای Viewer/Operator نمایش داده نشود.
+- `GET /api/policies` بدون `project_id` فقط Admin؛ کاربران دیگر باید `project_id` مجاز خود را مشخص کنند.
+- اسکن Source فقط روی `https://` و hostnameهای `SECURITY_ALLOWED_GIT_HOSTS` پذیرفته می‌شود (پیش‌فرض `github.com,gitlab.com`). URL دارای Credential یا Query مجاز نیست؛ Git Redirect غیرفعال است.
+- فیلد `expires_at` برای Accept Risk اجباری است و باید ISO8601 آینده و دارای timezone باشد، مثال: `2027-01-01T00:00:00Z`.
+- Session cookie در HTTPS با `APPSEC_SESSION_COOKIE_SECURE=true` امن می‌شود؛ برای توسعه local HTTP می‌توان false گذاشت.
+- Secretهای کشف‌شده دیگر در فیلدهای Match/Secret/Line، Evidence و Metadata بازگردانده نمی‌شوند. برای پاک‌سازی تاریخچه نیاز به migration و حذف گزارش‌های ذخیره‌شده قبلی است.
+
+## اتصال AI با MCP
+
+API فعلی همان API معمول FastAPI است. MCP یک سرویس مستقل و اختیاری از پروفایل `mcp` است. تنظیم و آموزش اتصال Claude Desktop، MCP Inspector و AIهای remote در [mcp.md](mcp.md) آمده است.

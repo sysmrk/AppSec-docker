@@ -340,7 +340,7 @@ def ci_security(kind: str, target: str, profile: str) -> int:
     job = detail["job"] if detail else {}
     write_security_sarif(job_id)
     print(json.dumps({"security_job_id": job_id, "status": job.get("status"), "high": job.get("high_count", 0)}, indent=2, default=str))
-    return 1 if int(job.get("high_count") or 0) > int(env("CI_MAX_HIGH", "0")) else 0
+    return 1 if job.get("status") != "success" or int(job.get("high_count") or 0) > int(env("CI_MAX_HIGH", "0")) else 0
 
 
 def main(argv: list[str] | None = None) -> int:

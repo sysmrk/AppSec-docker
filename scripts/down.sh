@@ -48,12 +48,12 @@ if [[ "${remove_volumes}" == "true" ]]; then
   compose_args+=(-v)
 fi
 
-docker-compose "${compose_args[@]}"
+docker compose "${compose_args[@]}"
 
 if [[ "${remove_harbor}" == "true" && -f harbor/runtime/harbor/docker-compose.yml ]]; then
   harbor_args=(-f harbor/runtime/harbor/docker-compose.yml down --remove-orphans)
   if [[ "${remove_volumes}" == "true" ]]; then
     harbor_args+=(-v)
   fi
-  docker-compose "${harbor_args[@]}"
+  docker compose "${harbor_args[@]}"
 fi

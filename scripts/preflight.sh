@@ -39,8 +39,8 @@ env_value() {
 
 check "docker CLI is available" command -v docker
 check "docker daemon is reachable" docker info
-check "docker-compose is available" command -v docker-compose
-check "docker-compose file is valid" docker-compose -f docker-compose.yaml config
+check "Docker Compose v2 plugin is available" docker compose version
+check "Docker Compose file is valid" docker compose -f docker-compose.yaml config
 check "port 8080 is free or already used by AppSec nginx" bash -lc 'port_free() { ! ss -ltn "( sport = :8080 )" | tail -n +2 | grep -q . || docker ps --format "{{.Names}}" | grep -q "^appsec_nginx_1$"; }; port_free'
 check "port 3001 is free or already used by Metabase" bash -lc 'port_free() { ! ss -ltn "( sport = :3001 )" | tail -n +2 | grep -q . || docker ps --format "{{.Names}}" | grep -q "^appsec_metabase_1$"; }; port_free'
 check "port 9000 is free or already used by MinIO" bash -lc 'port_free() { ! ss -ltn "( sport = :9000 )" | tail -n +2 | grep -q . || docker ps --format "{{.Names}}" | grep -q "^appsec_minio_1$"; }; port_free'

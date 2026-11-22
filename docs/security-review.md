@@ -40,3 +40,6 @@ docker compose --profile platform up -d postgres api nginx
 ## Optional MCP review
 
 The new `integrations/mcp/` service has no Docker socket, report volumes or write tools, uses a read-only PostgreSQL transaction, and has an opt-in Compose profile. It still exposes cross-project aggregates to whoever can connect: do not add it to shared networks or expose publicly without OAuth/TLS and a least-privilege DB account. `docs/mcp.md` provides deployment and AI client instructions. Unit tests verify SQL transaction read-only configuration, input caps and UUID validation.
+
+
+Additional follow-up: unscoped dashboard/history/teams/audit logs are admin-only; a source scan now cleans up the cloned workspace and Git no longer follows cross-host redirects. The `ci security` command is fail-closed when the scanner returns a non-success status. Legacy `DOWNLOADS_REQUIRE_AUTH=false` is ignored intentionally; authentication is always required.

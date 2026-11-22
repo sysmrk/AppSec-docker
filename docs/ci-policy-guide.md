@@ -41,7 +41,7 @@ stages:
 image_security:
   stage: security
   script:
-    - docker-compose -f docker-compose.yaml up -d postgres buildkit
+    - docker compose -f docker-compose.yaml up -d postgres buildkit
     - ./scripts/appsecctl.sh migrate
     - ./scripts/appsecctl.sh ci image "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA"
   rules:
@@ -81,7 +81,7 @@ pipeline {
   stages {
     stage('Image Security') {
       steps {
-        sh 'docker-compose -f docker-compose.yaml up -d postgres buildkit'
+        sh 'docker compose -f docker-compose.yaml up -d postgres buildkit'
         sh './scripts/appsecctl.sh migrate'
         sh './scripts/appsecctl.sh ci image "$IMAGE_REF"'
       }
@@ -170,3 +170,8 @@ curl -X POST http://127.0.0.1:8080/appsec-api/api/policies \
 - برای موارد پذیرفته‌شده، accepted risk با owner و تاریخ انقضا ثبت کنید.
 - خروجی HTML تجمیعی را به عنوان artifact همان CI job ذخیره کنید.
 - اگر platform مرکزی دارید، CI فقط job ثبت کند و نتیجه را poll کند؛ اجرای Copa و Trivy روی runner مشترک CI انجام نشود.
+
+
+### Secret scanning: fail closed
+
+`./scripts/appsecctl.sh ci security secrets https://github.com/example/repo.git` returns a non-zero exit code if the security job is not `success`, OR if high findings exceed `CI_MAX_HIGH`. This prevents an unsuccessful scanner run from reporting a green CI gate. Repo HTTPS hostnames must be allowed by `SECURITY_ALLOWED_GIT_HOSTS`.

@@ -560,3 +560,6 @@ make mcp-down
 ```
 
 For Claude Desktop STDIO configuration, Streamable HTTP testing, connecting AI clients (including remote-client security limitations) and where to view results, see **[docs/mcp.md](docs/mcp.md)**. The MCP HTTP service binds to `127.0.0.1:8091` only; do not expose it publicly without authenticated HTTPS/OAuth infrastructure. Use a SELECT-only PostgreSQL role for production.
+
+
+**Compatibility note:** CLI and host lifecycle scripts now use Docker Compose **v2** (`docker compose`), not the deprecated standalone `docker-compose`. Use `make validate` and `make test` before deployment. Root-level aggregations (dashboard/history/teams/audit logs) are admin-only; Project-scoped APIs still use per-project RBAC.

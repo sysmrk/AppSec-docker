@@ -34,7 +34,7 @@ def prepare_repo(target: str, job_id: str) -> Path:
     dest = base / job_id
     if dest.exists():
         shutil.rmtree(dest)
-    run_command(["git", "clone", "--depth", "1", validate_repo_target(target), str(dest)])
+    run_command(["git", "-c", "http.followRedirects=false", "-c", "protocol.file.allow=never", "clone", "--depth", "1", validate_repo_target(target), str(dest)])
     return dest
 
 
@@ -102,6 +102,7 @@ def execute_security_job(job_id: str) -> str:
     report_file = report_name(kind, job_id)
     report_path = reports_dir / report_file
 
+    repo_path = None
     try:
         if kind == "secrets":
             repo_path = prepare_repo(target, job_id)
@@ -143,6 +144,10 @@ def execute_security_job(job_id: str) -> str:
         with db.connect() as conn:
             db.update_security_job_failed(conn, job_id, str(exc))
         raise
+    finally:
+        # Cloned source trees can contain the very secrets we just detected.
+        if repo_path is not None and repo_path.exists():
+            shutil.rmtree(repo_path)
 
     return job_id
 

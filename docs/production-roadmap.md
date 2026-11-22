@@ -52,15 +52,17 @@
 - Slack/Teams/Telegram/email notification
 - backup/restore runbook و DR test
 
-## Current Phase
+## Current Status (2026-11-22)
 
-فاز فعلی: **Phase 1**.
+بخش‌هایی از Phase 1 پیاده‌سازی شده‌اند: API مستقل از Docker socket، Workerهای جداگانه، HTTP Metrics، لاگ JSON، Alembic Migration و Runbook. Security hardening بخشی از Phase 2 نیز اعمال شده (حذف Secret خام از DB/Reportهای جدید، کنترل دسترسی Project و Expiry اجباری Risk).
 
-مواردی که در همین فاز باید قبل از production کامل شوند:
+**Production-ready اعلام نشده است.** موارد باز و بحرانی:
 
-- حذف کامل Docker socket از API
-- workerهای تخصصی
-- metrics endpoint
-- لاگ JSON
-- migration command قابل اجرا
-- runbook اولیه برای compose v1 و خطای `ContainerConfig`
+- Docker Socket روی Workerها و `privileged` برای BuildKit باید روی Executor/Host جداگانه ایزوله شوند.
+- SSO/OIDC، MFA، Secret Manager و تست‌های RBAC و CSRF تکمیل شوند.
+- Trivy/Gitleaks/BuildKit Imageها با Digest ثابت شوند، Image Signature بررسی شود و Egress ACL اعمال شود.
+- آزمون واقعی Scan/Patch/Push، Migration، Backup/Restore و رفتار Auth در محیط تست انجام شود.
+- گزارش‌های قدیمی ممکن است Secret داشته باشند؛ rotation و حذف فایل/S3/Backup خارج از Migration لازم است.
+- MCP به‌صورت اختیاری اضافه شده ولی برای اتصال از Cloud به OAuth/TLS Gateway نیاز دارد؛ راهنما: `docs/mcp.md`.
+
+پیشرفت مرحله‌ای: Foundation انجام‌شده اما هنوز Gateهای امنیتی عملیاتی مانع Production Signoff هستند. این وضعیت به‌جای ادعای نادرست Phase 1 تمام‌شده درج شده است.

@@ -297,19 +297,19 @@ def change_password(request: PasswordRequest, user: dict[str, Any] = Depends(cur
 
 
 @app.get("/api/dashboard")
-def dashboard(user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+def dashboard(user: dict[str, Any] = Depends(require_role("admin"))) -> dict[str, Any]:
     with db.connect() as conn:
         return db.dashboard_stats(conn)
 
 
 @app.get("/api/history")
-def history(q: str | None = None, limit: int = 50, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+def history(q: str | None = None, limit: int = 50, user: dict[str, Any] = Depends(require_role("admin"))) -> dict[str, Any]:
     with db.connect() as conn:
         return db.search_history(conn, q, limit)
 
 
 @app.get("/api/audit-logs")
-def audit_logs(limit: int = 100, user: dict[str, Any] = Depends(require_role("admin", "operator"))) -> list[dict[str, Any]]:
+def audit_logs(limit: int = 100, user: dict[str, Any] = Depends(require_role("admin"))) -> list[dict[str, Any]]:
     with db.connect() as conn:
         return db.list_audit_logs(conn, limit)
 
@@ -347,7 +347,7 @@ def create_security_job(
 
 
 @app.get("/api/teams")
-def teams(user: dict[str, Any] = Depends(current_user)) -> list[dict[str, Any]]:
+def teams(user: dict[str, Any] = Depends(require_role("admin"))) -> list[dict[str, Any]]:
     with db.connect() as conn:
         return db.list_teams(conn)
 
@@ -393,8 +393,10 @@ def create_project(request: ProjectRequest, user: dict[str, Any] = Depends(requi
 @app.get("/api/policies")
 def policies(project_id: str | None = None, user: dict[str, Any] = Depends(current_user)) -> list[dict[str, Any]]:
     with db.connect() as conn:
-        if project_id and not db.user_can_access_project(conn, user, project_id):
-            raise HTTPException(status_code=403, detail="project access denied")
+        if not project_id and user["role"] != "admin":
+            raise HTTPException(status_code=403, detail="global policies require admin")
+        if project_id:
+            require_project(conn, user, project_id)
         return db.list_policies(conn, project_id)
 
 
@@ -462,7 +464,7 @@ def accept_finding(
             request.expires_at.isoformat(),
             str(user["id"]),
         )
-        db.insert_audit(conn, str(user["id"]), "risk.accept", "security_finding", finding_id, request.model_dump())
+        db.insert_audit(conn, str(user["id"]), "risk.accept", "security_finding", finding_id, request.model_dump(mode="json"))
     return {"risk_id": risk_id, "finding_id": finding_id}
 
 

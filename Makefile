@@ -1,4 +1,4 @@
-COMPOSE ?= docker-compose
+COMPOSE ?= docker compose
 COMPOSE_FILE ?= docker-compose.yaml
 PROFILE ?= platform
 
