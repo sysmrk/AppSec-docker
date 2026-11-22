@@ -246,7 +246,7 @@
               <label for="new-displayname">Display name</label><input id="new-displayname" required>
               <label for="new-user-role">Role</label><select id="new-user-role"><option value="operator">Operator</option><option value="viewer">Viewer</option><option value="admin">Administrator</option></select>
               <label for="new-user-password">Temporary password (12+ characters)</label><input id="new-user-password" type="password" required minlength="12" autocomplete="new-password">
-              <p class="hint">The user's API key is securely generated locally and shown once after creation. Send initial credentials through an approved channel.</p>
+              <p class="hint">New human users must change their temporary password at first login. API keys are disabled by default and can be issued later under Users & access.</p>
               <button type="submit" class="primary">Create user</button>
               <div id="new-user-result" class="info-note" role="status" aria-live="polite"></div>
             </form>
