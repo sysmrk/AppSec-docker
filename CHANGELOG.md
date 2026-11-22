@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.6.0 — 2026-11-22 — Manual workflows and Metabase consolidation
+
+- Development changes committed directly on `main`, each automatically tagged `change-<SHA>`; semantic release tags follow the `VERSION` file.
+- Removed Grafana; Metabase is the sole analytics service. Three provisioned dashboards cover image vulnerabilities, manual workflow reviews and CVE trends.
+- Introduced interactive non-CI/CD scan/approval UI, persisted approval decisions, one-attempt Copa Patch/Push continuation, rescan and policy/report results.
+- Added user/team/project/membership/policy administration, worker health, PostgreSQL migration/tests and optional read-only MCP. No Demo Mode.
+- Still requires production readiness work for Docker Socket/BuildKit isolation, SSO/MFA, CSRF, least-privilege analytics, signing and real infrastructure E2E testing.
+
+
 ## Unreleased — 2026-11-22 security hardening and optional MCP
 
 - Add opt-in, read-only MCP adapter in an isolated Compose profile, local HTTP/STDIO transports, AI client / Inspector documentation and unit tests.
@@ -9,8 +18,6 @@
 - Require future expiry for accepted risks and HTTPS Secure session cookies.
 - Fix CI secret scanning fail-open status handling; use Docker Compose v2 scripts and preflight.
 - CI now validates Compose/Python and runs unit tests; not a substitute for integration testing.
-
-# Changelog
 
 ## v0.1.0 - 2026-06-18
 
