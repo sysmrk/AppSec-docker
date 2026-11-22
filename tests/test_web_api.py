@@ -30,6 +30,22 @@ class WebAPIContractTests(unittest.TestCase):
             response = client.post("/pipelines", json={"image": "nginx:stable"})
             self.assertEqual(response.status_code, 401)
 
+    def test_cookie_write_requires_first_party_header(self):
+        with TestClient(app) as client:
+            client.cookies.set("appsec_session", "untrusted-cookie")
+            response = client.post("/pipelines", json={"image": "nginx:stable"})
+            self.assertEqual(response.status_code, 403)
+            self.assertEqual(response.json()["error"]["code"], "CSRF_REJECTED")
+            self.assertTrue(response.headers.get("X-Request-ID"))
+            response = client.post("/pipelines", json={"image": "nginx:stable"},
+                headers={"X-Requested-With": "AppSec-Control-Center"})
+            self.assertEqual(response.status_code, 401)
+
+    def test_download_auth_with_missing_credentials_is_401(self):
+        with TestClient(app) as client:
+            response = client.get("/api/reports/not-a-report/download")
+            self.assertEqual(response.status_code, 401)
+
     def test_patching_cannot_be_queued_without_explicit_opt_in(self):
         app.dependency_overrides[current_user] = lambda: ADMIN
         with patch.dict(os.environ, {"APPSEC_PATCH_ENABLED": "false"}):
