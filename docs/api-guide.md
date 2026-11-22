@@ -13,7 +13,7 @@ http://127.0.0.1:8080/appsec-api
 برای بیشتر endpointها از API key استفاده کنید:
 
 ```http
-X-API-Key: appsec-dev-key
+X-API-Key: YOUR_API_KEY
 ```
 
 در محیط واقعی مقدار `APPSEC_ADMIN_API_KEY` را در `.env` تغییر دهید.
@@ -31,7 +31,7 @@ curl http://127.0.0.1:8080/appsec-api/metrics
 
 ```bash
 curl -X POST http://127.0.0.1:8080/appsec-api/pipelines \
-  -H 'X-API-Key: appsec-dev-key' \
+  -H 'X-API-Key: YOUR_API_KEY' \
   -H 'Content-Type: application/json' \
   -d '{"image":"registry.example.com/team/api:1.4.0","priority":100,"mode":"scan"}'
 ```
@@ -39,14 +39,14 @@ curl -X POST http://127.0.0.1:8080/appsec-api/pipelines \
 دیدن jobها:
 
 ```bash
-curl -H 'X-API-Key: appsec-dev-key' \
+curl -H 'X-API-Key: YOUR_API_KEY' \
   http://127.0.0.1:8080/appsec-api/jobs
 ```
 
 دیدن نتیجه یک pipeline:
 
 ```bash
-curl -H 'X-API-Key: appsec-dev-key' \
+curl -H 'X-API-Key: YOUR_API_KEY' \
   http://127.0.0.1:8080/appsec-api/pipelines/<pipeline-id>
 ```
 
@@ -54,7 +54,7 @@ curl -H 'X-API-Key: appsec-dev-key' \
 
 ```bash
 curl -X POST \
-  -H 'X-API-Key: appsec-dev-key' \
+  -H 'X-API-Key: YOUR_API_KEY' \
   http://127.0.0.1:8080/appsec-api/jobs/<job-id>/stop
 ```
 
@@ -62,7 +62,7 @@ curl -X POST \
 
 ```bash
 curl -X DELETE \
-  -H 'X-API-Key: appsec-dev-key' \
+  -H 'X-API-Key: YOUR_API_KEY' \
   http://127.0.0.1:8080/appsec-api/jobs/<job-id>
 ```
 
@@ -72,7 +72,7 @@ curl -X DELETE \
 
 ```bash
 curl -X POST \
-  -H 'X-API-Key: appsec-dev-key' \
+  -H 'X-API-Key: YOUR_API_KEY' \
   http://127.0.0.1:8080/appsec-api/api/pipelines/<pipeline-id>/reports/html
 ```
 
@@ -96,7 +96,7 @@ curl -X POST \
 لیست گزارش‌های pipeline:
 
 ```bash
-curl -H 'X-API-Key: appsec-dev-key' \
+curl -H 'X-API-Key: YOUR_API_KEY' \
   http://127.0.0.1:8080/appsec-api/api/pipelines/<pipeline-id>/reports
 ```
 
@@ -104,14 +104,14 @@ curl -H 'X-API-Key: appsec-dev-key' \
 
 ```bash
 curl -L \
-  -H 'X-API-Key: appsec-dev-key' \
+  -H 'X-API-Key: YOUR_API_KEY' \
   -o report.html \
   http://127.0.0.1:8080/appsec-api/api/reports/<report-id>/download
 ```
 
-همین لینک در Grafana داخل جدول `Consolidated Downloadable Reports` هم نمایش داده می‌شود.
+همین گزارش در Control Center و داشبورد Metabase نیز قابل مشاهده است.
 
-نکته امنیتی: همه دانلودها **همیشه نیاز به احراز هویت دارند**؛ شناسه UUID مجوز دسترسی محسوب نمی‌شود. مقدار قدیمی `DOWNLOADS_REQUIRE_AUTH=false` دیگر احراز هویت را خاموش نمی‌کند. برای دریافت گزارش از `curl` با `X-API-Key` استفاده کنید یا ابتدا Session معتبر API بسازید. لینک مستقیم Grafana بدون Session معتبر API کار نمی‌کند. دسترسی به منابع Project-scoped باید با عضویت در همان Project سازگار باشد؛ منابع بدون Project داده‌های Shared هستند.
+نکته امنیتی: همه دانلودها **همیشه نیاز به احراز هویت دارند**؛ شناسه UUID مجوز دسترسی محسوب نمی‌شود. مقدار قدیمی `DOWNLOADS_REQUIRE_AUTH=false` دیگر احراز هویت را خاموش نمی‌کند. برای دریافت گزارش از `curl` با `X-API-Key` استفاده کنید یا ابتدا Session معتبر API بسازید. لینک مستقیم دانلود بدون Session معتبر API یا API Key مجاز کار نمی‌کند. دسترسی به منابع Project-scoped باید با عضویت در همان Project سازگار باشد؛ منابع بدون Project داده‌های Shared هستند.
 
 ## Secret scanning
 
@@ -119,7 +119,7 @@ curl -L \
 
 ```bash
 curl -X POST http://127.0.0.1:8080/appsec-api/api/security-jobs \
-  -H 'X-API-Key: appsec-dev-key' \
+  -H 'X-API-Key: YOUR_API_KEY' \
   -H 'Content-Type: application/json' \
   -d '{"kind":"secrets","target":"https://github.com/example/project.git","profile":"quick"}'
 ```
@@ -127,7 +127,7 @@ curl -X POST http://127.0.0.1:8080/appsec-api/api/security-jobs \
 دیدن نتیجه:
 
 ```bash
-curl -H 'X-API-Key: appsec-dev-key' \
+curl -H 'X-API-Key: YOUR_API_KEY' \
   http://127.0.0.1:8080/appsec-api/api/security-jobs/<job-id>
 ```
 
@@ -135,7 +135,7 @@ curl -H 'X-API-Key: appsec-dev-key' \
 
 ```bash
 curl -X POST \
-  -H 'X-API-Key: appsec-dev-key' \
+  -H 'X-API-Key: YOUR_API_KEY' \
   http://127.0.0.1:8080/appsec-api/api/security-jobs/<job-id>/reports/sarif
 ```
 
@@ -145,7 +145,7 @@ curl -X POST \
 
 ```bash
 curl -X POST http://127.0.0.1:8080/appsec-api/api/policies \
-  -H 'X-API-Key: appsec-dev-key' \
+  -H 'X-API-Key: YOUR_API_KEY' \
   -H 'Content-Type: application/json' \
   -d '{
     "name":"default-strict",
@@ -161,7 +161,7 @@ curl -X POST http://127.0.0.1:8080/appsec-api/api/policies \
 دیدن policyها:
 
 ```bash
-curl -H 'X-API-Key: appsec-dev-key' \
+curl -H 'X-API-Key: YOUR_API_KEY' \
   http://127.0.0.1:8080/appsec-api/api/policies
 ```
 
@@ -171,16 +171,16 @@ curl -H 'X-API-Key: appsec-dev-key' \
 - برای اجرای همزمان تعداد زیاد image، priority را جدی بگیرید؛ عدد کمتر زودتر پردازش می‌شود.
 - لینک‌های دانلود اگر S3/MinIO فعال باشد می‌توانند به presigned URL تبدیل شوند.
 - برای محیط سازمانی API را پشت reverse proxy دارای TLS، rate limit و auth خارجی قرار دهید.
-- برای گزارش‌گیری مدیریتی، Grafana را منبع اصلی مشاهده کنید و API را برای orchestration نگه دارید.
+- برای گزارش‌گیری مدیریتی، Metabase را منبع اصلی مشاهده کنید و API را برای orchestration نگه دارید.
 
 ## چند ایده خفن برای استفاده
 
-- یک bot در GitLab/GitHub بسازید که با هر merge request ایمیج branch را scan کند و نتیجه Grafana را کامنت کند.
+- یک bot در GitLab/GitHub بسازید که با هر merge request ایمیج branch را scan کند و نتیجه Metabase را کامنت کند.
 - nightly job بسازید که 100 ایمیج مهم سازمان را queue کند و صبح فقط diff نسبت به دیروز دیده شود.
 - برای تیم‌ها policy متفاوت تعریف کنید؛ مثلا imageهای اینترنتی strict و imageهای داخلی با accepted risk کنترل‌شده.
 - خروجی SBOM را به inventory سازمان وصل کنید تا بفهمید کدام package آسیب‌پذیر در چند image تکرار شده است.
 - بعد از patch موفق، image جدید را با tag استاندارد به Harbor بفرستید و deploymentها فقط از namespace امن pull کنند.
-- برای incident response، با CVE جدید در API/Grafana سرچ کنید و سریع بفهمید کدام imageها آلوده‌اند.
+- برای incident response، با CVE جدید در API/Metabase سرچ کنید و سریع بفهمید کدام imageها آلوده‌اند.
 
 
 ## تغییرات امنیتی API
@@ -218,7 +218,12 @@ curl -X POST http://127.0.0.1:8080/appsec-api/pipelines \
 | `GET /appsec-api/api/ui/security-jobs/{id}` | Redacted Gitleaks findings |
 | `GET /appsec-api/api/ui/capabilities` | Patch functionality status |
 
-All endpoints require a valid AppSec session or API Key. UI lives at `/`, Grafana at `/grafana/`.
+All endpoints require a valid AppSec session or API Key. UI lives at `/`, Metabase at `http://127.0.0.1:3001`.
 
 
 `GET /appsec-api/api/ui/system/health` is an **admin-only** read endpoint for queue counts and Worker/Scheduler heartbeats. It does not query Docker Socket. Old heartbeat timestamps do not necessarily mean an executor failed.
+
+
+## Manual workflow endpoints (no CI/CD required)
+
+The browser-guided workflow is supported by authenticated REST endpoints. `POST /appsec-api/api/manual-workflows` creates a **scan-only** job. `GET /appsec-api/api/manual-workflows` lists workflows accessible to the user, and `GET /appsec-api/api/manual-workflows/{id}` returns progress, scan findings and saved reports. `POST /appsec-api/api/manual-workflows/{id}/decision` accepts `{"action":"finish"}`, `{"action":"cancel"}` for queued scans, or `{"action":"approve_patch","confirm_push":true}`. The last action requires the completed original scan, an authorized Operator/Admin, correct Project permissions and an explicitly enabled patch executor. Continuation patch/push jobs are one-attempt only, with user identity and timestamp recorded. Metabase only displays analytics and is not an approval interface. See [Workflow](workflow.md) and [User Guide](user-guide.md).

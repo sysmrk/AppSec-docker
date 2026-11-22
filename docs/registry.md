@@ -32,7 +32,7 @@ The login helper uses `--password-stdin` rather than exposing a password on the 
 ./appsec start --patching
 ```
 
-BuildKit is a privileged optional Compose profile; only start it on isolated hosts. In Control Center choose **Scan image → Show advanced options → Scan + Patch + Push + Rescan** and confirm.
+BuildKit is a privileged optional Compose profile; only start it on isolated hosts. In Control Center choose **New manual scan**, wait for Trivy/SBOM/policy, open **My workflows** to review findings, then explicitly approve **Patch + registry push** with a checkbox and separate confirmation. Only an enabled and isolated BuildKit executor can run it.
 
 CLI advanced use:
 

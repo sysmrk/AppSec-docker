@@ -150,8 +150,8 @@ For environments without publicly accessible OAuth MCP infrastructure, **use the
 MCP **reads existing data**; it does not persist an AI conversation or create an AppSec report:
 - AI client: the model's response and tool invocation/results (subject to that product's logging/data policies).
 - MCP Inspector: the raw JSON for each called tool.
-- AppSec: original scan/pipeline/security job outputs remain in Postgres, Grafana, Metabase and authorized AppSec API endpoints.
-- AppSec Control Center: `http://127.0.0.1:8080`; Grafana: `http://127.0.0.1:8080/grafana/`; Metabase: `http://127.0.0.1:3001` when started with `./appsec start --analytics`.
+- AppSec: scan/pipeline/security job outputs remain in PostgreSQL, Control Center, Metabase and authorized AppSec API endpoints.
+- AppSec Control Center: `http://127.0.0.1:8080`; Metabase Analytics: `http://127.0.0.1:3001` (started with normal `./appsec start`).
 - AppSec API: `curl -H "X-API-Key: <KEY>" http://127.0.0.1:8080/appsec-api/pipelines/<PIPELINE_UUID>`.
 - Logs: `make mcp-logs` for HTTP MCP service.
 
@@ -184,3 +184,8 @@ Never paste production credentials into AI prompts. Do not enable unrestricted s
 ## Control Center vs MCP
 
 The Control Center is a real, authenticated, Project-aware browser interface for scan-only jobs, vulnerabilities and report downloads. MCP remains an optional read-only analytics integration; it creates no scans, enables no patching, and returns empty results until real scans run. See [user guide](user-guide.md).
+
+
+## Human approvals and AI boundaries
+
+The manual workflow starts a real scan through Control Center, lets an authorized person inspect findings and requires explicit consent for optional patch/push. Metabase is the only analytics dashboard. MCP stays read-only: it cannot create manual workflows, approve registry writes, run arbitrary SQL or launch Docker. See [manual workflow](workflow.md).
