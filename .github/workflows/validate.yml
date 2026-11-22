@@ -78,6 +78,26 @@ jobs:
               health = db.service_health_summary(conn)
               assert health['database'] == 'connected'
               assert any(item['service'] == 'worker:image' for item in health['heartbeats'])
-              print('Postgres migrations, scan mode, UI queries and heartbeat health verified')
+              from appsecctl import manual_workflows as mw
+              user = dict(admin)
+              session = mw.create(conn, 'nginx:stable', None, str(user['id']))
+              assert mw.get_workflow(conn, session['id'], user)['state'] == 'queued'
+              # Simulate the real completed scan records; no external scanner needed for DB transitions.
+              db.insert_scan_started(conn, '00000000-0000-0000-0000-000000000011', pipeline_id, image_id, 'nginx:stable', 'original')
+              db.update_scan_success(conn, '00000000-0000-0000-0000-000000000011', '/reports/ci.json', {'Results': []}, {'CRITICAL': 0, 'HIGH': 0})
+              db.finish_pipeline(conn, pipeline_id, 'success')
+              conn.execute("UPDATE pipeline_jobs SET status='success', pipeline_id=%s WHERE id=%s", (pipeline_id, session['scan_job_id']))
+              assert mw.get_workflow(conn, session['id'], user)['state'] == 'awaiting_approval'
+              result = mw.decide(conn, session['id'], user, 'approve_patch', True)
+              assert result['state'] == 'patch_queued'
+              patch = conn.execute("SELECT mode, max_attempts, pipeline_id FROM pipeline_jobs WHERE id=%s", (result['patch_job_id'],)).fetchone()
+              assert patch['mode'] == 'continue_patch' and patch['max_attempts'] == 1
+              assert str(patch['pipeline_id']) == pipeline_id
+              try:
+                  mw.decide(conn, session['id'], user, 'approve_patch', True)
+                  raise AssertionError('duplicate approval was accepted')
+              except RuntimeError:
+                  pass
+              print('Postgres migrations, UI queries, heartbeats, manual approval and single-attempt patch verified')
           PY
           python -m alembic -c alembic.ini upgrade head
