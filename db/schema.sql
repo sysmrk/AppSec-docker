@@ -296,3 +296,24 @@ CREATE TABLE IF NOT EXISTS service_heartbeats (
     last_seen TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (service, instance)
 );
+
+CREATE TABLE IF NOT EXISTS manual_workflows (
+    id UUID PRIMARY KEY,
+    requested_image TEXT NOT NULL,
+    project_id UUID REFERENCES projects(id) ON DELETE SET NULL,
+    created_by UUID NOT NULL REFERENCES users(id),
+    scan_job_id UUID NOT NULL UNIQUE REFERENCES pipeline_jobs(id),
+    patch_job_id UUID UNIQUE REFERENCES pipeline_jobs(id),
+    decision TEXT CHECK (decision IN ('finish','approve_patch')),
+    approved_by UUID REFERENCES users(id),
+    approved_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT manual_workflows_decision_consistency CHECK (
+        (decision = 'approve_patch' AND patch_job_id IS NOT NULL AND approved_by IS NOT NULL)
+        OR (decision = 'finish' AND patch_job_id IS NULL AND approved_by IS NOT NULL)
+        OR (decision IS NULL AND patch_job_id IS NULL)
+    )
+);
+CREATE INDEX IF NOT EXISTS idx_manual_workflows_creator_created ON manual_workflows(created_by, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_manual_workflows_project_created ON manual_workflows(project_id, created_at DESC);

@@ -313,6 +313,53 @@ def run_pipeline(image_ref: str, project_id: str | None = None, mode: str = "sca
     return pipeline_id
 
 
+def continue_pipeline_patch(pipeline_id: str) -> str:
+    """Continue a *previously reviewed* manual scan, never rescan unapproved.
+
+    This path is only queued by a persisted operator approval. No automatic
+    retries: patch/push is potentially non-idempotent.
+    """
+    with db.connect() as conn:
+        pipeline = conn.execute(
+            "SELECT id, project_id, status FROM pipeline_runs WHERE id = %s FOR UPDATE",
+            (pipeline_id,),
+        ).fetchone()
+        if not pipeline or pipeline["status"] not in ("success", "policy_failed"):
+            raise RuntimeError("manual patch requires a completed, reviewed scan")
+        if conn.execute("SELECT 1 FROM patch_runs WHERE pipeline_id = %s LIMIT 1", (pipeline_id,)).fetchone():
+            raise RuntimeError("this pipeline already has a patch attempt")
+        original = conn.execute(
+            """SELECT id FROM scan_runs
+               WHERE pipeline_id = %s AND phase = 'original' AND status = 'success'
+               ORDER BY started_at DESC LIMIT 1""",
+            (pipeline_id,),
+        ).fetchone()
+        if not original:
+            raise RuntimeError("original scan was not successful")
+        source_scan_id = str(original["id"])
+        project_id = str(pipeline["project_id"]) if pipeline["project_id"] else None
+        conn.execute(
+            "UPDATE pipeline_runs SET status = 'running', finished_at = NULL, error_message = NULL WHERE id = %s",
+            (pipeline_id,),
+        )
+    try:
+        _, patched_ref = patch_from_scan(source_scan_id)
+        patched_scan_id = scan_image(patched_ref, "patched", pipeline_id)
+        generate_sbom(patched_ref, "patched", patched_scan_id, pipeline_id)
+        create_diff(pipeline_id, source_scan_id, patched_scan_id)
+        policy_status = evaluate_policy(pipeline_id, patched_scan_id, project_id)
+        with db.connect() as conn:
+            db.finish_pipeline(conn, pipeline_id, "success" if policy_status == "passed" else "policy_failed")
+    except BaseException as exc:
+        with db.connect() as conn:
+            db.finish_pipeline(conn, pipeline_id, "failed", str(exc))
+        write_pipeline_report_if_ready(pipeline_id)
+        raise
+    write_pipeline_report_if_ready(pipeline_id)
+    print_summary(pipeline_id)
+    return pipeline_id
+
+
 def write_pipeline_report_if_ready(pipeline_id: str) -> None:
     with db.connect() as conn:
         summary = db.pipeline_summary(conn, pipeline_id)

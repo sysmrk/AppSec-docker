@@ -50,6 +50,16 @@ class PipelineRequest(BaseModel):
     confirm_patch: bool = False
 
 
+class ManualWorkflowRequest(BaseModel):
+    image: str = Field(min_length=1, max_length=1024)
+    project_id: str | None = None
+
+
+class ManualDecisionRequest(BaseModel):
+    action: str = Field(pattern="^(finish|approve_patch|cancel)$")
+    confirm_push: bool = False
+
+
 class ScheduleRequest(BaseModel):
     image: str = Field(min_length=1)
     interval_minutes: int = Field(default=1440, ge=1)
@@ -718,3 +728,81 @@ def ui_system_health(user: dict[str, Any] = Depends(require_role("admin"))) -> d
     """Real service and queue health; no Docker Socket access from API."""
     with db.connect() as conn:
         return db.service_health_summary(conn)
+
+
+@app.post("/api/manual-workflows", status_code=201)
+def create_manual_workflow(
+    request: ManualWorkflowRequest,
+    user: dict[str, Any] = Depends(require_role("admin", "operator")),
+) -> dict[str, Any]:
+    from . import manual_workflows as mw
+    with db.connect() as conn:
+        require_project(conn, user, request.project_id, write=True)
+        try:
+            result = mw.create(conn, request.image, request.project_id, str(user["id"]))
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
+        db.insert_audit(conn, str(user["id"]), "manual.create", "manual_workflow", result["id"], {
+            "image": request.image, "project_id": request.project_id,
+        })
+    return result
+
+
+@app.get("/api/manual-workflows")
+def list_manual_workflows(
+    limit: int = 40, user: dict[str, Any] = Depends(current_user),
+) -> list[dict[str, Any]]:
+    from . import manual_workflows as mw
+    with db.connect() as conn:
+        return mw.list_workflows(conn, user, limit)
+
+
+@app.get("/api/manual-workflows/{workflow_id}")
+def get_manual_workflow(
+    workflow_id: str, user: dict[str, Any] = Depends(current_user),
+) -> dict[str, Any]:
+    from . import manual_workflows as mw
+    from .ui_queries import pipeline_details
+    with db.connect() as conn:
+        try:
+            record = mw.get_workflow(conn, workflow_id, user)
+        except ValueError:
+            raise HTTPException(status_code=404, detail="workflow not found") from None
+        if not record:
+            raise HTTPException(status_code=404, detail="workflow not found")
+        pipeline = pipeline_details(conn, str(record["pipeline_id"])) if record.get("pipeline_id") else None
+    return {
+        "workflow": record,
+        "pipeline": pipeline,
+        "patch_enabled": os.environ.get("APPSEC_PATCH_ENABLED", "false").lower() in ("1", "true", "yes"),
+        "registry_destination": os.environ.get("REGISTRY_HOST", "") + "/" +
+            os.environ.get("PATCHED_REPOSITORY", ""),
+    }
+
+
+@app.post("/api/manual-workflows/{workflow_id}/decision")
+def decide_manual_workflow(
+    workflow_id: str, request: ManualDecisionRequest,
+    user: dict[str, Any] = Depends(require_role("admin", "operator")),
+) -> dict[str, Any]:
+    from . import manual_workflows as mw
+    if request.action == "approve_patch":
+        if not request.confirm_push:
+            raise HTTPException(status_code=422, detail="registry push requires explicit confirmation")
+        if os.environ.get("APPSEC_PATCH_ENABLED", "false").lower() not in ("1", "true", "yes"):
+            raise HTTPException(status_code=409, detail="patching disabled; start AppSec with --patching")
+    with db.connect() as conn:
+        try:
+            result = mw.decide(conn, workflow_id, user, request.action, request.confirm_push)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from None
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+        db.insert_audit(
+            conn, str(user["id"]), "manual." + request.action,
+            "manual_workflow", workflow_id,
+            {"confirmed_push": request.confirm_push},
+        )
+    return result

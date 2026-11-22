@@ -4,7 +4,7 @@ import os
 import time
 
 from . import db
-from .cli import run_pipeline
+from .cli import run_pipeline, continue_pipeline_patch
 from .logging_utils import log_event
 from .reports import notify, write_html_report, write_security_sarif
 from .security import execute_security_job
@@ -33,7 +33,12 @@ def main() -> int:
             log_event("worker.image.claimed", job_id=job_id, image=image_ref)
 
             try:
-                pipeline_id = run_pipeline(image_ref, project_id, mode=str(job.get("mode") or "scan"))
+                if job.get("mode") == "continue_patch":
+                    if not job.get("pipeline_id"):
+                        raise RuntimeError("approved patch job has no original pipeline")
+                    pipeline_id = continue_pipeline_patch(str(job["pipeline_id"]))
+                else:
+                    pipeline_id = run_pipeline(image_ref, project_id, mode=str(job.get("mode") or "scan"))
                 with db.connect() as conn:
                     db.finish_job(conn, job_id, pipeline_id)
                     summary = db.pipeline_summary(conn, pipeline_id)
