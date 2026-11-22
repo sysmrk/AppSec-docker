@@ -68,6 +68,14 @@ jobs:
               job_id = db.enqueue_pipeline(conn, 'nginx:stable')
               mode = conn.execute("SELECT mode FROM pipeline_jobs WHERE id = %s", (job_id,)).fetchone()['mode']
               assert mode == 'scan', mode
-              print('Postgres migration and scan mode verified')
+              from appsecctl import ui_queries
+              admin = conn.execute("SELECT id, username, role FROM users WHERE username = 'admin'").fetchone()
+              data = ui_queries.overview_data(conn, dict(admin))
+              assert 'pipelines' in data and 'summary' in data
+              image_id = db.get_or_create_image(conn, 'nginx:stable')
+              pipeline_id = db.create_pipeline(conn, image_id, 'nginx:stable')
+              detail = ui_queries.pipeline_details(conn, pipeline_id)
+              assert detail['pipeline']['id'] == pipeline_id or str(detail['pipeline']['id']) == pipeline_id
+              print('Postgres migrations, scan mode, UI overview and pipeline detail verified')
           PY
           python -m alembic -c alembic.ini upgrade head
