@@ -7,7 +7,7 @@ Development profile:
 ```bash
 ./scripts/harbor.sh install
 ./scripts/harbor.sh login
-docker-compose -f docker-compose.yaml --profile platform up -d postgres buildkit minio minio-init api nginx worker scheduler grafana metabase
+docker compose -f docker-compose.yaml --profile platform up -d postgres buildkit minio minio-init api nginx worker scheduler grafana metabase
 ./scripts/setup-metabase.sh
 ```
 
@@ -16,7 +16,7 @@ Production-like split workers:
 ```bash
 ./scripts/harbor.sh install
 ./scripts/harbor.sh login
-docker-compose -f docker-compose.yaml --profile production up -d postgres buildkit api nginx image-worker security-worker scheduler
+docker compose -f docker-compose.yaml --profile production up -d postgres buildkit api nginx image-worker security-worker scheduler
 ```
 
 ## Migrations
@@ -50,7 +50,7 @@ Example:
 
 ```bash
 docker rm -f appsec_api_1 appsec_worker_1 appsec_scheduler_1
-docker-compose -f docker-compose.yaml --profile platform up -d api worker scheduler
+docker compose -f docker-compose.yaml --profile platform up -d api worker scheduler
 ```
 
 Do not remove named volumes unless data loss is intended.

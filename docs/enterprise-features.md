@@ -56,7 +56,7 @@ Project policies override global policies for project-linked image pipelines.
 Start MinIO:
 
 ```bash
-docker-compose -f docker-compose.yaml --profile storage up -d minio minio-init
+docker compose -f docker-compose.yaml --profile storage up -d minio minio-init
 ```
 
 Enable S3 artifact storage:

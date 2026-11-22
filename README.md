@@ -44,10 +44,10 @@ make init
 مسیر دستی معادل:
 
 ```bash
-docker-compose -f docker-compose.yaml --profile platform up -d postgres buildkit minio minio-init api nginx worker scheduler grafana metabase
+docker compose -f docker-compose.yaml --profile platform up -d postgres buildkit minio minio-init api nginx worker scheduler grafana metabase
 ./scripts/harbor.sh install
 ./scripts/harbor.sh login
-docker-compose -f docker-compose.yaml build appsec-runner
+docker compose -f docker-compose.yaml build appsec-runner
 ./scripts/appsecctl.sh migrate
 ./scripts/setup-metabase.sh
 ```
@@ -105,7 +105,7 @@ cp .env.production.example .env
 اگر قرار است مرحله patch هم اجرا شود، BuildKit هم باید بالا باشد:
 
 ```bash
-docker-compose -f docker-compose.yaml up -d buildkit
+docker compose -f docker-compose.yaml up -d buildkit
 ```
 
 این دستور همه مراحل را انجام می‌دهد:
@@ -168,14 +168,14 @@ patch بر اساس یک scan مشخص:
 برای اجرای Grafana، Metabase، API، worker و scheduler:
 
 ```bash
-docker-compose -f docker-compose.yaml --profile platform up -d postgres buildkit minio minio-init api nginx worker scheduler grafana metabase
+docker compose -f docker-compose.yaml --profile platform up -d postgres buildkit minio minio-init api nginx worker scheduler grafana metabase
 ./scripts/setup-metabase.sh
 ```
 
 برای اجرای نزدیک‌تر به production با workerهای جدا:
 
 ```bash
-docker-compose -f docker-compose.yaml --profile production up -d postgres buildkit api nginx image-worker security-worker scheduler
+docker compose -f docker-compose.yaml --profile production up -d postgres buildkit api nginx image-worker security-worker scheduler
 ```
 
 در این حالت API به Docker socket و workspaceها دسترسی ندارد؛ فقط workerها executor هستند. ورودی اصلی وب سرویس `nginx` است، Grafana روی ریشه 8080 نمایش داده می‌شود و API پروژه زیر مسیر `/appsec-api/` قرار دارد.
@@ -315,7 +315,7 @@ worker بعد از موفقیت security job به صورت خودکار HTML و 
 - گزارش شامل نام image، tag/version، digest/hash، image id، حجم، OS/architecture، تعداد و شدت vulnerabilityها، نوع/class نتیجه Trivy، CVSS score، توضیحات vulnerabilityها، نتیجه Copa و درصد کاهش آسیب‌پذیری‌هاست.
 - گزارش‌ها به صورت پیش‌فرض در MinIO/S3 ذخیره می‌شوند (`ARTIFACT_STORAGE=s3`). لینک دانلود به صورت presigned ساخته می‌شود. اگر MinIO لحظه‌ای در دسترس نباشد، فایل local باقی می‌ماند تا pipeline به خاطر storage fail نشود.
 - برای upload داخلی از `S3_ENDPOINT_URL` و برای لینک دانلود قابل باز شدن در مرورگر از `S3_PUBLIC_ENDPOINT_URL` استفاده می‌شود.
-- چون Grafana هنگام کلیک روی link نمی‌تواند `X-API-Key` ارسال کند، دانلودها به صورت پیش‌فرض با UUID غیرقابل حدس قابل دریافت هستند. اگر می‌خواهید دانلود هم auth اجباری داشته باشد، در `.env` مقدار `DOWNLOADS_REQUIRE_AUTH=true` را بگذارید؛ در این حالت لینک‌های Grafana ممکن است بدون session معتبر API باز نشوند.
+- دانلود همه گزارش‌ها و Artifactها همیشه نیازمند احراز هویت است؛ UUID به‌تنهایی مجوز دسترسی نیست. برای دانلود با curl از `X-API-Key` استفاده کنید؛ لینک Grafana فقط با Session معتبر API باز می‌شود. تنظیم قدیمی `DOWNLOADS_REQUIRE_AUTH=false` دیگر احراز هویت را غیرفعال نمی‌کند.
 
 از API هم می‌توانید همان گزارش تجمیعی را دانلود کنید:
 
@@ -383,7 +383,7 @@ TRIVY_DB_UPDATE_INTERVAL_SECONDS=21600 ./scripts/update-trivy-db.sh --watch
 یا با Docker Compose profile:
 
 ```bash
-docker-compose -f docker-compose.yaml --profile maintenance up -d trivy-db-updater
+docker compose -f docker-compose.yaml --profile maintenance up -d trivy-db-updater
 ```
 
 اگر در شبکه سازمانی mirror دارید، مقدار زیر را در `.env` تنظیم کنید:
@@ -566,3 +566,6 @@ For Claude Desktop STDIO configuration, Streamable HTTP testing, connecting AI c
 
 
 Gitleaks uses exit code `17` for detected secrets; any other nonzero code is treated as a scanner failure, not a successful empty report. Temporary Git clones are removed at job completion. `make down` shuts down MCP too if it was explicitly started.
+
+
+For local `make test`, install the optional test dependencies first: `python3 -m pip install -r runner/requirements.txt -r integrations/mcp/requirements.txt`. CI runs these automatically.
