@@ -1,51 +1,45 @@
-# Harbor Registry
+# Optional Harbor / Patch and Push Setup
 
-پروژه برای registry داخلی از Harbor استفاده می‌کند. Harbor خودش stack چندسرویسی دارد، بنابراین با installer رسمی Harbor و Docker Compose تولیدشده توسط همان installer اجرا می‌شود.
+**Harbor is not necessary for scan-only mode.** Default `./appsec start` does not launch privileged BuildKit and does not push images.
 
-## راه‌اندازی
+## Existing enterprise registry
 
-```bash
-./scripts/harbor.sh install
-./scripts/harbor.sh login
-```
-
-پیش‌فرض‌ها:
-
-```text
-UI:       http://localhost:8081
-Registry: localhost:8081/library
-User:     admin
-Password: Harbor12345
-```
-
-برای محیط واقعی:
-
-```bash
-export HARBOR_ADMIN_PASSWORD='change-this-password'
-./scripts/harbor.sh install
-./scripts/harbor.sh login
-```
-
-## تنظیم مقصد imageهای patch شده
-
-مقادیر پیش‌فرض پروژه:
-
-```env
-REGISTRY_HOST=localhost:8081
-PATCHED_REPOSITORY=library/appsec-patched
-```
-
-اگر Harbor خارجی دارید:
+Configure `.env`:
 
 ```env
 REGISTRY_HOST=harbor.example.com
 PATCHED_REPOSITORY=security/appsec-patched
 ```
 
-و روی میزبان Docker login کنید:
+Registry credentials must be available to the Docker daemon used by the worker. Registry authentication in a browser is not enough.
+
+## Optional local Harbor
+
+The local installer requires **strong explicitly configured credentials**; it no longer accepts the old known default passwords.
 
 ```bash
-docker login harbor.example.com
+export HARBOR_ADMIN_PASSWORD='USE_A_UNIQUE_RANDOM_PASSWORD_OF_AT_LEAST_16_CHARACTERS'
+export HARBOR_DB_PASSWORD='USE_ANOTHER_UNIQUE_RANDOM_PASSWORD_OF_AT_LEAST_16_CHARACTERS'
+./scripts/harbor.sh install
+./scripts/harbor.sh login
 ```
 
-چون push با Docker daemon میزبان انجام می‌شود، credential باید روی همان میزبان ثبت شده باشد.
+The login helper uses `--password-stdin` rather than exposing a password on the Docker CLI command line. Avoid storing production secrets in shell history. Use HTTPS and trusted certificates for remote registry communication.
+
+## Explicit patch enablement
+
+```bash
+./appsec start --patching
+```
+
+BuildKit is a privileged optional Compose profile; only start it on isolated hosts. In Control Center choose **Scan image → Show advanced options → Scan + Patch + Push + Rescan** and confirm.
+
+CLI advanced use:
+
+```bash
+./scripts/appsecctl.sh run registry.example.com/team/service:1.4.0 --patch
+```
+
+Copa may fail to patch unsupported packages. Inspect the final scan and policy result before promoting an image. Consider signing with Cosign, immutable registry tags, short-lived credentials and digest pinning.
+
+See [workflow](workflow.md) and [security review](security-review.md).

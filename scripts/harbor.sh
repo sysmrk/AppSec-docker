@@ -8,8 +8,8 @@ INSTALLER_DIR="${RUNTIME_DIR}/harbor"
 VERSION="${HARBOR_VERSION:-latest}"
 HOSTNAME="${HARBOR_HOSTNAME:-localhost}"
 HTTP_PORT="${HARBOR_HTTP_PORT:-8081}"
-ADMIN_PASSWORD="${HARBOR_ADMIN_PASSWORD:-Harbor12345}"
-DB_PASSWORD="${HARBOR_DB_PASSWORD:-HarborDB12345}"
+ADMIN_PASSWORD="${HARBOR_ADMIN_PASSWORD:-}"
+DB_PASSWORD="${HARBOR_DB_PASSWORD:-}"
 DATA_VOLUME="${HARBOR_DATA_VOLUME:-${HARBOR_DIR}/data}"
 LOG_DIR="${HARBOR_LOG_DIR:-${HARBOR_DIR}/logs}"
 
@@ -29,7 +29,8 @@ Environment:
   HARBOR_VERSION=latest|v2.x.y
   HARBOR_HOSTNAME=localhost
   HARBOR_HTTP_PORT=8081
-  HARBOR_ADMIN_PASSWORD=Harbor12345
+  HARBOR_ADMIN_PASSWORD=strong-random-password
+  HARBOR_DB_PASSWORD=strong-random-password
 EOF
 }
 
@@ -84,7 +85,15 @@ render_config() {
     "${HARBOR_DIR}/harbor.yml.tmpl" > "${INSTALLER_DIR}/harbor.yml"
 }
 
+require_harbor_passwords() {
+  if [[ -z "${ADMIN_PASSWORD}" || -z "${DB_PASSWORD}" || "${#ADMIN_PASSWORD}" -lt 16 || "${#DB_PASSWORD}" -lt 16 ]]; then
+    echo "Set HARBOR_ADMIN_PASSWORD and HARBOR_DB_PASSWORD to distinct random values of at least 16 characters." >&2
+    exit 1
+  fi
+}
+
 install_harbor() {
+  require_harbor_passwords
   local version archive url
   version="$(resolved_version)"
   if [[ -z "${version}" ]]; then
@@ -120,7 +129,8 @@ case "${1:-}" in
     (cd "${INSTALLER_DIR}" && compose_cmd down)
     ;;
   login)
-    docker login "${HOSTNAME}:${HTTP_PORT}" -u admin -p "${ADMIN_PASSWORD}"
+    require_harbor_passwords
+    printf '%s' "${ADMIN_PASSWORD}" | docker login "${HOSTNAME}:${HTTP_PORT}" -u admin --password-stdin
     ;;
   status)
     (cd "${INSTALLER_DIR}" && compose_cmd ps)
