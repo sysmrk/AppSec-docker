@@ -33,3 +33,8 @@ Back up PostgreSQL before applying migrations. For production, test the migratio
 Trivy raw report JSON is retained for audit. Gitleaks raw Secret/Match/Line data is redacted for new reports and removed from legacy PostgreSQL records by migration 0006. Authentication and Project authorization apply to downloads.
 
 Do not expose the database directly to users or an unrestricted AI agent. The optional MCP integration requires a separate SELECT-only account and provides global analytics, not per-user RBAC.
+
+
+## Service heartbeat telemetry
+
+`service_heartbeats` (`service`, `instance`, `last_seen`) is created in migration 0008. Workers/Scheduler update it periodically; the admin-only System Health view reads last-seen timestamps and real queue status. No Docker daemon credentials are stored here.
