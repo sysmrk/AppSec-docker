@@ -1,86 +1,69 @@
-# Installation and Operations Runbook
+# Operations Runbook
 
-For the recommended first-run flow, see [README](../README.md) and [user guide](user-guide.md).
+## Installation: first start
 
-## Prerequisites
+Requirements: Linux/WSL2, Docker with Compose v2, Git, Python 3.10+, a real registry/image source, network access or internal mirrors for Trivy databases.
 
-- Linux/WSL2 with Docker Engine or Docker Desktop, Docker Compose v2, Git, Python 3.10+
-- Network access (or configured internal mirrors) for images and Trivy vulnerability database
-- Sufficient disk space for images, reports, Docker volumes and PostgreSQL
-- Dedicated trusted worker host for production (Docker Socket remains powerful)
-
-## Fresh installation (no demonstration data)
-
-```bash
+\`\`\`bash
 git clone https://github.com/sysmrk/AppSec-docker.git
 cd AppSec-docker
-# For the PR before merge: git switch security/optional-mcp-hardening
 ./appsec setup
 ./appsec start
 ./appsec doctor
-./appsec credentials
-```
+\`\`\`
 
-Open `http://127.0.0.1:8080` on the host. The CLI generates random credentials in `.env` (mode 0600) and applies migrations automatically. It **never overwrites an existing `.env`**.
+This uses \`main\`. The setup creates \`.env\` with random credentials, never overwrites an existing one and does **not** add sample data. Start runs migrations and brings up PostgreSQL, MinIO, FastAPI, Nginx, Worker, Scheduler and **Metabase**. Grafana has been removed. Privileged BuildKit and MCP stay off unless explicitly requested.
 
-The default startup launches PostgreSQL, MinIO, API, Nginx, a shared Worker, Scheduler and Grafana. It does **not** start privileged BuildKit, Metabase or MCP. No Registry/Harbor is required for scan-only mode. External vulnerability DB downloads may still be needed.
+AppSec UI: \`http://127.0.0.1:8080\`. Metabase UI: \`http://127.0.0.1:3001\`. Obtain both initial credentials with \`./appsec credentials\` (trusted interactive terminal).
 
-## CLI operations
+## Operations
 
-```bash
-./appsec start                 # Scan-only
-./appsec start --analytics     # Also start Metabase
-./appsec start --patching      # Opt-in privileged BuildKit and patch mode
+\`\`\`bash
 ./appsec status
 ./appsec doctor
-./appsec logs worker
-./appsec stop
-```
-
-`make up` and `make init` remain compatibility shortcuts for the platform with analytics. For advanced CLI actions: `./scripts/appsecctl.sh`. MCP remains optional: `make mcp-up` and `make mcp-down`.
-
-## Restore/upgrade an existing deployment
-
-1. Back up Postgres and reports/object storage. Review queued jobs: migration 0007 preserves previously queued jobs as patch mode.
-2. Preserve `.env` and stored secrets. `./appsec setup` does not reset existing accounts.
-3. Pull reviewed code changes, then run `./appsec start` to apply migrations. **Production deployments require staging migration testing**.
-4. Migration 0006 redacts historical secret-bearing PostgreSQL data but does not scrub old JSON/HTML/S3 objects or backups. Rotate exposed credentials and purge old copies.
-5. Session cookie is Secure for HTTPS, false only for localhost HTTP. All downloads require authentication; Grafana root is now `/grafana/`.
-6. Test login, create a scan-only job, verify policy result, download reports and inspect service health.
-
-## Diagnostics
-
-```bash
-./appsec doctor
-./appsec status
 ./appsec logs api
 ./appsec logs worker
-./appsec logs nginx
-curl -fsS http://127.0.0.1:8080/appsec-api/health
-```
+./appsec logs scheduler
+./appsec logs metabase
+./appsec stop
+\`\`\`
 
-The doctor checks actual local Docker/Compose/container state and API/DB reachability, reports failures and warnings, and does not generate test scans.
+\`make init\`/\`make up\` remain compatibility aliases; \`make mcp-up\` is the optional read-only AI integration. Metabase dashboards are provisioned by \`scripts/setup-metabase.sh\`, automatically invoked on each startup (idempotent card/dashboard lookup).
 
-For reverse proxy/remote use: keep AppSec loopback-only or inside a trusted network, terminate TLS at an approved external proxy, restrict ingress, and set `APPSEC_SESSION_COOKIE_SECURE=true`, `GRAFANA_ROOT_URL=https://your-host/grafana/`.
+## Manual workflow state
 
-## Optional analytics, registry patching and MCP
+The UI queues a regular \`scan\` job and saves a row in \`manual_workflows\`. A worker executes Scan + SBOM + Policy + Report. On successful completion, the row becomes **awaiting_approval**. Operator can **finish** or **approve_patch** from the UI. Approval creates a \`continue_patch\` job bound to the **existing pipeline ID**, with \`max_attempts=1\`. The worker enforces \`APPSEC_PATCH_ENABLED=true\`; otherwise it rejects the job. The saved decision and approving identity are audited.
 
-- Grafana: `http://127.0.0.1:8080/grafana/`, admin login configured in `.env`
-- Metabase: `./appsec start --analytics`, URL `http://127.0.0.1:3001`
-- Harbor and Copa: [registry.md](registry.md). Patch/Push must be explicitly enabled using `./appsec start --patching`. Avoid running privileged BuildKit on sensitive hosts.
-- AI/MCP: [mcp.md](mcp.md). MCP does not start with the normal platform, is read-only and requires proper OAuth/TLS for cloud clients.
+## Optional patch and registry writes
 
-## Security and operational warnings
+\`\`\`bash
+./appsec start --patching
+\`\`\`
 
-- Worker retains powerful Docker Socket access even in scan-only mode. Isolate workers, set egress policy and do not scan untrusted images on sensitive hosts.
-- Do not expose PostgreSQL/MinIO/BuildKit or docker.sock externally.
-- `.env` holds sensitive values; use an approved secret manager for production and never commit it.
-- Local S3 credentials generated at setup match the MinIO root secret. Replace with a bucket-scoped MinIO service account before production.
-- Old report URLs must not be treated as credentials; all report downloads need an authenticated AppSec session or API key.
-- Existing global/unassigned Project data remains shared with all authenticated AppSec accounts.
-- Keep image/scanner signatures and version digest pinning under review.
+Use only on an approved isolated host. Configure registry authentication as in [registry guide](registry.md). The control center still requires two explicit UI acknowledgments. No default auto-Push.
 
+## Existing deployment upgrade
 
-## System health page
+1. Back up PostgreSQL, reports, S3/MinIO artifacts and current \`.env\`.
+2. Inspect **existing queued Patch jobs**: historical jobs may retain their previous mode. Workers reject writes while \`APPSEC_PATCH_ENABLED=false\`, but review them before re-enabling patching.
+3. Update the reviewed release on \`main\`. Run \`./appsec start\` to apply Alembic migrations through 0009.
+4. Verify admin login, Project RBAC, manual scanning, approval, report downloads and Metabase dashboards. Test any live migration first in staging.
+5. If upgrading an old \`.env\`, supply a strong \`METABASE_ADMIN_PASSWORD\` (at least 16 characters) and correct \`METABASE_ADMIN_EMAIL\`; do not rely on old hard-coded values.
+6. Remove obsolete Grafana URLs, containers and configuration. **Do not automatically delete the old Grafana Docker volume**, because it might hold data the operator wants to export.
+7. Previous Gitleaks file/S3/backups may contain raw secrets. Rotate compromised credentials and remove old copies; migration 0006 sanitizes only PostgreSQL fields.
+8. Enable secure session cookies when serving HTTPS: \`APPSEC_SESSION_COOKIE_SECURE=true\`. Restrict Metabase and AppSec endpoints to approved identity-aware network access.
 
-An administrator can open **System health** in the web UI to inspect real queue counts and Worker/Scheduler heartbeat times (migration 0008). The UI does not get Docker Socket access. If heartbeat timestamps are old, check `./appsec doctor` and `./appsec logs worker`; a long-running scan can temporarily prevent heartbeat updates.
+## Health and monitoring
+
+\`./appsec doctor\` checks actual Docker, Compose, containers, API, database and Metabase HTTP health. Admin-only **System health** uses worker/scheduler heartbeat timestamps stored in PostgreSQL. A stale timestamp can indicate a busy worker, not necessarily a failed container.
+
+Metabase provides three preconfigured analytics dashboards; see [Metabase guide](metabase.md). SQL reports are **read-only** and are not an approval mechanism.
+
+## Production considerations
+
+- Worker Docker Socket and privileged BuildKit are sensitive execution interfaces; isolate workers.
+- Rotate all bootstrap passwords; use an enterprise secret manager.
+- Put a hardened authenticated TLS reverse proxy in front of any remote access; default listeners bind only to loopback.
+- Scope registry credentials to permitted namespaces; sign and promote images through your established controls.
+- Test backup/restore, rollback, CVE-feed freshness, S3 retention, CSRF, rate limits and multi-tenant RBAC before production approval.
+- MCP stays optional and requires a SELECT-only DB role plus strong remote authentication.

@@ -1,71 +1,55 @@
-# AppSec Architecture
+# Architecture
 
-## User-facing entrypoint
+## Primary user experience
 
-The default entrypoint is **AppSec Control Center** at `http://127.0.0.1:8080/`, a responsive first-party UI served by the existing FastAPI process behind Nginx. No frontend build stack, external CDN or sample data is required. The UI consumes authenticated, Project-aware read endpoints and creates jobs using the existing API.
+\`\`\`text
+Browser -> Nginx :8080 -> FastAPI /ui + /api/*
+                              |
+                         Auth + RBAC
+                              |
+                       PostgreSQL (jobs)
+                              |
+                       Worker / Scheduler
+                              |
+              Trivy scan + CycloneDX SBOM + Policy
+                              |
+                   Postgres / MinIO reports
+                              |
+                  Browser review + approval
+                              |
+                  (optional) Copa + BuildKit
+                              |
+                      Registry Push -> Rescan -> Diff
+\`\`\`
 
-Grafana is an advanced monitoring integration under `/grafana/`. Metabase uses a separate optional service at `:3001`. MCP is a separate optional read-only integration.
+The browser UI is a first-party, static HTML/CSS/JS application served by FastAPI. No separate frontend build or demo dataset. It uses authenticated API calls; user-supplied fields are inserted via DOM text nodes rather than raw HTML.
 
-## Default image scan (no patch/push)
+## Manual approval boundary
 
-```text
-Browser/UI or CLI -> FastAPI auth + RBAC -> PostgreSQL pipeline_jobs (mode=scan)
-                                         |
-                                         v
-                                      Worker
-                                         |
-                                  Docker -> Trivy
-                                         |
-                                 Findings + SBOM
-                                         |
-                                      Policy
-                                         |
-                             Postgres / MinIO reports
-                                         |
-                               UI Results / Downloads
-```
+\`manual_workflows\` stores the requesting user, image, optional Project, scan job, optional patch job, decision, reviewer and timestamp. Before approval, the only worker mode is **scan**. After completed original scan and policy, a user with appropriate role and Project write access may finalize the review or create a **single-attempt** \`continue_patch\` job. The worker reuses the existing pipeline's original scan, rather than starting an unrelated new scan.
 
-**Important:** the worker uses Docker Socket to start Trivy, but **BuildKit is not started by default**. The initial image scan is read-only with respect to the image registry. Scans may download images and CVE databases to local caches.
+API requires \`APPSEC_PATCH_ENABLED=true\`, \`confirm_push=true\`, a persisted decision and an authenticated Operator/Admin. Worker independently enforces patch opt-in. The continuation job intentionally has no automatic retry after possible partial registry write.
 
-## Explicit advanced patch path
+## Core services
 
-Only after `./appsec start --patching`, registry configuration, and an explicit browser/API confirmation:
-
-```text
-Original Trivy scan -> Copa + privileged BuildKit -> Push patched image to registry
-          -> Patched Trivy scan + SBOM -> diff -> policy -> authenticated reports
-```
-
-Patching failures are recorded; no fake success is generated. Worker Docker Socket and BuildKit privileged access are powerful and must be isolated before production.
-
-## Components
-
-| Component | Responsibility |
+| Service | Role |
 | --- | --- |
-| Nginx | Loopback-only ingress, routes root UI, `/appsec-api/`, Grafana `/grafana/` |
-| FastAPI | Login/session, REST API, authorization, UI static assets, job creation |
-| PostgreSQL | Users, roles, projects, queue, scan findings, policies, reports |
-| Worker / Scheduler | Asynchronous processing and scheduled image scans |
-| Trivy | Image vulnerability scan and CycloneDX SBOM |
-| Gitleaks | Repository secret scanning with persisted secret redaction |
-| MinIO | S3-compatible report storage (default local deployment) |
-| Grafana | Advanced monitoring |
-| Metabase | Optional business analytics |
-| BuildKit + Copa | Optional and privileged patch/push executor |
-| MCP Adapter | Optional read-only analytics for AI clients; no mutation tools |
+| Nginx | Loopback-only routing from \`/\` to Control Center and \`/appsec-api/\` to FastAPI |
+| FastAPI | Authentication, API, UI, Project access and manual decisions |
+| PostgreSQL | Project/user records, queues, image scans, manual workflow and audit history |
+| Worker | Runs Trivy, generates SBOM and optional Copa continuation |
+| Scheduler | Schedules image scans |
+| MinIO | Optional S3-compatible artifact backing (enabled in normal local deployment) |
+| Metabase | **Only** analytics system, three dashboards; accessible at local \`:3001\` |
+| BuildKit | Privileged **opt-in** patch executor |
+| MCP | Optional independent read-only adapter for AI; no mutation tools |
 
-Worker uses `FOR UPDATE SKIP LOCKED` for job claiming. Each image job has a mode (`scan` default or `patch` explicit), UUID, status, timestamps and output pipeline reference. Report downloads require valid session/API identity and authorized Project access.
+Grafana is intentionally **absent**. The web UI handles manual operations and approval, while Metabase handles aggregated charting. Metabase's own account system must be access-controlled independently and is not equivalent to AppSec Project-scoped RBAC.
 
-## Trust boundaries
+## Security boundaries
 
-- The API must not mount Docker Socket; workers currently do, even during scan-only use.
-- The local UI authenticates via AppSec API sessions. Remote access requires HTTPS and identity-aware proxy.
-- MCP uses a separate container, no Docker Socket, and should use a SELECT-only PostgreSQL role. Current MCP queries provide global analytics and do not impersonate AppSec end users. See [MCP documentation](mcp.md).
-- Secrets from Gitleaks must never be copied into returned findings. Historic artifacts from pre-hardening installations require cleanup.
-
-See [security review](security-review.md) and [production roadmap](production-roadmap.md).
-
-
-## System health without Docker Socket
-
-Worker and Scheduler periodically write timestamps to `service_heartbeats` (migration 0008). The admin-only `/appsec-api/api/ui/system/health` returns actual heartbeat ages and database queue counts. A stale heartbeat is **not** definitive failure because a worker can be busy scanning. Host diagnostics remain available through `./appsec doctor`.
+- API never mounts Docker Socket. Worker currently mounts it to execute Trivy and optional Copa; use isolated workers before production.
+- Manual workflows are creator/admin-private when unassigned, or visible to current Project Team members. Only authorized operators can approve changes.
+- Project-scoped scan/report APIs require membership; downloads always require authenticated AppSec credentials.
+- MCP has no Docker Socket, no write tools and only parameterized queries, but provides **global** analytics to its authorized caller. It requires network isolation and read-only DB credentials.
+- All image and approval results derive from real database records. No demo/mock data is generated.

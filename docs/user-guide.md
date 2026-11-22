@@ -1,95 +1,94 @@
 # AppSec Control Center — User Guide
 
-This guide explains the actual web UI. There is **no demo mode**, mock inventory or sample vulnerability data.
+No demonstration data, no CI/CD requirement. Every operation and finding in this guide uses the **real system**.
 
-## 1. First login
+## First login
 
-On the Linux/WSL host:
+On your Docker/WSL host:
 
-```bash
+\`\`\`bash
 ./appsec setup
 ./appsec start
 ./appsec doctor
-```
+./appsec credentials
+\`\`\`
 
-Open `http://127.0.0.1:8080` in a browser on the same host. If AppSec is running inside WSL2, the Windows browser may be able to access the forwarded localhost address; verify your WSL networking and port mapping if it cannot.
+Open \`http://127.0.0.1:8080\`; sign in as \`admin\` with the generated password. The default URL works from the same host. For a different computer, use an authenticated HTTPS proxy or SSH tunnel, not direct insecure public exposure.
 
-Sign in as `admin` using the password created by setup. Retrieve it using `./appsec credentials` in a trusted interactive terminal. Existing installations retain their existing account credentials; setup never resets them.
+## Menu overview
 
-The UI uses the existing AppSec FastAPI login/session. HTTP on localhost requires `APPSEC_SESSION_COOKIE_SECURE=false`. HTTPS deployments must enable Secure cookies.
+| Menu | Intended user | Action |
+| --- | --- | --- |
+| Overview | Everyone | View real jobs, severity counts and last results |
+| New manual scan | Operator/Admin | Register an image, start a human-guided workflow |
+| My workflows | Members and creator | Monitor scan stages, review, approve or finish |
+| Scan repository | Operator/Admin | Scan an approved HTTPS Git repository using Gitleaks |
+| Results | Everyone with access | CVE table, policy result, patch diff, authenticated downloads |
+| Administration | Admin | Create users/teams/projects, assign team roles, set policy thresholds |
+| System health | Admin | Worker/Scheduler heartbeats, queue status and database health |
+| Integrations | Everyone | Metabase analytics and optional MCP setup |
 
-## 2. Overview
+## Scan an image without CI/CD
 
-Overview is loaded from PostgreSQL via authenticated `GET /appsec-api/api/ui/overview`; it never invents findings. It displays:
+Click **New manual scan**. Supply a real image reference (for example, \`registry.example.com/team/api:1.4.0\`). The image must be available to the Docker daemon and registry credentials used by the Worker. This form does not upload Docker tar archives. Choose an existing Project or leave it unassigned (visible to its creator/admin).
 
-- Total pipeline runs, policy-passed runs, policy failures and execution failures visible to your account
-- Recent image scans and real vulnerability severity counts
-- Queue entries (queued/running/completed) with explicit scan or patch mode
-- Recent repository secret scanning jobs
+Click **Start guided scan**. The scan is **asynchronous**, and the web interface shows the actual steps:
 
-Click **Details** or **Results** for a run. The overview refreshes periodically while visible; **Refresh** can be used immediately.
+\`\`\`text
+Queued → Trivy scan → SBOM → Security policy → Awaiting operator decision
+\`\`\`
 
-When there are no scans, the dashboard displays empty states. This is expected.
+In **My workflows**, select your workflow to open progress, counts and reports. Refresh while a worker is busy. If no record exists, the system correctly shows an empty list, not fake results.
 
-## 3. Run an image scan (default, safe)
+## Inspect and approve
 
-Choose **Scan image**. Enter an existing image reference, such as `registry.example.com/team/api:1.4.0`, and select an optional Project. If a Project is absent, the job is shared among authenticated users under the current legacy/global access model; assign a Project for tenant separation.
+After the first scan job finishes successfully, the UI displays an **Awaiting approval** state. Inspect:
+- Critical/High/Medium/Low counts and CVE list
+- Policy decision and any violations
+- Original SBOM and available authenticated HTML report
+- Whether patching is enabled on the actual server
+- Proposed registry destination before writing anything
 
-Click **Start image scan**. The API creates a queued `mode=scan` job. A worker performs vulnerability scanning, creates a CycloneDX SBOM, evaluates policy and writes reports. No patch or registry push occurs.
+Choose either:
 
-Use **Overview → Results** to view:
-- Current pipeline state and failure detail (if any)
-- Critical, High, Medium and Low counts
-- Policy gate result, including violations
-- CVE/package/version table filtered by scan phase and severity (up to 200 findings per request)
-- Existing report and SBOM download links; every download requires a valid AppSec session
+**Finish without patching.** Stores your decision; keeps the original scan, SBOM and report.
 
-If no results show up, run `./appsec doctor` and `./appsec logs worker`.
+**Approve patch + registry push.** Only appears when the admin started the server with \`./appsec start --patching\`. You must check the registry-write acknowledgment and accept a second confirmation prompt. This creates a **single-attempt** continuation job. Copa patches the original scan's image, pushes a new tag, rescans it, compares fixed/remaining/introduced CVEs, reruns the policy and stores final reports.
 
-## 4. Scan a repository for secrets
+A failed stage appears as failed, not passed. Job/patch retries can be unsafe after a registry write; automatic retries are disabled for approved continuation jobs.
 
-Choose **Scan repository** and enter an allowed HTTPS Git URL. The server enforces an exact hostname allowlist configured in `SECURITY_ALLOWED_GIT_HOSTS`; redirects and embedded Git credentials are disabled. Select a scan profile and optional Project.
+## Repository secret scanning
 
-The worker uses Gitleaks. API responses show severity, rule name, file location and status — **not secret contents or evidence**. Historic reports created by older versions still require manual cleanup.
+In **Scan repository**, enter an HTTPS repository URL. The hostname must be in \`SECURITY_ALLOWED_GIT_HOSTS\`. Gitleaks stores redacted findings; raw secret values should never be copied into the UI. Legacy files created before hardening still require deletion and credential rotation.
 
-## 5. Advanced: Patch and push
+## Administration
 
-Patching is **disabled** unless started with `./appsec start --patching`. Do not enable on a host with sensitive production workloads: this starts privileged BuildKit and the worker has Docker daemon access.
+An Admin can create a Team, create a Project owned by that Team, add users and assign team roles. Use these Project IDs when starting scans to apply authorization. The UI provides policy inputs for max Critical/High/Medium/Low vulnerabilities.
 
-Configure the registry and Docker login as described in [registry guide](registry.md). On **Scan image**, select **Show advanced options**, then choose **Scan + Patch + Push + Rescan**. The browser asks for explicit confirmation. The API also requires `mode=patch` and `confirm_patch=true`.
+The user creation form generates a random API key and shows it **once**; securely store it if CI/CD/API access is needed. Provide user passwords via your approved secure channel and rotate initial passwords.
 
-The pipeline scans the original image, attempts Copa patch, pushes a new tagged image, rescans, generates SBOM/diff, and evaluates the policy on the patched image. Patch is not guaranteed to succeed; the UI shows failures instead of inventing results.
+Project-scoped data is visible to authorized team members; manual workflow decisions additionally require an Operator/Admin role with Project write access. Global/unassigned manual runs are restricted to creator and administrators. Metabase uses its own administrator login and is a global analytics view, **not** per-Project RBAC.
 
-## 6. Advanced analytics and MCP
+## Analytics
 
-Grafana: `http://127.0.0.1:8080/grafana/`
+Metabase: \`http://127.0.0.1:3001\` — login details via \`./appsec credentials\`.
 
-Metabase (optional): run `./appsec start --analytics` and visit `http://127.0.0.1:3001`.
+Three dashboards are provisioned automatically:
+- **AppSec Security Overview** (scan status, vulnerabilities, policy gates, reports)
+- **AppSec Manual Operations** (workflows, pending approvals, decisions, queue and patch results)
+- **AppSec Vulnerability Trends** (severity trends, top CVEs and failed policies)
 
-MCP (optional): see [MCP guide](mcp.md). Connecting an AI is never necessary to use this UI.
+Metabase is for observing and filtering data. **Approvals happen in Control Center**, never by editing SQL or clicking Metabase cards.
 
-## 7. System Health (Administrator)
+## Troubleshooting
 
-The **System health** sidebar view is available to Admin users and is backed by real PostgreSQL data. It displays database reachability, current queue counts and the last recorded heartbeat from each Worker or Scheduler instance. Heartbeats are written by the services themselves; the UI/API never mounts Docker Socket.
-
-A heartbeat older than two minutes is labeled **stale / possibly busy** rather than falsely claiming the service is dead; long image scans can prevent a worker from polling until it finishes. To verify the actual container state run `./appsec doctor` and `./appsec status`.
-
-## 7. Permission and security notes
-
-Admin can view platform-wide data. Other users see Project-scoped runs according to membership plus legacy global/unassigned jobs. Some platform-wide administration endpoints remain admin-only. All downloads require authentication, and a valid UUID is not authorization.
-
-For remote access, use HTTPS and an identity-aware reverse proxy. Do not publish the loopback-only HTTP endpoint directly.
-
-## 8. Troubleshooting
-
-| Symptom | Action |
+| Symptom | Check |
 | --- | --- |
-| Page does not open | `./appsec doctor`, `./appsec status`, `./appsec logs nginx` |
-| Sign-in fails | Check admin password via `./appsec credentials` (new installs) |
-| Login loops over HTTPS | Verify `APPSEC_SESSION_COOKIE_SECURE=true` and TLS proxy |
-| Scan remains queued | Check `./appsec logs worker` and `./appsec status` |
-| No CVEs | Check job state, Trivy DB freshness, image reference and worker logs |
-| Download returns 401/403 | Sign in to AppSec, or use an API key with access to the same Project |
-| Patch option disabled | `./appsec start --patching`, then configure registry login |
-| Metabase not available | Start explicitly with `--analytics` |
-| AI/MCP not running | This is normal unless explicitly enabled |
+| Login fails | \`./appsec credentials\`, account and HTTPS cookie settings |
+| Image scan queued too long | \`./appsec doctor\`, \`./appsec logs worker\`, Docker access |
+| No vulnerabilities | Real scan success, Trivy DB freshness, registry image available |
+| Awaiting approval but Patch unavailable | Admin must explicitly enable \`--patching\` and configure registry |
+| Download returns 401/403 | Valid AppSec session/API key and Project permission |
+| Metabase unavailable | \`./appsec doctor\`, \`./appsec logs metabase\`, dashboard bootstrap |
+| CVE table incomplete | UI caps each request to 200 rows; export full report for exhaustive data |
+| MCP not running | Normal; it is **opt-in** and not necessary for the UI |
