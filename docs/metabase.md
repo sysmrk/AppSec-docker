@@ -49,3 +49,8 @@ The Control Center remains the place for human actions: manual scans, cancellati
 | No results | Verify actual scans and manual workflows ran; review PostgreSQL data |
 | A chart has a SQL error | Check table/migration version with `./scripts/appsecctl.sh migrate`, run CI SQL validation |
 | Need an approval | Open Control Center → **My workflows**, not Metabase |
+
+
+## New Image Inventory vs Metabase
+
+The **Images & scans** view in Control Center offers searchable individual image history and a two-scan CVE comparison. Metabase remains the **single business intelligence dashboard** for cross-image aggregated metrics, waiting approvals, policy and vulnerability trends. No Grafana and no synthetic data. Metabase is **not** a human approval system. Its independent accounts and global SQL access require a trusted network, limited users and a SELECT-only DB role before enterprise deployment.

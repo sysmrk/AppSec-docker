@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.9.0 — 2026-11-22 — Guided UX, inventory and enterprise account foundation
+
+- Added interactive first-run wizard and modular Control Center pages for image inventory, scan history, CVE comparison, approvals, Registry management and account security.
+- Separated approved local Copa patch preparation and rescan from **second human Registry Push approval**, optional two-person separation and destination allowlist.
+- Added safe diagnostic codes, remediation hints, correlation IDs and safe scan-only recovery without automatic re-Push.
+- Added user disable/enable, roles, temporary password rotation, session revocation, API key rotation, failed-login lockout and optional encrypted Authenticator TOTP with one-use recovery codes.
+- Added migration versions 0010–0013 and expanded GitHub Actions tests. Updated all guides; no Demo Mode, no Grafana (Metabase remains only dashboards).
+- Production gates remain: isolate workers, external SSO/SCIM, multi-host staging, browser/Registry E2E, global analytics tenant restrictions, signing and DR/HA.
+
+
 ## v0.6.0 — 2026-11-22 — Manual workflows and Metabase consolidation
 
 - Development changes committed directly on `main`, each automatically tagged `change-<SHA>`; semantic release tags follow the `VERSION` file.

@@ -59,4 +59,14 @@ Grafana has been removed from Compose, Nginx and tracked provisioning. Its old n
 
 Manual workflows persist a scan-only job, user/Project identity, human finish or approve-patch decision, approving user/time and optional **single-attempt** patch/push continuation. Original scan and policy status must be completed before approval. Backend requires role/Project write authorization, explicit confirmation and active patch setting; Worker also checks the feature flag. Project access is rechecked against current team membership, and unassigned manual runs are private to creator/admin.
 
-**Remaining production risks:** scanning Worker Docker Socket privilege, privileged BuildKit isolation, missing OIDC/MFA/CSRF hardening, cross-Project analytics access, image signing and digest pinning, full real Docker/Harbor/Copa/browser E2E tests and backup/restore validation. No demos or fake findings are created.
+**Remaining production risks:** scanning Worker Docker Socket privilege, privileged BuildKit isolation, missing corporate OIDC integration and full CSRF/session assurance, cross-Project analytics access, image signing and digest pinning, full real Docker/Harbor/Copa/browser E2E tests and backup/restore validation. No demos or fake findings are created.
+
+
+## v0.9 — User safety and manual approvals
+
+- Separate **local image patch preparation** from **Registry publication**; original and patched scans have their own policies, and a second explicit human approval is required before Push. The destination must be registered with `allow_push`. Optional two-person separation is controlled by `APPSEC_REQUIRE_SECOND_APPROVER`.
+- User lifecycle now handles first-login password change, account disabling and role changes, safe last-admin protection, session revocation, API key rotation and failed-password lockout. User actions are audited.
+- Optional TOTP Authenticator MFA uses encrypted secrets (operator-managed Fernet key), replay-resistant one-time steps and hashed one-use recovery codes. This is **not** OIDC/SAML/LDAP or enterprise IdP integration.
+- Browser writes using session cookies require a custom first-party request header. Invalid API keys cannot fall back to existing cookies. More comprehensive CSRF/session penetration testing remains necessary.
+- Structured, secret-safe operation errors show codes, hints and request IDs rather than raw command output. Inventory and CVE comparison use real scoped PostgreSQL data; Registry Manager stores host metadata, not passwords.
+- **Remaining risks:** privileged Worker Docker Socket/BuildKit, multi-host local patch artifact portability, cross-Project global analytics, remote SSO/SCIM, full browser/Trivy/Copa/Registry E2E, backup/restore and dependency digest pinning. No production readiness signoff has been issued.

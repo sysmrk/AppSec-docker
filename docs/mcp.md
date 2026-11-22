@@ -189,3 +189,7 @@ The Control Center is a real, authenticated, Project-aware browser interface for
 ## Human approvals and AI boundaries
 
 The manual workflow starts a real scan through Control Center, lets an authorized person inspect findings and requires explicit consent for optional patch/push. Metabase is the only analytics dashboard. MCP stays read-only: it cannot create manual workflows, approve registry writes, run arbitrary SQL or launch Docker. See [manual workflow](workflow.md).
+
+## v0.9 human workflow safety
+
+Registry approval, interactive user management and MFA are **not** MCP tools. MCP stays read-only and optional, and does not impersonate AppSec Project users. Its PostgreSQL queries remain globally scoped, so use an approved SELECT-only account and authenticated local or TLS/OAuth transport. All manual scan and publication decisions belong in AppSec Control Center.
