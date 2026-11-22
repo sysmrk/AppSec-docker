@@ -191,6 +191,20 @@ class UserResetPasswordRequest(BaseModel):
 class LoginRequest(BaseModel):
     username: str = Field(min_length=1)
     password: str = Field(min_length=1)
+    otp: str | None = Field(default=None, min_length=6, max_length=16)
+
+
+class MFAEnrollmentRequest(BaseModel):
+    current_password: str = Field(min_length=1)
+
+
+class MFAConfirmRequest(BaseModel):
+    code: str = Field(min_length=6, max_length=16)
+
+
+class MFADisableRequest(BaseModel):
+    current_password: str = Field(min_length=1)
+    code: str = Field(min_length=6, max_length=16)
 
 
 class PasswordRequest(BaseModel):
@@ -280,6 +294,12 @@ def login(request: LoginRequest, response: Response) -> dict[str, Any]:
         user = db.authenticate_user(conn, request.username, request.password)
         if not user:
             raise HTTPException(status_code=401, detail="invalid username or password")
+        if user.get("mfa_enabled"):
+            if not request.otp:
+                raise HTTPException(status_code=401, detail="MFA_REQUIRED: Authenticator code or recovery code required")
+            from . import mfa
+            if not mfa.verify_login(conn, str(user["id"]), request.otp):
+                raise HTTPException(status_code=401, detail="Invalid authenticator or recovery code")
         token, expires_at = db.create_session(conn, str(user["id"]))
         db.insert_audit(conn, str(user["id"]), "auth.login", "user", str(user["id"]), {})
     response.set_cookie(
@@ -396,6 +416,52 @@ def change_password(request: PasswordRequest, user: dict[str, Any] = Depends(cur
     return {"status": "updated"}
 
 
+@app.post("/api/profile/mfa/enroll")
+def enroll_mfa(
+    request: MFAEnrollmentRequest,
+    user: dict[str, Any] = Depends(current_user),
+) -> dict[str, str]:
+    from . import mfa
+    with db.connect() as conn:
+        try:
+            data = mfa.begin_enrollment(conn, str(user["id"]), request.current_password)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from None
+        db.insert_audit(conn, str(user["id"]), "auth.mfa.enroll.begin", "user", str(user["id"]), {})
+    return data
+
+
+@app.post("/api/profile/mfa/confirm")
+def confirm_mfa(
+    request: MFAConfirmRequest,
+    user: dict[str, Any] = Depends(current_user),
+) -> dict[str, Any]:
+    from . import mfa
+    with db.connect() as conn:
+        try:
+            recovery = mfa.confirm_enrollment(conn, str(user["id"]), request.code)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
+        db.insert_audit(conn, str(user["id"]), "auth.mfa.enable", "user", str(user["id"]), {})
+    return {"status": "enabled", "recovery_codes": recovery,
+            "notice": "Save recovery codes offline now. They are never shown again. All sessions were revoked."}
+
+
+@app.post("/api/profile/mfa/disable")
+def disable_mfa(
+    request: MFADisableRequest,
+    user: dict[str, Any] = Depends(current_user),
+) -> dict[str, str]:
+    from . import mfa
+    with db.connect() as conn:
+        if not mfa.disable_mfa(conn, str(user["id"]), request.current_password, request.code):
+            raise HTTPException(status_code=403, detail="Unable to disable MFA; verify your password and one-time code")
+        db.insert_audit(conn, str(user["id"]), "auth.mfa.disable", "user", str(user["id"]), {})
+    return {"status": "disabled", "notice": "All sessions revoked; sign in again."}
+
+
 @app.get("/api/dashboard")
 def dashboard(user: dict[str, Any] = Depends(require_role("admin"))) -> dict[str, Any]:
     with db.connect() as conn:
@@ -447,7 +513,7 @@ def user_detail(user_id: str, actor: dict[str, Any] = Depends(require_role("admi
         record = conn.execute("""
             SELECT id, username, display_name, role, disabled, must_change_password,
                    failed_login_count, locked_until, password_changed_at, api_key_rotated_at,
-                   created_at, last_seen_at
+                   mfa_enabled, created_at, last_seen_at
             FROM users WHERE id=%s
         """, (user_id,)).fetchone()
         if not record:

@@ -9,6 +9,7 @@ import re
 from typing import Any
 
 _CATALOG = [
+    ("MFA_REQUIRED", r"mfa_required|authenticator code.*required", "Authenticator verification required", "Enter your 6-digit authenticator code or one of your one-time recovery codes.", False),
     ("REGISTRY_AUTH", r"(unauthorized|authentication required|denied: requested access|401 Unauthorized|no basic auth credentials)", "Registry authentication failed", "Check registry credentials, permissions and image namespace.", False),
     ("REGISTRY_NOT_FOUND", r"(manifest unknown|manifest not found|name unknown|pull access denied|404 Not Found|repository does not exist)", "Container image not found", "Check the repository, tag/digest and registry hostname.", False),
     ("DOCKER_UNAVAILABLE", r"(cannot connect to the docker daemon|docker daemon.*not running|/var/run/docker.sock|connection refused.*docker)", "Docker execution service unavailable", "Ask an administrator to check Docker and the isolated scanning worker.", True),
