@@ -947,12 +947,35 @@ def get_manual_workflow(
         if not record:
             raise HTTPException(status_code=404, detail="workflow not found")
         pipeline = pipeline_details(conn, str(record["pipeline_id"])) if record.get("pipeline_id") else None
+        from .errors import ui_error
+        diagnostics = []
+        for attr, stage in (("scan_error", "initial_scan"),
+                            ("patch_error", "patch_build"),
+                            ("publish_error", "registry_push")):
+            if record.get(attr):
+                info = ui_error(record[attr], stage)
+                diagnostics.append(info)
+                record[attr] = info["title"]
+        destination = os.environ.get("REGISTRY_HOST", "").rstrip("/") + "/" + (
+            os.environ.get("PATCHED_REPOSITORY", "").strip("/")
+        )
+        from .registry import image_registry
+        destination_host = image_registry(destination)
+        permitted = conn.execute("""
+            SELECT id FROM registry_connections
+            WHERE host=%s AND allow_push=true
+              AND (project_id IS NULL OR project_id=%s)
+            LIMIT 1
+        """, (destination_host, record["project_id"])).fetchone()
+        publication_ready = bool(permitted)
     return {
         "workflow": record,
         "pipeline": pipeline,
+        "diagnostics": diagnostics,
         "patch_enabled": os.environ.get("APPSEC_PATCH_ENABLED", "false").lower() in ("1", "true", "yes"),
-        "registry_destination": os.environ.get("REGISTRY_HOST", "") + "/" +
-            os.environ.get("PATCHED_REPOSITORY", ""),
+        "publication_ready": publication_ready,
+        "registry_destination": destination,
+        "requires_second_approver": os.environ.get("APPSEC_REQUIRE_SECOND_APPROVER", "false").lower() == "true",
     }
 
 
