@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>AppSec Control Center</title>
+  <link rel="stylesheet" href="./assets/styles.css">
+  <script src="./assets/app.js" defer></script>
+</head>
+<body>
+  <div id="login-screen" class="login-screen" hidden>
+    <form id="login-form" class="login-card">
+      <div class="mark">◆</div>
+      <h1>AppSec Control Center</h1>
+      <p class="muted">Sign in to access your security scans and reports.</p>
+      <label for="username">Username</label>
+      <input id="username" name="username" autocomplete="username" required autofocus>
+      <label for="password">Password</label>
+      <input id="password" type="password" name="password" autocomplete="current-password" required>
+      <p id="login-error" class="error" role="alert"></p>
+      <button type="submit" class="primary wide">Sign in</button>
+      <p class="tiny muted">Uses your existing AppSec account. No sample data or external AI account required.</p>
+    </form>
+  </div>
+  <div id="app" class="app-layout" hidden>
+    <aside class="sidebar">
+      <div class="brand"><div class="mark">◆</div><div><strong>APPSEC</strong><span>CONTROL CENTER</span></div></div>
+      <nav aria-label="Main navigation">
+        <button class="nav-item active" data-view="overview"><span>▦</span> Overview</button>
+        <button class="nav-item" data-view="scan"><span>⊕</span> Scan image</button>
+        <button class="nav-item" data-view="secrets"><span>⌘</span> Scan repository</button>
+        <button class="nav-item" data-view="results"><span>≡</span> Results</button>
+        <button class="nav-item" data-view="integrations"><span>⬡</span> Integrations</button>
+      </nav>
+      <div class="sidebar-foot">
+        <a href="/grafana/" target="_blank" rel="noopener">Grafana ↗</a>
+        <a id="metabase-link" href="#" target="_blank" rel="noopener">Metabase ↗</a>
+        <a href="https://github.com/sysmrk/AppSec-docker/tree/security/optional-mcp-hardening/docs" target="_blank" rel="noopener">Documentation ↗</a>
+      </div>
+    </aside>
+    <div class="workarea">
+      <header class="topbar">
+        <div class="mobile-brand">◆ APPSEC</div>
+        <div id="breadcrumb">Overview</div>
+        <div class="topbar-right">
+          <span id="health-indicator" class="health unknown">Checking connection</span>
+          <span id="current-user"></span>
+          <button id="logout-button" class="outline small">Log out</button>
+        </div>
+      </header>
+      <main id="main" tabindex="-1">
+        <div id="global-notice" class="notice" role="status" aria-live="polite" hidden></div>
+        <section id="view-overview" class="view">
+          <div class="page-heading"><div><p class="eyebrow">SECURITY OPERATIONS</p><h1>Overview</h1><p class="muted">Live data from your AppSec PostgreSQL database.</p></div><button id="refresh-button" class="outline">↻ Refresh</button></div>
+          <div class="stats">
+            <article class="stat"><span>Total pipelines</span><strong id="stat-total">—</strong></article>
+            <article class="stat"><span>Policy passed</span><strong id="stat-passed">—</strong></article>
+            <article class="stat"><span>Policy failed</span><strong id="stat-policy">—</strong></article>
+            <article class="stat"><span>Execution failed</span><strong id="stat-failed">—</strong></article>
+          </div>
+          <div class="section-heading"><h2>Recent image scans</h2><button class="text-button" data-view="scan">+ New scan</button></div>
+          <div class="table-wrap"><table><thead><tr><th>Image</th><th>Status</th><th>Critical</th><th>High</th><th>Started</th><th></th></tr></thead><tbody id="pipelines-body"></tbody></table></div>
+          <div class="section-heading"><h2>Queued and recent jobs</h2></div>
+          <div class="table-wrap"><table><thead><tr><th>Image</th><th>Mode</th><th>Status</th><th>Submitted</th><th></th></tr></thead><tbody id="jobs-body"></tbody></table></div>
+          <div class="section-heading"><h2>Repository security jobs</h2></div>
+          <div class="table-wrap"><table><thead><tr><th>Repository</th><th>Status</th><th>Findings</th><th>Started</th><th></th></tr></thead><tbody id="security-body"></tbody></table></div>
+        </section>
+        <section id="view-scan" class="view" hidden>
+          <div class="page-heading"><div><p class="eyebrow">CONTAINER SECURITY</p><h1>Scan an image</h1><p class="muted">Scan, build an SBOM, evaluate policy and save the report. No patching by default.</p></div></div>
+          <form id="image-form" class="panel form-panel">
+            <label for="image-reference">Container image reference</label>
+            <input id="image-reference" placeholder="registry.example.com/team/service:version" required minlength="1" maxlength="1024" spellcheck="false">
+            <p class="hint">Use an image available to your configured Docker / registry environment.</p>
+            <label for="image-project">Project</label>
+            <select id="image-project"><option value="">Shared / unassigned</option></select>
+            <div class="choice"><input type="checkbox" id="advanced-toggle"><label for="advanced-toggle">Show advanced options</label></div>
+            <div id="advanced-box" class="advanced-box" hidden>
+              <label for="image-mode">Execution mode</label>
+              <select id="image-mode"><option value="scan">Scan only (recommended)</option><option value="patch">Scan + Patch + Push + Rescan</option></select>
+              <div id="patch-warning" class="warning" hidden>Advanced operation: Copa will modify and push a new image to the configured registry. Requires available BuildKit and registry credentials.</div>
+            </div>
+            <div class="form-actions"><button type="submit" class="primary">Start image scan</button><span class="muted small-text">Results are stored in AppSec.</span></div>
+          </form>
+        </section>
+        <section id="view-secrets" class="view" hidden>
+          <div class="page-heading"><div><p class="eyebrow">SOURCE CODE SECURITY</p><h1>Scan a repository</h1><p class="muted">Use Gitleaks to detect exposed secrets. Stored findings do not include secret values.</p></div></div>
+          <form id="repo-form" class="panel form-panel">
+            <label for="repository-url">HTTPS Git repository URL</label>
+            <input id="repository-url" type="url" placeholder="https://github.com/organization/repository.git" required>
+            <p class="hint">Repository host must be explicitly allowed by SECURITY_ALLOWED_GIT_HOSTS.</p>
+            <label for="repo-project">Project</label>
+            <select id="repo-project"><option value="">Shared / unassigned</option></select>
+            <label for="repo-profile">Scan profile</label>
+            <select id="repo-profile"><option value="standard">Standard</option><option value="quick">Quick</option><option value="strict">Strict</option><option value="release">Release</option></select>
+            <div class="form-actions"><button type="submit" class="primary">Start repository scan</button></div>
+          </form>
+        </section>
+        <section id="view-results" class="view" hidden>
+          <div class="page-heading"><div><p class="eyebrow">FINDINGS & REPORTS</p><h1>Scan results</h1><p class="muted">Select a real pipeline or repository scan from Overview to inspect findings and reports.</p></div></div>
+          <div id="result-detail" class="panel"><div class="empty-state">No result selected yet. Open a scan from Overview.</div></div>
+        </section>
+        <section id="view-integrations" class="view" hidden>
+          <div class="page-heading"><div><p class="eyebrow">ADVANCED</p><h1>Integrations</h1><p class="muted">Optional components remain separate from normal image scanning.</p></div></div>
+          <div class="integration-grid">
+            <article class="panel"><h2>Grafana</h2><p class="muted">Operational metrics and detailed dashboards.</p><a class="outline link-button" href="/grafana/" target="_blank" rel="noopener">Open Grafana ↗</a></article>
+            <article class="panel"><h2>Metabase</h2><p class="muted">Optional management analytics. Uses a separate local port if enabled.</p><a id="metabase-button" class="outline link-button" href="#" target="_blank" rel="noopener">Open Metabase ↗</a></article>
+            <article class="panel"><h2>MCP / AI</h2><p class="muted">Optional read-only tools for local or approved remote AI clients. Disabled unless explicitly started.</p><a class="outline link-button" href="https://github.com/sysmrk/AppSec-docker/blob/security/optional-mcp-hardening/docs/mcp.md" target="_blank" rel="noopener">MCP setup guide ↗</a></article>
+            <article class="panel"><h2>Operations</h2><p class="muted">Check containers, database and scanners with the terminal command below.</p><code>./appsec doctor</code></article>
+          </div>
+        </section>
+      </main>
+    </div>
+  </div>
+</body>
+</html>
