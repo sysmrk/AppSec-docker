@@ -455,6 +455,32 @@
     });
   }
 
+
+  $("user-form").addEventListener("submit", async event => {
+    event.preventDefault();
+    const bytes = new Uint8Array(32);
+    crypto.getRandomValues(bytes);
+    const apiKey = Array.from(bytes).map(b => b.toString(16).padStart(2, "0")).join("");
+    const payload = {
+      username: $("new-username").value.trim(),
+      display_name: $("new-displayname").value.trim(),
+      role: $("new-user-role").value,
+      password: $("new-user-password").value,
+      api_key: apiKey
+    };
+    try {
+      const created = await request("/api/users", { method: "POST", body: JSON.stringify(payload) });
+      $("new-user-password").value = "";
+      $("new-user-result").textContent = "Created " + created.username
+        + ". One-time API key (store safely now): " + apiKey;
+      notification("New user created.");
+      await loadAdminData();
+    } catch (error) {
+      $("new-user-result").textContent = "";
+      notification(error.message, true);
+    }
+  });
+
   bindForm("team-form", () => ({
     name: $("team-name").value.trim(), description: $("team-description").value.trim() || null
   }), "/api/teams", "Team created.");
