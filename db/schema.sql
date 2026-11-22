@@ -135,7 +135,12 @@ CREATE TABLE IF NOT EXISTS users (
     failed_login_count INTEGER NOT NULL DEFAULT 0,
     locked_until TIMESTAMPTZ,
     password_changed_at TIMESTAMPTZ,
-    api_key_rotated_at TIMESTAMPTZ
+    api_key_rotated_at TIMESTAMPTZ,
+    mfa_enabled BOOLEAN NOT NULL DEFAULT false,
+    mfa_secret_enc TEXT,
+    mfa_pending_enc TEXT,
+    mfa_pending_at TIMESTAMPTZ,
+    mfa_last_step BIGINT NOT NULL DEFAULT -1
 );
 
 CREATE TABLE IF NOT EXISTS session_tokens (
@@ -341,3 +346,13 @@ CREATE TABLE IF NOT EXISTS registry_connections (
 );
 CREATE INDEX IF NOT EXISTS idx_scans_image_started ON scan_runs(image_id, started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_pipeline_image_started ON pipeline_runs(source_image_id, started_at DESC);
+
+CREATE TABLE IF NOT EXISTS mfa_recovery_codes(
+    id UUID PRIMARY KEY,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    code_hash TEXT NOT NULL,
+    used_at TIMESTAMPTZ,
+    UNIQUE(user_id, code_hash)
+);
+CREATE INDEX IF NOT EXISTS idx_mfa_recovery_user
+  ON mfa_recovery_codes(user_id) WHERE used_at IS NULL;

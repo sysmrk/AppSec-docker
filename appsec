@@ -6,6 +6,7 @@ No demo mode, fixtures or fake data. Uses Docker Compose v2 and stdlib only.
 from __future__ import annotations
 
 import argparse
+import base64
 import os
 import secrets
 import shutil
@@ -72,6 +73,7 @@ def setup(_args) -> None:
     # This local HTTP entrypoint is loopback-only by default. Set true behind HTTPS.
     values["APPSEC_SESSION_COOKIE_SECURE"] = "false"
     values["DOWNLOADS_REQUIRE_AUTH"] = "true"
+    values["APPSEC_MFA_ENCRYPTION_KEY"] = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode("ascii")
     template = ENV_TEMPLATE.read_text(encoding="utf-8")
     found = set()
     lines = []
@@ -187,6 +189,10 @@ def doctor(_args) -> None:
                 show(key, "WARN", "Check that you replaced example credentials")
         if os.name != "nt" and (ENV_FILE.stat().st_mode & 0o077):
             show(".env file permissions", "WARN", "Run chmod 600 .env")
+        if not settings.get("APPSEC_MFA_ENCRYPTION_KEY"):
+            show("MFA encryption", "WARN", "Not configured. To offer authenticator MFA, provision a 32-byte Fernet key in .env")
+        else:
+            show("MFA encryption", "OK", "Key configured; retain it for backup/restore")
         if settings.get("APPSEC_SESSION_COOKIE_SECURE") == "false":
             show("Session cookies", "WARN", "HTTP localhost only; enable Secure behind HTTPS")
         if settings.get("MINIO_ROOT_PASSWORD") != settings.get("S3_SECRET_ACCESS_KEY"):

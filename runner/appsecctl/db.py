@@ -104,7 +104,7 @@ def secret_or_env(name: str, default: str | None = None) -> str | None:
 def user_by_api_key(conn: psycopg.Connection, api_key: str) -> dict[str, Any] | None:
     row = conn.execute(
         """
-        SELECT id, username, display_name, role, disabled, must_change_password, created_at, last_seen_at
+        SELECT id, username, display_name, role, disabled, must_change_password, mfa_enabled, created_at, last_seen_at
         FROM users
         WHERE api_key_hash = %s AND disabled = false
         """,
@@ -119,7 +119,8 @@ def user_by_api_key(conn: psycopg.Connection, api_key: str) -> dict[str, Any] | 
 def authenticate_user(conn: psycopg.Connection, username: str, password: str) -> dict[str, Any] | None:
     row = conn.execute(
         """
-        SELECT id, username, display_name, role, disabled, must_change_password, failed_login_count, locked_until, created_at, last_seen_at, password_hash
+        SELECT id, username, display_name, role, disabled, must_change_password,
+               mfa_enabled, failed_login_count, locked_until, created_at, last_seen_at, password_hash
         FROM users
         WHERE username = %s AND disabled = false
         """,
@@ -138,10 +139,14 @@ def authenticate_user(conn: psycopg.Connection, username: str, password: str) ->
             WHERE id = %s
         """, (row["id"],))
         return None
-    conn.execute("""
-        UPDATE users SET last_seen_at = now(), failed_login_count = 0,
-          locked_until = NULL WHERE id = %s
-    """, (row["id"],))
+    if row.get("mfa_enabled"):
+        # Do not reset brute-force lockout until the second factor succeeds.
+        conn.execute("UPDATE users SET last_seen_at=now() WHERE id=%s", (row["id"],))
+    else:
+        conn.execute("""
+            UPDATE users SET last_seen_at=now(), failed_login_count=0,
+                locked_until=NULL WHERE id=%s
+        """, (row["id"],))
     result = dict(row)
     result.pop("password_hash", None)
     result.pop("failed_login_count", None)
@@ -165,7 +170,7 @@ def create_session(conn: psycopg.Connection, user_id: str, hours: int = 12) -> t
 def user_by_session(conn: psycopg.Connection, token: str) -> dict[str, Any] | None:
     row = conn.execute(
         """
-        SELECT u.id, u.username, u.display_name, u.role, u.disabled, u.must_change_password, u.created_at, u.last_seen_at
+        SELECT u.id, u.username, u.display_name, u.role, u.disabled, u.must_change_password, u.mfa_enabled, u.created_at, u.last_seen_at
         FROM session_tokens st
         JOIN users u ON u.id = st.user_id
         WHERE st.token_hash = %s
@@ -917,7 +922,7 @@ def list_users(conn: psycopg.Connection) -> list[dict[str, Any]]:
         """
         SELECT id, username, display_name, role, disabled, must_change_password,
                failed_login_count, locked_until, password_changed_at, api_key_rotated_at,
-               created_at, last_seen_at
+               mfa_enabled, created_at, last_seen_at
         FROM users
         ORDER BY created_at
         """
@@ -1444,11 +1449,11 @@ def update_user_admin(
             (user_id,),
         )
     if future_disabled:
-        # A disabled account cannot authenticate with either session or API key.
-        conn.execute(
-            "UPDATE users SET locked_until=NULL, failed_login_count=0 WHERE id=%s",
-            (user_id,),
-        )
+        # Invalidate legacy API keys permanently, even if reenabled later.
+        conn.execute("""
+            UPDATE users SET api_key_hash=%s, api_key_rotated_at=now(),
+                locked_until=NULL, failed_login_count=0 WHERE id=%s
+        """, (api_key_hash(secrets.token_urlsafe(48)), user_id))
     return dict(conn.execute("""
         SELECT id, username, display_name, role, disabled, must_change_password
         FROM users WHERE id=%s
