@@ -123,6 +123,8 @@ def current_user(
     x_api_key: str | None = Header(default=None),
     appsec_session: str | None = Cookie(default=None),
 ) -> dict[str, Any]:
+    if not x_api_key and not appsec_session:
+        raise HTTPException(status_code=401, detail="authentication required")
     with db.connect() as conn:
         user = db.user_by_api_key(conn, x_api_key) if x_api_key else None
         if not user and appsec_session:
