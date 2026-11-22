@@ -52,6 +52,7 @@ x-runner-env: &runner-env
   DOWNLOADS_REQUIRE_AUTH: ${DOWNLOADS_REQUIRE_AUTH:-true}
   APPSEC_SESSION_COOKIE_SECURE: ${APPSEC_SESSION_COOKIE_SECURE:-true}
   SECURITY_ALLOWED_GIT_HOSTS: ${SECURITY_ALLOWED_GIT_HOSTS:-github.com,gitlab.com}
+  APPSEC_PATCH_ENABLED: ${APPSEC_PATCH_ENABLED:-false}
 
 x-runner-volumes: &runner-volumes
   - /var/run/docker.sock:/var/run/docker.sock
@@ -116,6 +117,7 @@ services:
     container_name: ${BUILDKIT_CONTAINER:-appsec-buildkit}
     restart: unless-stopped
     privileged: true
+    profiles: ["patch"]
     entrypoint: ["buildkitd"]
     volumes:
       - buildkit-data:/var/lib/buildkit
@@ -217,7 +219,8 @@ services:
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-appsec-grafana}
       GF_USERS_DEFAULT_THEME: light
       GF_AUTH_ANONYMOUS_ENABLED: ${GRAFANA_ANONYMOUS_ENABLED:-false}
-      GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL:-http://127.0.0.1:8080}
+      GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL:-http://127.0.0.1:8080/grafana/}
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
       POSTGRES_HOST: postgres
       POSTGRES_PORT: "5432"
       POSTGRES_DB: ${POSTGRES_DB:-appsec}
@@ -311,7 +314,7 @@ services:
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
     healthcheck:
-      test: ["CMD-SHELL", "wget --spider --quiet http://127.0.0.1:8080/api/health || exit 1"]
+      test: ["CMD-SHELL", "wget --spider --quiet http://127.0.0.1:8080/appsec-api/health || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -328,8 +331,6 @@ services:
     entrypoint: ["python", "-m", "appsecctl.worker"]
     depends_on:
       postgres:
-        condition: service_healthy
-      buildkit:
         condition: service_healthy
     environment:
       <<: *runner-env
@@ -353,8 +354,6 @@ services:
     entrypoint: ["python", "-m", "appsecctl.worker"]
     depends_on:
       postgres:
-        condition: service_healthy
-      buildkit:
         condition: service_healthy
     environment:
       <<: *runner-env

@@ -108,6 +108,15 @@
       security.appendChild(r);
     });
   }
+  async function loadCapabilities() {
+    const features = await request("/api/ui/capabilities");
+    const option = $("image-mode").querySelector('option[value="patch"]');
+    option.disabled = !features.patch_enabled;
+    $("patch-warning").textContent = features.patch_enabled
+      ? "Advanced operation: Copa will patch and push a new image to the configured registry. Confirm before running."
+      : "Patching is disabled. An administrator must start the platform with ./appsec start --patching and configure registry credentials.";
+    if (!features.patch_enabled) $("image-mode").value = "scan";
+  }
   async function loadProjects() {
     const projects = await request("/api/projects");
     for (const id of ["image-project", "repo-project"]) {
@@ -233,7 +242,7 @@
     try {
       const res = await request("/api/auth/login", { method: "POST", body: JSON.stringify({ username: $("username").value, password: $("password").value }) });
       $("password").value = "";
-      showApp(res.user); selectView("overview"); await refreshOverview(); await loadProjects();
+      showApp(res.user); selectView("overview"); await refreshOverview(); await loadProjects(); await loadCapabilities();
     } catch (error) { $("login-error").textContent = error.message; }
   });
   $("logout-button").addEventListener("click", async () => {
@@ -275,7 +284,7 @@
     try {
       const user = await request("/api/profile");
       showApp(user); selectView("overview");
-      await Promise.all([refreshOverview(), loadProjects()]);
+      await Promise.all([refreshOverview(), loadProjects(), loadCapabilities()]);
     } catch (error) {
       if (error.status === 401) showLogin();
       else { showLogin(); $("login-error").textContent = "Cannot load data: " + error.message; }

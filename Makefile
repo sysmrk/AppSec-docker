@@ -35,16 +35,14 @@ validate:
 	python3 -m py_compile runner/appsecctl/*.py scripts/setup-metabase.py
 	python3 -m json.tool grafana/dashboards/appsec-overview.json >/dev/null
 
-init: preflight
-	$(COMPOSE) -f $(COMPOSE_FILE) --profile $(PROFILE) up -d postgres buildkit minio minio-init api nginx worker scheduler grafana metabase
-	./scripts/appsecctl.sh migrate
-	./scripts/setup-metabase.sh
+init:
+	./appsec start --analytics
 
 migrate:
 	./scripts/appsecctl.sh migrate
 
 up:
-	$(COMPOSE) -f $(COMPOSE_FILE) --profile $(PROFILE) up -d postgres buildkit minio minio-init api nginx worker scheduler grafana metabase
+	./appsec start --analytics
 
 down:
 	./scripts/down.sh

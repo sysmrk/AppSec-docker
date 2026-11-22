@@ -228,6 +228,8 @@ def create_pipeline(
 ) -> dict[str, Any]:
     if request.mode == "patch" and not request.confirm_patch:
         raise HTTPException(status_code=422, detail="patch and registry push require confirm_patch=true")
+    if request.mode == "patch" and os.environ.get("APPSEC_PATCH_ENABLED", "false").lower() not in ("1", "true", "yes"):
+        raise HTTPException(status_code=409, detail="patching is disabled; start with ./appsec start --patching and configure the registry")
     with db.connect() as conn:
         require_project(conn, user, request.project_id, write=True)
         job_id = db.enqueue_pipeline(conn, request.image, request.priority, request.project_id, mode=request.mode)
@@ -701,3 +703,9 @@ def ui_security_job(
         "findings": safe_findings,
         "reports": reports_with_downloads(detail.get("reports", [])),
     }
+
+
+@app.get("/api/ui/capabilities")
+def ui_capabilities(user: dict[str, Any] = Depends(current_user)) -> dict[str, bool]:
+    """Reflect active deployment state rather than assuming patch is available."""
+    return {"patch_enabled": os.environ.get("APPSEC_PATCH_ENABLED", "false").lower() in ("1", "true", "yes")}
