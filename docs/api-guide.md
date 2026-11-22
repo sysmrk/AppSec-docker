@@ -226,4 +226,30 @@ All endpoints require a valid AppSec session or API Key. UI lives at `/`, Metaba
 
 ## Manual workflow endpoints (no CI/CD required)
 
-The browser-guided workflow is supported by authenticated REST endpoints. `POST /appsec-api/api/manual-workflows` creates a **scan-only** job. `GET /appsec-api/api/manual-workflows` lists workflows accessible to the user, and `GET /appsec-api/api/manual-workflows/{id}` returns progress, scan findings and saved reports. `POST /appsec-api/api/manual-workflows/{id}/decision` accepts `{"action":"finish"}`, `{"action":"cancel"}` for queued scans, or `{"action":"approve_patch","confirm_push":true}`. The last action requires the completed original scan, an authorized Operator/Admin, correct Project permissions and an explicitly enabled patch executor. Continuation patch/push jobs are one-attempt only, with user identity and timestamp recorded. Metabase only displays analytics and is not an approval interface. See [Workflow](workflow.md) and [User Guide](user-guide.md).
+The browser-guided workflow is supported by authenticated REST endpoints. `POST /appsec-api/api/manual-workflows` creates a **scan-only** job. `GET /appsec-api/api/manual-workflows` lists workflows accessible to the user, and `GET /appsec-api/api/manual-workflows/{id}` returns progress, scan findings and saved reports. `POST /appsec-api/api/manual-workflows/{id}/decision` accepts `{"action":"finish"}`, `{"action":"cancel"}` for queued scans, or `{"action":"approve_patch","confirm_patch":true}` followed by `{"action":"approve_publish","confirm_push":true}` only after a successful post-patch scan and final Policy. The last action requires the completed original scan, an authorized Operator/Admin, correct Project permissions and an explicitly enabled patch executor. Patch preparation and Registry publication are separate one-attempt jobs, with user identity and timestamp recorded. Metabase only displays analytics and is not an approval interface. See [Workflow](workflow.md) and [User Guide](user-guide.md).
+
+## v0.9 manual, identity and image management API
+
+| Method | Route (behind `/appsec-api`) | Use |
+| --- | --- | --- |
+| GET | `/api/images` | Search real scanned images |
+| GET | `/api/images/{image_id}/history` | Actual scan history |
+| GET | `/api/images/compare/scans?from_scan=...&to_scan=...` | CVE differences |
+| GET | `/api/preflight/image?image=...` | Configuration checks; pull remains **unverified** |
+| GET/POST | `/api/registries` | HTTPS Registry metadata / Admin-only creation |
+| POST | `/api/manual-workflows` | Start scan-only guided job |
+| GET | `/api/manual-workflows/{id}` | Real progress and safe diagnostics |
+| POST | `/api/manual-workflows/{id}/decision` | `finish`, `cancel`, `approve_patch`, `skip_publish`, `approve_publish` |
+| GET/PATCH | `/api/users/{id}` | Admin read/update account |
+| POST | `/api/users/{id}/reset-password` | Reset to a temporary password |
+| POST | `/api/users/{id}/rotate-api-key` | One-time API key issuance/rotation |
+| POST | `/api/users/{id}/revoke-sessions` | Invalidate web sessions |
+| DELETE | `/api/teams/{team_id}/members/{user_id}` | Revoke team membership |
+| POST | `/api/profile/password` | Change own password |
+| POST | `/api/profile/mfa/enroll` | Start encrypted TOTP setup |
+| POST | `/api/profile/mfa/confirm` | Enable MFA and return recovery codes once |
+| POST | `/api/profile/mfa/disable` | Disable MFA with password and OTP |
+
+The guided `approve_patch` requires `confirm_patch=true` but **does not publish**. Only a later `approve_publish` with `confirm_push=true`, final passed Policy, registered `allow_push` Registry destination and correct role may queue Push. Registry errors and HTTP validation failures include safe `error.code`, `error.hint` and `error.request_id` details instead of leaking raw subprocess stderr.
+
+Browser cookie-authenticated writes require `X-Requested-With: AppSec-Control-Center`. CLI automation should use a valid API key. **Metabase is analytics only**, MCP is optional read-only analytics; neither authorizes Registry writes.
