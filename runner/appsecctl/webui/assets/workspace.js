@@ -29,7 +29,8 @@
   async function api(path, options = {}) {
     const r = await fetch(prefix + path, {
       credentials: "same-origin", cache: "no-store",
-      headers: {"Accept": "application/json", ...(options.body ? {"Content-Type": "application/json"} : {})},
+      headers: {"Accept": "application/json", "X-Requested-With": "AppSec-Control-Center",
+        ...(options.body ? {"Content-Type": "application/json"} : {})},
       ...options
     });
     let data = null;

@@ -36,6 +36,19 @@ HTTP_LATENCY = Histogram("appsec_http_request_duration_seconds", "HTTP request l
 async def request_logging(request: Request, call_next):
     request_id = str(uuid4())
     request.state.request_id = request_id
+    # Reject cookie-authenticated browser writes without the first-party header.
+    # Cross-origin forms cannot add this header; CORS is not enabled.
+    if request.method not in ("GET", "HEAD", "OPTIONS") and request.cookies.get("appsec_session"):
+        if not request.headers.get("X-API-Key") and request.headers.get("X-Requested-With") != "AppSec-Control-Center":
+            return JSONResponse(status_code=403, content={
+                "detail": "Browser request verification failed.",
+                "error": {
+                    "code": "CSRF_REJECTED",
+                    "title": "Request was not sent by the AppSec Control Center",
+                    "hint": "Reload the page and submit again from the official Control Center.",
+                    "request_id": request_id, "retryable": False,
+                },
+            }, headers={"X-Request-ID": request_id})
     path = request.url.path
     method = request.method
     with HTTP_LATENCY.labels(method=method, path=path).time():
@@ -193,9 +206,10 @@ def current_user(
     if not x_api_key and not appsec_session:
         raise HTTPException(status_code=401, detail="authentication required")
     with db.connect() as conn:
-        user = db.user_by_api_key(conn, x_api_key) if x_api_key else None
-        if not user and appsec_session:
-            user = db.user_by_session(conn, appsec_session)
+        user = db.user_by_api_key(conn, x_api_key) if x_api_key else (
+            db.user_by_session(conn, appsec_session) if appsec_session else None
+        )
+        # Never downgrade an invalid API key into a cookie session.
     if not user:
         raise HTTPException(status_code=401, detail="authentication required")
     if user.get("must_change_password") and appsec_session and not x_api_key:
