@@ -48,13 +48,15 @@
   function showApp(user) {
     state.user = user;
     $("current-user").textContent = user.username + " · " + user.role;
+    document.querySelector('[data-view="health"]').hidden = user.role !== "admin";
     loginScreen.hidden = true; app.hidden = false;
   }
   function selectView(view) {
     state.view = view;
     document.querySelectorAll(".view").forEach(v => v.hidden = v.id !== "view-" + view);
     document.querySelectorAll(".nav-item").forEach(n => n.classList.toggle("active", n.dataset.view === view));
-    $("breadcrumb").textContent = ({ overview: "Overview", scan: "Scan image", secrets: "Scan repository", results: "Results", integrations: "Integrations" })[view] || "AppSec";
+    $("breadcrumb").textContent = ({ overview: "Overview", scan: "Scan image", secrets: "Scan repository", results: "Results", health: "System health", integrations: "Integrations" })[view] || "AppSec";
+    if (view === "health") refreshSystemHealth().catch(error => notification(error.message, true));
     quiet();
   }
   async function refreshHealth() {
@@ -66,6 +68,28 @@
       $("health-indicator").textContent = "Connection unavailable";
       $("health-indicator").className = "health error";
     }
+  }
+  async function refreshSystemHealth() {
+    const data = await request("/api/ui/system/health");
+    $("health-database").textContent = data.database;
+    const count = (list, status) => (list.find(item => item.status === status) || { count: 0 }).count;
+    $("health-queued").textContent = count(data.pipeline_queue, "queued");
+    $("health-running").textContent = count(data.pipeline_queue, "running");
+    $("health-secret-queued").textContent = count(data.secret_queue, "queued");
+    const body = $("heartbeats-body");
+    clear(body);
+    if (!data.heartbeats.length) empty(body, "No heartbeat received yet. Check worker and scheduler containers.", 4);
+    data.heartbeats.forEach(item => {
+      const row = node("tr");
+      cell(row, item.service);
+      cell(row, item.instance);
+      cell(row, date(item.last_seen));
+      const status = cell(row, "");
+      const state = item.seconds_ago <= 120 ? "recent" : "stale / possibly busy";
+      status.appendChild(statusPill(state === "recent" ? "success" : "running"));
+      status.appendChild(node("span", "small-text", " " + state));
+      body.appendChild(row);
+    });
   }
   async function refreshOverview() {
     const data = await request("/api/ui/overview");
@@ -251,6 +275,7 @@
   });
   document.querySelectorAll("[data-view]").forEach(button => button.addEventListener("click", () => selectView(button.dataset.view)));
   $("refresh-button").addEventListener("click", async () => { quiet(); try { await refreshOverview(); } catch (e) { notification(e.message, true); } });
+  $("health-refresh-button").addEventListener("click", async () => { try { await refreshSystemHealth(); } catch (e) { notification(e.message, true); } });
   $("advanced-toggle").addEventListener("change", () => {
     const enabled = $("advanced-toggle").checked;
     $("advanced-box").hidden = !enabled;
