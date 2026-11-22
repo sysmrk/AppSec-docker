@@ -205,6 +205,7 @@
     field(summary, "Last used", dateOr(u.last_seen_at));
     field(summary, "Last password update", dateOr(u.password_changed_at));
     field(summary, "Last API key rotation", dateOr(u.api_key_rotated_at));
+    field(summary, "Authenticator MFA", u.mfa_enabled ? "Enabled" : "Disabled");
     root.appendChild(summary);
 
     const form = element("form", "", "user-edit");
@@ -379,15 +380,76 @@
     } catch (error) { notice(error.message, true); }
   });
 
+
+  async function refreshProfileMFA() {
+    const user = await api("/api/profile");
+    $("profile-rotation-hint").hidden = !user.must_change_password;
+    $("profile-mfa-status").textContent = user.mfa_enabled
+      ? "Authenticator MFA is enabled. Each interactive login requires a fresh 6-digit code or one unused recovery code."
+      : "Authenticator MFA is not enabled. You can enroll using your current password and an authenticator app.";
+    $("mfa-enroll-form").hidden = Boolean(user.mfa_enabled || user.must_change_password);
+    $("mfa-disable-form").hidden = !user.mfa_enabled;
+  }
+  $("mfa-enroll-form").addEventListener("submit", async event => {
+    event.preventDefault();
+    try {
+      const answer = await send("/api/profile/mfa/enroll", {
+        current_password: $("mfa-enroll-password").value
+      });
+      $("mfa-enroll-password").value = "";
+      $("mfa-secret-value").textContent = answer.secret;
+      $("mfa-setup-result").hidden = false;
+      notice("MFA setup started. Confirm a code from the new authenticator entry within 10 minutes.");
+    } catch (error) { notice(error.message, true); }
+  });
+  $("mfa-secret-copy").addEventListener("click", async () => {
+    const secret = $("mfa-secret-value").textContent;
+    try {
+      await navigator.clipboard.writeText(secret);
+      notice("Authenticator secret copied. Do not paste it into untrusted applications.");
+    } catch (_) {
+      notice("Copy permission unavailable. Select the secret manually.", true);
+    }
+  });
+  $("mfa-confirm-form").addEventListener("submit", async event => {
+    event.preventDefault();
+    try {
+      const result = await send("/api/profile/mfa/confirm", {code: $("mfa-confirm-code").value.trim()});
+      $("mfa-confirm-code").value = "";
+      $("mfa-secret-value").textContent = "";
+      $("mfa-setup-result").hidden = true;
+      $("mfa-enroll-form").hidden = true;
+      $("mfa-recovery-values").textContent = result.recovery_codes.join("\n");
+      $("mfa-recovery-result").hidden = false;
+      notice("MFA enabled and all web sessions revoked. Save the recovery codes before continuing.");
+    } catch (error) { notice(error.message, true); }
+  });
+  $("mfa-recovery-confirm").addEventListener("click", () => {
+    $("mfa-recovery-values").textContent = "";
+    $("mfa-recovery-result").hidden = true;
+    $("logout-button").click();
+  });
+  $("mfa-disable-form").addEventListener("submit", async event => {
+    event.preventDefault();
+    if (!confirm("Disable MFA and revoke all web sessions for this account?")) return;
+    try {
+      await send("/api/profile/mfa/disable", {
+        current_password: $("mfa-disable-password").value,
+        code: $("mfa-disable-code").value.trim()
+      });
+      $("mfa-disable-password").value = "";
+      $("mfa-disable-code").value = "";
+      notice("MFA disabled. Sign in again.");
+      $("logout-button").click();
+    } catch (error) { notice(error.message, true); }
+  });
+
   document.addEventListener("appsec:view", e => {
     const view = e.detail?.view;
     const runners = {
       inventory: refreshInventory, approvals: refreshApprovals,
       users: refreshUsers, registries: refreshRegistries,
-      profile: async () => {
-        const u = await api("/api/profile");
-        $("profile-rotation-hint").hidden = !u.must_change_password;
-      }
+      profile: refreshProfileMFA
     };
     if (runners[view]) runners[view]().catch(error => notice(error.message, true));
   });
