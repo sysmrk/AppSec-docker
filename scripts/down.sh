@@ -43,7 +43,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-compose_args=(-f docker-compose.yaml --profile platform --profile production --profile storage --profile tools --profile maintenance --profile mcp down --remove-orphans)
+compose_args=(-f docker-compose.yaml --profile platform --profile production --profile storage --profile tools --profile maintenance --profile mcp --profile patch down --remove-orphans)
 if [[ "${remove_volumes}" == "true" ]]; then
   compose_args+=(-v)
 fi
