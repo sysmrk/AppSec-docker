@@ -917,7 +917,8 @@ def list_users(conn: psycopg.Connection) -> list[dict[str, Any]]:
         """
         SELECT id, username, display_name, role, disabled, must_change_password,
                failed_login_count, locked_until, password_changed_at, api_key_rotated_at,
-               created_at, last_seen_at\n        FROM users
+               created_at, last_seen_at
+        FROM users
         ORDER BY created_at
         """
     ).fetchall()
