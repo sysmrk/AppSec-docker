@@ -4,6 +4,7 @@ import os
 import time
 
 from . import db
+from .errors import safe_message, classify
 from .cli import run_pipeline, continue_pipeline_patch
 from .logging_utils import log_event
 from .reports import notify, write_html_report, write_security_sarif
@@ -50,8 +51,8 @@ def main() -> int:
                 log_event("worker.image.finished", job_id=job_id, pipeline_id=pipeline_id)
             except BaseException as exc:
                 with db.connect() as conn:
-                    db.fail_job(conn, job_id, str(exc))
-                log_event("worker.image.failed", level="error", job_id=job_id, error=str(exc))
+                    db.fail_job(conn, job_id, safe_message(exc, 'image'))
+                log_event("worker.image.failed", level="error", job_id=job_id, error_code=classify(exc, "image")["code"])
             continue
 
         security_job = None
@@ -77,8 +78,8 @@ def main() -> int:
             log_event("worker.security.finished", job_id=security_job_id)
         except BaseException as exc:
             with db.connect() as conn:
-                db.retry_or_fail_security_job(conn, security_job_id, str(exc))
-            log_event("worker.security.failed", level="error", job_id=security_job_id, error=str(exc))
+                db.retry_or_fail_security_job(conn, security_job_id, safe_message(exc, 'repository'))
+            log_event("worker.security.failed", level="error", job_id=security_job_id, error_code=classify(exc, "repository")["code"])
 
 
 if __name__ == "__main__":

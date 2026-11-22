@@ -127,7 +127,12 @@ CREATE TABLE IF NOT EXISTS users (
     password_hash TEXT,
     disabled BOOLEAN NOT NULL DEFAULT false,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    last_seen_at TIMESTAMPTZ
+    last_seen_at TIMESTAMPTZ,
+    must_change_password BOOLEAN NOT NULL DEFAULT false,
+    failed_login_count INTEGER NOT NULL DEFAULT 0,
+    locked_until TIMESTAMPTZ,
+    password_changed_at TIMESTAMPTZ,
+    api_key_rotated_at TIMESTAMPTZ
 );
 
 CREATE TABLE IF NOT EXISTS session_tokens (

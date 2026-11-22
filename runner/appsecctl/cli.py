@@ -13,6 +13,7 @@ from alembic import command as alembic_command
 from alembic.config import Config as AlembicConfig
 
 from . import db, policy
+from .errors import safe_message
 from .reports import write_html_report, write_security_sarif
 from .security import enqueue_security_job, run_security_job
 
@@ -121,7 +122,7 @@ def scan_image(image_ref: str, phase: str, pipeline_id: str | None = None) -> st
             db.insert_artifact(conn, pipeline_id, scan_id, image_ref, "trivy-report", "json", str(report_path))
     except BaseException as exc:
         with db.connect() as conn:
-            db.update_scan_failed(conn, scan_id, str(exc))
+            db.update_scan_failed(conn, scan_id, safe_message(exc, 'scan'))
         raise
 
     print(json.dumps({"scan_id": scan_id, "image": image_ref, "phase": phase}, indent=2))
@@ -227,7 +228,7 @@ def patch_from_scan(scan_id: str) -> tuple[str, str]:
             db.update_patch_success(conn, patch_id, None)
     except BaseException as exc:
         with db.connect() as conn:
-            db.update_patch_failed(conn, patch_id, str(exc))
+            db.update_patch_failed(conn, patch_id, safe_message(exc, 'patch'))
         raise
 
     print(json.dumps({"patch_id": patch_id, "patched_image": patched_ref}, indent=2))
@@ -304,7 +305,7 @@ def run_pipeline(image_ref: str, project_id: str | None = None, mode: str = "sca
             db.finish_pipeline(conn, pipeline_id, "success" if policy_status == "passed" else "policy_failed")
     except BaseException as exc:
         with db.connect() as conn:
-            db.finish_pipeline(conn, pipeline_id, "failed", str(exc))
+            db.finish_pipeline(conn, pipeline_id, "failed", safe_message(exc, 'pipeline'))
         write_pipeline_report_if_ready(pipeline_id)
         raise
 
@@ -352,7 +353,7 @@ def continue_pipeline_patch(pipeline_id: str) -> str:
             db.finish_pipeline(conn, pipeline_id, "success" if policy_status == "passed" else "policy_failed")
     except BaseException as exc:
         with db.connect() as conn:
-            db.finish_pipeline(conn, pipeline_id, "failed", str(exc))
+            db.finish_pipeline(conn, pipeline_id, "failed", safe_message(exc, 'pipeline'))
         write_pipeline_report_if_ready(pipeline_id)
         raise
     write_pipeline_report_if_ready(pipeline_id)

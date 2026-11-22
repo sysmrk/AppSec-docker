@@ -11,12 +11,14 @@ import os
 from fastapi import Request
 from fastapi import Cookie, Depends, FastAPI, Header, HTTPException
 from pydantic import field_validator
-from fastapi.responses import FileResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, RedirectResponse, Response, JSONResponse
+from fastapi.exceptions import RequestValidationError
 from fastapi.staticfiles import StaticFiles
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
 from pydantic import BaseModel, Field
 
 from . import db
+from .errors import classify
 from .artifacts import presigned_download_url
 from .logging_utils import log_event
 from .reports import notify, write_html_report, write_security_sarif
@@ -32,7 +34,8 @@ HTTP_LATENCY = Histogram("appsec_http_request_duration_seconds", "HTTP request l
 
 @app.middleware("http")
 async def request_logging(request: Request, call_next):
-    request_id = request.headers.get("X-Request-ID", str(uuid4()))
+    request_id = str(uuid4())
+    request.state.request_id = request_id
     path = request.url.path
     method = request.method
     with HTTP_LATENCY.labels(method=method, path=path).time():
@@ -41,6 +44,39 @@ async def request_logging(request: Request, call_next):
     HTTP_REQUESTS.labels(method=method, path=path, status=str(response.status_code)).inc()
     log_event("api.request", request_id=request_id, method=method, path=path, status=response.status_code)
     return response
+
+
+@app.exception_handler(HTTPException)
+async def appsec_http_error(request: Request, exc: HTTPException) -> JSONResponse:
+    info = classify(exc.detail)
+    detail = str(exc.detail) if isinstance(exc.detail, str) else info["title"]
+    return JSONResponse(status_code=exc.status_code, content={
+        "detail": detail, "error": {**info, "request_id": getattr(request.state, "request_id", "")},
+    })
+
+
+@app.exception_handler(RequestValidationError)
+async def appsec_validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
+    fields = [".".join(str(x) for x in item.get("loc", []) if x != "body")[:80] for item in exc.errors()[:8]]
+    return JSONResponse(status_code=422, content={
+        "detail": "Please correct the input fields.",
+        "error": {"code": "INPUT_INVALID", "title": "Invalid input",
+                  "hint": "Check required fields, formats, and allowed values.",
+                  "fields": fields, "retryable": False,
+                  "request_id": getattr(request.state, "request_id", "")},
+    })
+
+
+@app.exception_handler(Exception)
+async def appsec_internal_error(request: Request, exc: Exception) -> JSONResponse:
+    request_id = getattr(request.state, "request_id", str(uuid4()))
+    log_event("api.unhandled_error", level="error", request_id=request_id, error_type=type(exc).__name__)
+    return JSONResponse(status_code=500, content={
+        "detail": "Internal service error; the operation may not have completed.",
+        "error": {"code": "INTERNAL_ERROR", "title": "Internal service error",
+                  "hint": "Ask an administrator to find this request ID in API logs. Never retry a registry publish blindly.",
+                  "request_id": request_id, "retryable": False},
+    })
 
 
 class PipelineRequest(BaseModel):

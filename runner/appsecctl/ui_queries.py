@@ -6,6 +6,8 @@ mock data or fake counters are used in the UI.
 from __future__ import annotations
 
 from typing import Any
+
+from .errors import ui_error
 from uuid import UUID
 
 
@@ -104,6 +106,10 @@ def pipeline_details(conn, pipeline_id: str) -> dict[str, Any]:
     artifacts = _rows(conn,
         """SELECT id, kind, format, created_at FROM artifacts
            WHERE pipeline_id = %s ORDER BY created_at DESC LIMIT 20""", (pid,))
+    for item in pipelines + scans + patches:
+        if item.get("error_message"):
+            item["error"] = ui_error(item["error_message"], "scan")
+            item["error_message"] = item["error"]["title"]
     return {
         "pipeline": pipelines[0], "scans": scans, "patches": patches,
         "diffs": diffs, "policies": policies, "reports": reports,
