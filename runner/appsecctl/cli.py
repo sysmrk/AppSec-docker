@@ -281,7 +281,10 @@ def evaluate_policy(pipeline_id: str, scan_id: str, project_id: str | None = Non
     return status
 
 
-def run_pipeline(image_ref: str, project_id: str | None = None) -> str:
+def run_pipeline(image_ref: str, project_id: str | None = None, mode: str = "scan") -> str:
+    """Run a safe scan-only workflow unless patch/push is explicitly requested."""
+    if mode not in ("scan", "patch"):
+        raise ValueError("mode must be scan or patch")
     with db.connect() as conn:
         image_id = db.get_or_create_image(conn, image_ref)
         pipeline_id = db.create_pipeline(conn, image_id, image_ref, project_id)
@@ -289,11 +292,14 @@ def run_pipeline(image_ref: str, project_id: str | None = None) -> str:
     try:
         original_scan_id = scan_image(image_ref, "original", pipeline_id)
         generate_sbom(image_ref, "original", original_scan_id, pipeline_id)
-        _, patched_ref = patch_from_scan(original_scan_id)
-        patched_scan_id = scan_image(patched_ref, "patched", pipeline_id)
-        generate_sbom(patched_ref, "patched", patched_scan_id, pipeline_id)
-        create_diff(pipeline_id, original_scan_id, patched_scan_id)
-        policy_status = evaluate_policy(pipeline_id, patched_scan_id, project_id)
+        policy_scan_id = original_scan_id
+        if mode == "patch":
+            _, patched_ref = patch_from_scan(original_scan_id)
+            patched_scan_id = scan_image(patched_ref, "patched", pipeline_id)
+            generate_sbom(patched_ref, "patched", patched_scan_id, pipeline_id)
+            create_diff(pipeline_id, original_scan_id, patched_scan_id)
+            policy_scan_id = patched_scan_id
+        policy_status = evaluate_policy(pipeline_id, policy_scan_id, project_id)
         with db.connect() as conn:
             db.finish_pipeline(conn, pipeline_id, "success" if policy_status == "passed" else "policy_failed")
     except BaseException as exc:
@@ -324,8 +330,8 @@ def print_summary(pipeline_id: str) -> None:
     print(json.dumps(summary, indent=2, default=str))
 
 
-def ci_image(image_ref: str) -> int:
-    pipeline_id = run_pipeline(image_ref)
+def ci_image(image_ref: str, mode: str = "scan") -> int:
+    pipeline_id = run_pipeline(image_ref, mode=mode)
     with db.connect() as conn:
         summary = db.pipeline_summary(conn, pipeline_id)
     status = summary["pipeline"]["status"]
@@ -360,10 +366,12 @@ def main(argv: list[str] | None = None) -> int:
 
     run_parser = subparsers.add_parser("run")
     run_parser.add_argument("image")
+    run_parser.add_argument("--patch", action="store_true", help="Explicitly patch and push after scanning (advanced)")
 
     enqueue_parser = subparsers.add_parser("enqueue")
     enqueue_parser.add_argument("image")
     enqueue_parser.add_argument("--priority", type=int, default=100)
+    enqueue_parser.add_argument("--patch", action="store_true", help="Explicitly enable patch and push")
 
     jobs_parser = subparsers.add_parser("jobs")
     jobs_parser.add_argument("--limit", type=int, default=20)
@@ -382,6 +390,7 @@ def main(argv: list[str] | None = None) -> int:
     ci_subparsers = ci_parser.add_subparsers(dest="ci_command", required=True)
     ci_image_parser = ci_subparsers.add_parser("image")
     ci_image_parser.add_argument("image")
+    ci_image_parser.add_argument("--patch", action="store_true", help="Patch/push explicitly")
     ci_security_parser = ci_subparsers.add_parser("security")
     ci_security_parser.add_argument("kind", choices=("secrets",))
     ci_security_parser.add_argument("target")
@@ -418,11 +427,11 @@ def main(argv: list[str] | None = None) -> int:
         patch_from_scan(args.scan_id)
         return 0
     if args.command == "run":
-        run_pipeline(args.image)
+        run_pipeline(args.image, mode="patch" if args.patch else "scan")
         return 0
     if args.command == "enqueue":
         with db.connect() as conn:
-            job_id = db.enqueue_pipeline(conn, args.image, args.priority)
+            job_id = db.enqueue_pipeline(conn, args.image, args.priority, mode="patch" if args.patch else "scan")
         print(json.dumps({"job_id": job_id, "image": args.image}, indent=2))
         return 0
     if args.command == "jobs":
@@ -445,7 +454,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "ci":
         if args.ci_command == "image":
-            return ci_image(args.image)
+            return ci_image(args.image, mode="patch" if args.patch else "scan")
         if args.ci_command == "security":
             return ci_security(args.kind, args.target, args.profile)
     if args.command == "report":

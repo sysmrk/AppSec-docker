@@ -42,9 +42,11 @@ async def request_logging(request: Request, call_next):
 
 
 class PipelineRequest(BaseModel):
-    image: str = Field(min_length=1)
-    priority: int = 100
+    image: str = Field(min_length=1, max_length=1024)
+    priority: int = Field(default=100, ge=0, le=10000)
     project_id: str | None = None
+    mode: str = Field(default="scan", pattern="^(scan|patch)$")
+    confirm_patch: bool = False
 
 
 class ScheduleRequest(BaseModel):
@@ -223,12 +225,13 @@ def create_pipeline(
     request: PipelineRequest,
     user: dict[str, Any] = Depends(require_role("admin", "operator")),
 ) -> dict[str, Any]:
+    if request.mode == "patch" and not request.confirm_patch:
+        raise HTTPException(status_code=422, detail="patch and registry push require confirm_patch=true")
     with db.connect() as conn:
-        if request.project_id and not db.user_can_access_project(conn, user, request.project_id, write=True):
-            raise HTTPException(status_code=403, detail="project access denied")
-        job_id = db.enqueue_pipeline(conn, request.image, request.priority, request.project_id)
+        require_project(conn, user, request.project_id, write=True)
+        job_id = db.enqueue_pipeline(conn, request.image, request.priority, request.project_id, mode=request.mode)
         db.insert_audit(conn, str(user["id"]), "pipeline.enqueue", "pipeline_job", job_id, request.model_dump())
-    return {"job_id": job_id, "image": request.image, "status": "queued"}
+    return {"job_id": job_id, "image": request.image, "mode": request.mode, "status": "queued"}
 
 
 @app.get("/jobs")

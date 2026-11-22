@@ -667,14 +667,19 @@ def insert_artifact(
     return artifact_id
 
 
-def enqueue_pipeline(conn: psycopg.Connection, image_ref: str, priority: int = 100, project_id: str | None = None) -> str:
+def enqueue_pipeline(
+    conn: psycopg.Connection, image_ref: str, priority: int = 100,
+    project_id: str | None = None, mode: str = "scan",
+) -> str:
+    if mode not in ("scan", "patch"):
+        raise ValueError("mode must be scan or patch")
     job_id = str(uuid4())
     conn.execute(
         """
-        INSERT INTO pipeline_jobs (id, requested_image, status, priority, project_id)
-        VALUES (%s, %s, 'queued', %s, %s)
+        INSERT INTO pipeline_jobs (id, requested_image, status, priority, project_id, mode)
+        VALUES (%s, %s, 'queued', %s, %s, %s)
         """,
-        (job_id, image_ref, priority, project_id),
+        (job_id, image_ref, priority, project_id, mode),
     )
     return job_id
 
@@ -734,7 +739,7 @@ def list_jobs(conn: psycopg.Connection, limit: int = 20, user: dict[str, Any] | 
     rows = conn.execute(
         """
         SELECT j.id, j.requested_image, j.status, j.priority, j.attempts, j.max_attempts,
-               j.pipeline_id, j.project_id, j.last_error, j.created_at, j.started_at, j.finished_at
+               j.pipeline_id, j.project_id, j.mode, j.last_error, j.created_at, j.started_at, j.finished_at
         FROM pipeline_jobs j
         WHERE %s OR j.project_id IS NULL OR EXISTS (
             SELECT 1 FROM projects p

@@ -28,7 +28,7 @@ def main() -> int:
             log_event("worker.image.claimed", job_id=job_id, image=image_ref)
 
             try:
-                pipeline_id = run_pipeline(image_ref, project_id)
+                pipeline_id = run_pipeline(image_ref, project_id, mode=str(job.get("mode") or "scan"))
                 with db.connect() as conn:
                     db.finish_job(conn, job_id, pipeline_id)
                     summary = db.pipeline_summary(conn, pipeline_id)

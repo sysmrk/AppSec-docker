@@ -264,6 +264,9 @@ CREATE INDEX IF NOT EXISTS idx_vulnerabilities_severity_pkg ON vulnerabilities(s
 CREATE INDEX IF NOT EXISTS idx_vulnerabilities_pkg_severity ON vulnerabilities(pkg_name, severity);
 CREATE INDEX IF NOT EXISTS idx_patch_runs_pipeline ON patch_runs(pipeline_id);
 CREATE INDEX IF NOT EXISTS idx_patch_runs_pipeline_started ON patch_runs(pipeline_id, started_at DESC);
+ALTER TABLE IF EXISTS pipeline_jobs
+    ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'scan';
+
 CREATE INDEX IF NOT EXISTS idx_pipeline_jobs_status_priority ON pipeline_jobs(status, priority, created_at);
 CREATE INDEX IF NOT EXISTS idx_scan_diffs_pipeline ON scan_diffs(pipeline_id);
 CREATE INDEX IF NOT EXISTS idx_scan_diffs_created ON scan_diffs(created_at DESC);
