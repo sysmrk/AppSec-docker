@@ -11,7 +11,7 @@ MCP tools (no mutation / scan / patch / push / shell execution):
 | `get_security_overview` | none | Pipeline state totals, scan severity totals, secret-scan aggregate |
 | `list_pipelines` | `limit` | Array of recent image and pipeline IDs/status |
 | `get_pipeline` | `pipeline_id` UUID | Pipeline and original/patched scan IDs/counts |
-| `list_image_vulnerabilities` | `pipeline_id`, optional `phase`, `limit` | CVEs, packages, installed/fixed versions |
+| `list_image_vulnerabilities` | `pipeline_id`, optional `phase`, `limit` | CVEs and versions; defaults to `original`, use `patched` only if a patch scan exists |
 | `list_secret_scan_jobs` | optional `limit` | Secret scan job summary |
 | `get_secret_findings` | `job_id`, optional `limit` | Rule, severity and file/line; **never secret value or evidence** |
 | `get_policy_results` | `pipeline_id`, `limit` | Policy pass/fail + violations |
@@ -106,7 +106,7 @@ On Windows, use the full Windows repository path, for example `C:\\Projects\\App
 
 Ask the AI:
 
-> Use the appsec-readonly tools to list the 5 most recent pipelines. For the latest pipeline show original vs patched CVEs, high/critical counts, and the policy result. Cite the returned pipeline IDs; do not fabricate missing results.
+> Use the appsec-readonly tools to list the 5 most recent pipelines. For the latest pipeline show original CVEs and high/critical counts; compare with patched CVEs only if a patch scan exists. Include the policy result. Cite the returned pipeline IDs; do not fabricate missing results.
 
 **Expected outputs:** the client shows the tools `list_pipelines`, `get_pipeline`, etc.; tool results contain structured IDs, status and counts; the assistant then summarizes them. Results with `{"pipelines":[]}` mean there are no records yet, not that the connector failed.
 
