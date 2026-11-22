@@ -1,75 +1,81 @@
-# Operations Runbook
+# Installation and Operations Runbook
 
-## Start Platform
+For the recommended first-run flow, see [README](../README.md) and [user guide](user-guide.md).
 
-Development profile:
+## Prerequisites
 
-```bash
-./scripts/harbor.sh install
-./scripts/harbor.sh login
-docker compose -f docker-compose.yaml --profile platform up -d postgres buildkit minio minio-init api nginx worker scheduler grafana metabase
-./scripts/setup-metabase.sh
-```
+- Linux/WSL2 with Docker Engine or Docker Desktop, Docker Compose v2, Git, Python 3.10+
+- Network access (or configured internal mirrors) for images and Trivy vulnerability database
+- Sufficient disk space for images, reports, Docker volumes and PostgreSQL
+- Dedicated trusted worker host for production (Docker Socket remains powerful)
 
-Production-like split workers:
+## Fresh installation (no demonstration data)
 
 ```bash
-./scripts/harbor.sh install
-./scripts/harbor.sh login
-docker compose -f docker-compose.yaml --profile production up -d postgres buildkit api nginx image-worker security-worker scheduler
+git clone https://github.com/sysmrk/AppSec-docker.git
+cd AppSec-docker
+# For the PR before merge: git switch security/optional-mcp-hardening
+./appsec setup
+./appsec start
+./appsec doctor
+./appsec credentials
 ```
 
-## Migrations
+Open `http://127.0.0.1:8080` on the host. The CLI generates random credentials in `.env` (mode 0600) and applies migrations automatically. It **never overwrites an existing `.env`**.
 
-Preferred command:
+The default startup launches PostgreSQL, MinIO, API, Nginx, a shared Worker, Scheduler and Grafana. It does **not** start privileged BuildKit, Metabase or MCP. No Registry/Harbor is required for scan-only mode. External vulnerability DB downloads may still be needed.
+
+## CLI operations
 
 ```bash
-./scripts/appsecctl.sh migrate
+./appsec start                 # Scan-only
+./appsec start --analytics     # Also start Metabase
+./appsec start --patching      # Opt-in privileged BuildKit and patch mode
+./appsec status
+./appsec doctor
+./appsec logs worker
+./appsec stop
 ```
 
-Compatibility command:
+`make up` and `make init` remain compatibility shortcuts for the platform with analytics. For advanced CLI actions: `./scripts/appsecctl.sh`. MCP remains optional: `make mcp-up` and `make mcp-down`.
+
+## Restore/upgrade an existing deployment
+
+1. Back up Postgres and reports/object storage. Review queued jobs: migration 0007 preserves previously queued jobs as patch mode.
+2. Preserve `.env` and stored secrets. `./appsec setup` does not reset existing accounts.
+3. Pull reviewed code changes, then run `./appsec start` to apply migrations. **Production deployments require staging migration testing**.
+4. Migration 0006 redacts historical secret-bearing PostgreSQL data but does not scrub old JSON/HTML/S3 objects or backups. Rotate exposed credentials and purge old copies.
+5. Session cookie is Secure for HTTPS, false only for localhost HTTP. All downloads require authentication; Grafana root is now `/grafana/`.
+6. Test login, create a scan-only job, verify policy result, download reports and inspect service health.
+
+## Diagnostics
 
 ```bash
-./scripts/appsecctl.sh init-db
+./appsec doctor
+./appsec status
+./appsec logs api
+./appsec logs worker
+./appsec logs nginx
+curl -fsS http://127.0.0.1:8080/appsec-api/health
 ```
 
-## Health and Metrics
+The doctor checks actual local Docker/Compose/container state and API/DB reachability, reports failures and warnings, and does not generate test scans.
 
-```bash
-curl http://127.0.0.1:8080/api/health
-curl http://127.0.0.1:8080/appsec-api/health
-curl http://127.0.0.1:8080/appsec-api/metrics
-curl http://127.0.0.1:3001/api/health
-```
+For reverse proxy/remote use: keep AppSec loopback-only or inside a trusted network, terminate TLS at an approved external proxy, restrict ingress, and set `APPSEC_SESSION_COOKIE_SECURE=true`, `GRAFANA_ROOT_URL=https://your-host/grafana/`.
 
-## Docker Compose v1 ContainerConfig Issue
+## Optional analytics, registry patching and MCP
 
-If `docker-compose` v1 fails with `KeyError: 'ContainerConfig'`, remove only the affected containers and run `up -d` again.
+- Grafana: `http://127.0.0.1:8080/grafana/`, admin login configured in `.env`
+- Metabase: `./appsec start --analytics`, URL `http://127.0.0.1:3001`
+- Harbor and Copa: [registry.md](registry.md). Patch/Push must be explicitly enabled using `./appsec start --patching`. Avoid running privileged BuildKit on sensitive hosts.
+- AI/MCP: [mcp.md](mcp.md). MCP does not start with the normal platform, is read-only and requires proper OAuth/TLS for cloud clients.
 
-Example:
+## Security and operational warnings
 
-```bash
-docker rm -f appsec_api_1 appsec_worker_1 appsec_scheduler_1
-docker compose -f docker-compose.yaml --profile platform up -d api worker scheduler
-```
-
-Do not remove named volumes unless data loss is intended.
-
-## Production Safety Notes
-
-- API must not mount Docker socket.
-- Only workers should access Docker socket.
-- Put workers on dedicated hosts when possible.
-- Use a real secret manager for production secrets.
-- Expose API only behind TLS and identity-aware proxy.
-
-
-## Security upgrade: redact historical secrets
-
-1. Back up PostgreSQL securely and restrict access to existing report volumes/S3/backup snapshots.
-2. Run `./scripts/appsecctl.sh migrate` (migration 0006 scrubs Gitleaks raw_report and evidence/secret metadata stored in PostgreSQL).
-3. Delete/regenerate reports that may contain raw credentials from pre-upgrade runs, including remote S3 objects and archival backups; **rotate exposed tokens/passwords**, because deleting reports does not revoke credentials.
-4. Configure `SECURITY_ALLOWED_GIT_HOSTS`, `APPSEC_SESSION_COOKIE_SECURE=true` behind TLS and enforce report authentication.
-5. Validate with `PYTHONPATH=runner python3 -m unittest discover -s tests -v`, then exercise the API with distinct users in different projects.
-
-Limitation: Existing generated HTML/SARIF and Gitleaks JSON files are not automatically rewritten by the DB migration. Do not share old download links.
+- Worker retains powerful Docker Socket access even in scan-only mode. Isolate workers, set egress policy and do not scan untrusted images on sensitive hosts.
+- Do not expose PostgreSQL/MinIO/BuildKit or docker.sock externally.
+- `.env` holds sensitive values; use an approved secret manager for production and never commit it.
+- Local S3 credentials generated at setup match the MinIO root secret. Replace with a bucket-scoped MinIO service account before production.
+- Old report URLs must not be treated as credentials; all report downloads need an authenticated AppSec session or API key.
+- Existing global/unassigned Project data remains shared with all authenticated AppSec accounts.
+- Keep image/scanner signatures and version digest pinning under review.

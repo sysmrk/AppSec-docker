@@ -1,70 +1,66 @@
-# Architecture
+# AppSec Architecture
 
-Pipeline فعلی چهار بخش اصلی دارد:
+## User-facing entrypoint
+
+The default entrypoint is **AppSec Control Center** at `http://127.0.0.1:8080/`, a responsive first-party UI served by the existing FastAPI process behind Nginx. No frontend build stack, external CDN or sample data is required. The UI consumes authenticated, Project-aware read endpoints and creates jobs using the existing API.
+
+Grafana is an advanced monitoring integration under `/grafana/`. Metabase uses a separate optional service at `:3001`. MCP is a separate optional read-only integration.
+
+## Default image scan (no patch/push)
 
 ```text
-User
-  |
-  v
-appsecctl / API / Scheduler
-  |
-  +--> Postgres queue
-  |
-  v
-worker
-  |
-  +--> Trivy container
-  |
-  +--> Postgres
-  |
-  +--> Copa binary
-  |
-  +--> BuildKit
-  |
-  +--> Docker Registry / Harbor
+Browser/UI or CLI -> FastAPI auth + RBAC -> PostgreSQL pipeline_jobs (mode=scan)
+                                         |
+                                         v
+                                      Worker
+                                         |
+                                  Docker -> Trivy
+                                         |
+                                 Findings + SBOM
+                                         |
+                                      Policy
+                                         |
+                             Postgres / MinIO reports
+                                         |
+                               UI Results / Downloads
 ```
 
-`appsecctl` و `worker` خودشان scanner یا patcher نیستند. نقش آن‌ها orchestration است:
+**Important:** the worker uses Docker Socket to start Trivy, but **BuildKit is not started by default**. The initial image scan is read-only with respect to the image registry. Scans may download images and CVE databases to local caches.
 
-- اجرای Trivy
-- خواندن JSON خروجی
-- ذخیره raw report و vulnerabilityها در Postgres
-- ساخت SBOM
-- اجرای binary مربوط به Copa با report همان scan
-- استفاده از BuildKit برای ساخت لایه patch
-- push image اصلاح‌شده
-- اجرای scan نهایی
-- ساخت diff بین scan اولیه و نهایی
-- اجرای policy
+## Explicit advanced patch path
 
-## چرا Docker socket mount شده است؟
+Only after `./appsec start --patching`, registry configuration, and an explicit browser/API confirmation:
 
-Trivy به صورت container اجرا می‌شود و Copa داخل runner نصب است. برای patch و push image، Copa و runner باید به Docker daemon میزبان دسترسی داشته باشند.
+```text
+Original Trivy scan -> Copa + privileged BuildKit -> Push patched image to registry
+          -> Patched Trivy scan + SBOM -> diff -> policy -> authenticated reports
+```
 
-به همین دلیل `appsec-runner` به `/var/run/docker.sock` وصل می‌شود.
+Patching failures are recorded; no fake success is generated. Worker Docker Socket and BuildKit privileged access are powerful and must be isolated before production.
 
-این دسترسی قدرتمند است و باید فقط روی سیستم قابل اعتماد استفاده شود.
+## Components
 
-## Scale روزانه
+| Component | Responsibility |
+| --- | --- |
+| Nginx | Loopback-only ingress, routes root UI, `/appsec-api/`, Grafana `/grafana/` |
+| FastAPI | Login/session, REST API, authorization, UI static assets, job creation |
+| PostgreSQL | Users, roles, projects, queue, scan findings, policies, reports |
+| Worker / Scheduler | Asynchronous processing and scheduled image scans |
+| Trivy | Image vulnerability scan and CycloneDX SBOM |
+| Gitleaks | Repository secret scanning with persisted secret redaction |
+| MinIO | S3-compatible report storage (default local deployment) |
+| Grafana | Advanced monitoring |
+| Metabase | Optional business analytics |
+| BuildKit + Copa | Optional and privileged patch/push executor |
+| MCP Adapter | Optional read-only analytics for AI clients; no mutation tools |
 
-برای جلوگیری از تداخل:
+Worker uses `FOR UPDATE SKIP LOCKED` for job claiming. Each image job has a mode (`scan` default or `patch` explicit), UUID, status, timestamps and output pipeline reference. Report downloads require valid session/API identity and authorized Project access.
 
-- هر pipeline یک UUID دارد.
-- هر scan یک UUID دارد.
-- هر patch یک UUID دارد.
-- reportها با timestamp و UUID ذخیره می‌شوند.
+## Trust boundaries
 
-برای پردازش کنترل‌شده، جدول `pipeline_jobs` نقش queue را دارد. workerها jobها را با lock دیتابیس claim می‌کنند، بنابراین چند worker می‌توانند کنار هم اجرا شوند بدون اینکه یک job دوبار برداشته شود.
+- The API must not mount Docker Socket; workers currently do, even during scan-only use.
+- The local UI authenticates via AppSec API sessions. Remote access requires HTTPS and identity-aware proxy.
+- MCP uses a separate container, no Docker Socket, and should use a SELECT-only PostgreSQL role. Current MCP queries provide global analytics and do not impersonate AppSec end users. See [MCP documentation](mcp.md).
+- Secrets from Gitleaks must never be copied into returned findings. Historic artifacts from pre-hardening installations require cleanup.
 
-## API
-
-سرویس `api` با FastAPI اجرا می‌شود و پشت nginx از مسیر `http://127.0.0.1:8080/appsec-api/` در دسترس است. این سرویس job ثبت می‌کند، jobها را لیست می‌کند و summary pipeline را برمی‌گرداند. رابط مشاهده عملیاتی پروژه Grafana است که روی `http://127.0.0.1:8080` نمایش داده می‌شود. برای تحلیل‌های مدیریتی و queryهای قابل تغییر، Metabase روی `http://127.0.0.1:3001` بالا می‌آید و با `scripts/setup-metabase.sh` dashboardهای اولیه‌اش ساخته می‌شوند.
-
-## Scheduler
-
-سرویس `scheduler` جدول `scheduled_images` را بررسی می‌کند و وقتی زمان اجرای یک image برسد، یک job جدید در صف می‌سازد.
-
-
-## Optional MCP adapter
-
-A separate Compose `mcp` profile adds a read-only Model Context Protocol service for AI clients. It is not part of the default AppSec pipeline, does not mount Docker socket or report volumes and performs only bounded SELECT queries against PostgreSQL. It offers local STDIO transport and localhost-bound Streamable HTTP (`127.0.0.1:8091/mcp`); no scan/patch/push tool exists. See [MCP guide](mcp.md) and [security review](security-review.md). Treat all data as cross-project security analytics and require identity-aware OAuth at any external gateway.
+See [security review](security-review.md) and [production roadmap](production-roadmap.md).

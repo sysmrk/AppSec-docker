@@ -1,66 +1,43 @@
-# Workflow
+# AppSec Workflow
 
-## Full Pipeline
+## Default: scan only
+
+The Control Center **Scan image** form and `POST /appsec-api/pipelines` default to `mode=scan`. This scans a real image, stores Trivy JSON, generates CycloneDX SBOM, runs Policy Gate and writes a final report. **It does not patch or push.**
 
 ```bash
-./scripts/appsecctl.sh run alpine:3.19
+./scripts/appsecctl.sh run registry.example.com/team/service:1.4.0
 ```
 
-مراحل:
+Worker queue mode is stored in `pipeline_jobs.mode`. Already queued pre-upgrade jobs keep their previous patch mode after migration 0007 for compatibility. New scheduled scans default to scan-only.
 
-1. ساخت `pipeline_id`
-2. اجرای Trivy روی image اولیه
-3. ذخیره report در Postgres
-4. ساخت SBOM برای image اولیه
-5. اجرای Copa داخل `appsec-runner` با report همان `scan_id`
-6. ساخت لایه patch با BuildKit
-7. push image patch شده به registry
-8. scan مجدد image patch شده
-9. ساخت SBOM برای image patch شده
-10. ساخت diff بین scan اولیه و scan نهایی
-11. اجرای policy روی scan نهایی
-12. ذخیره نتیجه نهایی
+## Advanced: patch + rescan
 
-## Manual Scan
+**Explicit opt-in required** (privileged BuildKit, Docker registry permissions):
 
 ```bash
-./scripts/appsecctl.sh scan nginx:1.25
+./appsec start --patching
+./scripts/harbor.sh login  # or docker login your registry
+./scripts/appsecctl.sh run registry.example.com/team/service:1.4.0 --patch
 ```
 
-این دستور فقط scan انجام می‌دهد و patch اجرا نمی‌کند.
+From the UI, enable advanced options and explicitly confirm patch/push. API requires `{"image":"...", "mode":"patch", "confirm_patch":true}` and server setting `APPSEC_PATCH_ENABLED=true`.
 
-Trivy vulnerability DB را روی volume جدا cache می‌کند تا هر scan مجبور نباشد DB را دوباره دانلود کند.
+A full patch run performs initial scan, original SBOM, Copa patch through BuildKit, registry push, patched scan/SBOM, CVE diff, policy check and final report.
 
-## Manual Patch
+## Repository secret scanning
 
-```bash
-./scripts/appsecctl.sh patch --scan-id <scan-id>
-```
+In the UI choose **Scan repository**, or run `./scripts/appsecctl.sh security secrets https://github.com/org/repo.git --async`. Git targets must belong to `SECURITY_ALLOWED_GIT_HOSTS` (HTTPS only). Gitleaks values are redacted before persistence.
 
-این دستور از گزارش scan ذخیره‌شده استفاده می‌کند.
-
-## Queue
-
-برای ثبت job:
+## Queue and scheduler
 
 ```bash
-./scripts/appsecctl.sh enqueue nginx:1.25
-```
-
-برای دیدن jobها:
-
-```bash
+./scripts/appsecctl.sh enqueue registry.example.com/team/service:1.4.0
 ./scripts/appsecctl.sh jobs
+./scripts/appsecctl.sh schedule registry.example.com/team/service:1.4.0 --interval-minutes 1440
 ```
 
-worker اولین job با status برابر `queued` را claim می‌کند. claim با `FOR UPDATE SKIP LOCKED` انجام می‌شود تا اگر چند worker بالا آمدند یک job را همزمان برندارند.
+The scheduler and queue default to scan-only. Worker claim uses `FOR UPDATE SKIP LOCKED` for concurrent workers.
 
-## Scheduler
+## Results
 
-برای ثبت image زمان‌بندی‌شده:
-
-```bash
-./scripts/appsecctl.sh schedule nginx:1.25 --interval-minutes 1440
-```
-
-سرویس `scheduler` به صورت دوره‌ای imageهای due را به صف اضافه می‌کند.
+UI **Overview → Results** presents real pipeline and CVE data, severity filters, policy violations, optional Before/After diff, generated reports and SBOM download links. Grafana/Metabase remain available under Integrations.

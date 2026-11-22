@@ -1,64 +1,35 @@
 # Database
 
-Schema اصلی در [db/schema.sql](../db/schema.sql) است.
+The initial schema lives in [db/schema.sql](../db/schema.sql). Versioned upgrades use [Alembic migrations](../migrations/versions/) and are automatically applied by `./appsec start`.
 
-## Tables
+## Main tables
 
-`images`
+| Table | Purpose |
+| --- | --- |
+| `images` | Unique image references |
+| `pipeline_runs` | A scan-only or explicit patch-enabled execution |
+| `scan_runs` | Individual Trivy scans, phase `original`, `patched`, or `manual` |
+| `vulnerabilities` | Parsed per-scan CVE and package details |
+| `patch_runs` | Optional Copa patch and registry push results |
+| `pipeline_jobs` | Queue, priority, status, `mode` (`scan` or `patch`), Project and pipeline ID |
+| `scan_diffs` | Fixed/remaining/introduced CVEs after optional patch |
+| `policy_results` | Policy decision on the last relevant scan |
+| `artifacts` | Stored SBOM, Trivy JSON and other files |
+| `scheduled_images` | Images queued on a recurrence |
+| `security_jobs`/`security_findings` | Secret scans and redacted findings |
+| `projects`/`users`/`team_members` | Identity and Project authorization |
+| `generated_reports` | Report metadata and download IDs |
 
-اطلاعات imageهایی که وارد سیستم شده‌اند.
+## Upgrade safety
 
-`pipeline_runs`
+Migration **0006** clears legacy Gitleaks raw secret values in PostgreSQL and intentionally cannot be reversed to reconstruct secrets. It **does not** purge old report files, object storage or backups. Rotate any real exposed secrets before or during remediation.
 
-هر اجرای کامل scan → patch → rescan یک رکورد در این جدول دارد.
+Migration **0007** adds `pipeline_jobs.mode`. Existing queued jobs preserve **patch mode**, avoiding silent changes to previously accepted instructions; newly enqueued jobs and scheduled scans use **scan mode** by default.
 
-`scan_runs`
+Back up PostgreSQL before applying migrations. For production, test the migration against a staging copy and validate `alembic_version` and the new queue column.
 
-هر scan یک رکورد جدا دارد. فیلد `phase` مشخص می‌کند scan برای image اولیه بوده یا image patch شده.
+## Raw reports
 
-`vulnerabilities`
+Trivy raw report JSON is retained for audit. Gitleaks raw Secret/Match/Line data is redacted for new reports and removed from legacy PostgreSQL records by migration 0006. Authentication and Project authorization apply to downloads.
 
-خلاصه vulnerabilityهای استخراج‌شده از JSON خروجی Trivy.
-
-`patch_runs`
-
-اطلاعات اجرای Copa و image خروجی.
-
-`pipeline_jobs`
-
-صف پردازش pipelineها. هر job یک image، status، تعداد تلاش‌ها و در صورت موفقیت `pipeline_id` دارد.
-
-`scan_diffs`
-
-خلاصه مقایسه scan اولیه و scan نهایی شامل fixed، remaining و introduced.
-
-`policy_results`
-
-نتیجه اجرای policy روی scan نهایی همراه با ruleها و violationها.
-
-`artifacts`
-
-مسیر artifactهای تولیدشده مثل SBOM.
-
-`scheduled_images`
-
-لیست imageهایی که باید به شکل دوره‌ای وارد صف شوند.
-
-## Raw Reports
-
-خروجی کامل Trivy در دو جا نگه داشته می‌شود:
-
-- فایل JSON روی volume گزارش‌ها
-- ستون `raw_report` در Postgres
-
-این کار برای audit و debug مفید است.
-
-## IDs
-
-برای جلوگیری از قاطی شدن اجراها، شناسه‌ها جدا نگه داشته می‌شوند:
-
-- `job_id` برای صف
-- `pipeline_id` برای اجرای کامل
-- `scan_id` برای هر scan
-- `patch_id` برای هر patch
-- `artifact_id` برای خروجی‌هایی مثل SBOM
+Do not expose the database directly to users or an unrestricted AI agent. The optional MCP integration requires a separate SELECT-only account and provides global analytics, not per-user RBAC.
