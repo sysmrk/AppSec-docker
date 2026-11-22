@@ -66,3 +66,10 @@
 - MCP به‌صورت اختیاری اضافه شده ولی برای اتصال از Cloud به OAuth/TLS Gateway نیاز دارد؛ راهنما: `docs/mcp.md`.
 
 پیشرفت مرحله‌ای: Foundation انجام‌شده اما هنوز Gateهای امنیتی عملیاتی مانع Production Signoff هستند. این وضعیت به‌جای ادعای نادرست Phase 1 تمام‌شده درج شده است.
+
+
+## Consolidation status — November 22, 2026
+
+**Implemented on main:** complete interactive non-CI/CD Control Center; scan-only image intake with human review; explicitly approved Patch/Push continuation with audit identity, timestamp and maximum one attempt; admin UI for users, teams, projects, membership and policies; three Metabase dashboards; Grafana fully removed; optional read-only MCP; automated `change-<SHA>` tags for every main commit.
+
+**Still required for production signoff:** isolate Docker Socket and privileged BuildKit workers; integrate OIDC/SSO/MFA and CSRF protections; enforce Metabase read-only SQL access and independently scoped analytics users; pin/sign images; validate actual Trivy/Copa/Harbor workflows, browser E2E and staging migrations; backup/restore and HA verification. Passing CI (including PostgreSQL migrations and Metabase SQL EXPLAIN) is not an equivalent substitute for those operational tests.
