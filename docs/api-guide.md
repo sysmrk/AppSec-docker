@@ -219,3 +219,6 @@ curl -X POST http://127.0.0.1:8080/appsec-api/pipelines \
 | `GET /appsec-api/api/ui/capabilities` | Patch functionality status |
 
 All endpoints require a valid AppSec session or API Key. UI lives at `/`, Grafana at `/grafana/`.
+
+
+`GET /appsec-api/api/ui/system/health` is an **admin-only** read endpoint for queue counts and Worker/Scheduler heartbeats. It does not query Docker Socket. Old heartbeat timestamps do not necessarily mean an executor failed.
