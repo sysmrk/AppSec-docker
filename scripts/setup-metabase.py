@@ -331,15 +331,89 @@ CARDS = [
 ]
 
 
+
+MANUAL_CARDS = [
+    ("AppSec Manual - Workflow States", """
+        SELECT CASE
+          WHEN w.decision = 'finish' THEN 'completed without patch'
+          WHEN w.decision = 'approve_patch' AND p.status = 'success' THEN 'completed after patch'
+          WHEN w.decision = 'approve_patch' AND p.status = 'failed' THEN 'patch failed'
+          WHEN w.decision = 'approve_patch' THEN 'patch processing'
+          WHEN j.status = 'success' THEN 'awaiting approval'
+          WHEN j.status = 'failed' THEN 'scan failed'
+          ELSE j.status END AS stage, count(*) AS workflows
+        FROM manual_workflows w JOIN pipeline_jobs j ON j.id = w.scan_job_id
+        LEFT JOIN pipeline_jobs p ON p.id = w.patch_job_id
+        GROUP BY 1 ORDER BY 2 DESC
+    """, "bar", 0, 0, 12, 7),
+    ("AppSec Manual - Approval Queue", """
+        SELECT w.created_at, w.requested_image, u.username AS requested_by,
+               j.finished_at AS scanned_at, pr.status AS policy_status,
+               pr.id AS pipeline_id
+        FROM manual_workflows w JOIN pipeline_jobs j ON j.id = w.scan_job_id
+        JOIN users u ON u.id = w.created_by
+        LEFT JOIN pipeline_runs pr ON pr.id = j.pipeline_id
+        WHERE j.status = 'success' AND w.decision IS NULL
+        ORDER BY j.finished_at DESC LIMIT 100
+    """, "table", 0, 12, 12, 7),
+    ("AppSec Manual - Decisions And Audit", """
+        SELECT w.approved_at, w.requested_image, u.username AS decided_by,
+               w.decision, pj.status AS patch_status, w.project_id
+        FROM manual_workflows w LEFT JOIN users u ON u.id = w.approved_by
+        LEFT JOIN pipeline_jobs pj ON pj.id = w.patch_job_id
+        WHERE w.decision IS NOT NULL
+        ORDER BY w.approved_at DESC LIMIT 100
+    """, "table", 7, 0, 24, 8),
+    ("AppSec Manual - Queue By Mode", """
+        SELECT mode, status, count(*) AS jobs FROM pipeline_jobs
+        GROUP BY mode, status ORDER BY mode, status
+    """, "bar", 15, 0, 12, 7),
+    ("AppSec Manual - Patch Outcomes", """
+        SELECT pr.started_at, pr.requested_image, sd.fixed_count, sd.remaining_count,
+               sd.introduced_count, pr.status
+        FROM scan_diffs sd JOIN pipeline_runs pr ON pr.id = sd.pipeline_id
+        ORDER BY pr.started_at DESC LIMIT 100
+    """, "table", 15, 12, 12, 7),
+]
+
+TREND_CARDS = [
+    ("AppSec Trends - Severity By Scan Day", """
+        SELECT date_trunc('day', started_at) AS day, phase,
+               sum(critical_count) AS critical, sum(high_count) AS high,
+               sum(medium_count) AS medium, sum(low_count) AS low
+        FROM scan_runs WHERE status = 'success'
+        GROUP BY 1,2 ORDER BY 1 DESC, 2 LIMIT 150
+    """, "table", 0, 0, 24, 8),
+    ("AppSec Trends - Top CVEs", """
+        SELECT v.vulnerability_id, v.severity, count(*) AS occurrences,
+               count(DISTINCT sr.image_ref) AS images,
+               max(v.fixed_version) AS available_fixed_version
+        FROM vulnerabilities v JOIN scan_runs sr ON sr.id = v.scan_id
+        GROUP BY 1,2 ORDER BY occurrences DESC LIMIT 100
+    """, "table", 8, 0, 24, 8),
+    ("AppSec Trends - Failed Policies", """
+        SELECT pr.requested_image, pol.status, pol.created_at, pol.violations
+        FROM policy_results pol JOIN pipeline_runs pr ON pr.id = pol.pipeline_id
+        WHERE pol.status <> 'passed'
+        ORDER BY pol.created_at DESC LIMIT 100
+    """, "table", 16, 0, 24, 8),
+]
+
 def main() -> int:
     wait_for_metabase()
     session = setup_if_needed()
     database_id = ensure_database(session)
-    dashboard_id = ensure_dashboard(session, "AppSec Security Overview")
-    for name, sql, display, row, col, size_x, size_y in CARDS:
-        card_id = ensure_card(session, database_id, name, sql.strip(), display)
-        add_card(session, dashboard_id, card_id, row, col, size_x, size_y)
-    print(json.dumps({"metabase": BASE_URL, "dashboard": "AppSec Security Overview"}, indent=2))
+    dashboards = (
+        ("AppSec Security Overview", CARDS),
+        ("AppSec Manual Operations", MANUAL_CARDS),
+        ("AppSec Vulnerability Trends", TREND_CARDS),
+    )
+    for title, cards in dashboards:
+        dashboard_id = ensure_dashboard(session, title)
+        for name, sql, display, row, col, size_x, size_y in cards:
+            card_id = ensure_card(session, database_id, name, sql.strip(), display)
+            add_card(session, dashboard_id, card_id, row, col, size_x, size_y)
+    print(json.dumps({"metabase": BASE_URL, "dashboards": [item[0] for item in dashboards]}, indent=2))
     return 0
 
 
