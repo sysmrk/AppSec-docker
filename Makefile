@@ -7,6 +7,10 @@ PROFILE ?= platform
 help:
 	@printf '%s\n' \
 		'AppSec commands:' \
+		'  ./appsec setup      Create initial secure configuration' \
+		'  ./appsec start      Start the standard scan-only platform' \
+		'  ./appsec doctor     Diagnose Docker, API and background services' \
+		'  ./appsec credentials  Show admin credentials on a trusted terminal' \
 		'  make preflight        Check host requirements and ports' \
 		'  make validate         Validate compose, Python syntax and Grafana JSON' \
 		'  make init             Start core services and initialize database' \
