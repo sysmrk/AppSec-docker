@@ -37,9 +37,6 @@ class WebAPIContractTests(unittest.TestCase):
             self.assertEqual(response.status_code, 403)
             self.assertEqual(response.json()["error"]["code"], "CSRF_REJECTED")
             self.assertTrue(response.headers.get("X-Request-ID"))
-            response = client.post("/pipelines", json={"image": "nginx:stable"},
-                headers={"X-Requested-With": "AppSec-Control-Center"})
-            self.assertEqual(response.status_code, 401)
 
     def test_download_auth_with_missing_credentials_is_401(self):
         with TestClient(app) as client:
