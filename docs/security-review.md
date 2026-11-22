@@ -46,3 +46,5 @@ Additional follow-up: unscoped dashboard/history/teams/audit logs are admin-only
 
 
 Scanner failure handling: Gitleaks uses an explicit detection exit code (17). Only 0 (no leaks) and 17 (leaks found) count as an executed scan; all other exit codes fail the job. The script also removes the temporary cloned repository in a finally block. `make down` now includes the optional MCP profile when shutting down the full stack.
+
+The CI test suite includes a real MCP STDIO tools/list handshake (no Postgres required). It verifies the expected read-only tool catalogue is discoverable by an official MCP client. HTTP transport, live SQL data, auth gateway and production scanning still require runtime tests.
