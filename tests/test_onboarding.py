@@ -50,6 +50,7 @@ class OnboardingTests(unittest.TestCase):
              patch.object(cli, "ENV_FILE", Path(folder) / ".env"), \
              patch.object(cli, "check_prerequisites"), \
              patch.object(cli, "compose") as compose_calls, \
+             patch.object(cli, "run") as run_command, \
              patch.object(cli.os, "environ", dict(os.environ)):
             cli.ENV_FILE.write_text("POSTGRES_PASSWORD=xyz\n")
             cli.start(SimpleNamespace(analytics=False, patching=False))
@@ -57,6 +58,7 @@ class OnboardingTests(unittest.TestCase):
             self.assertFalse(any("buildkit" in args for args in calls))
             self.assertFalse(any("patch" in args for args in calls))
             self.assertEqual(cli.os.environ["APPSEC_PATCH_ENABLED"], "false")
+            self.assertTrue(any("metabase" in str(args).lower() for args in [call.args for call in run_command.call_args_list]))
 
 
 if __name__ == "__main__":
