@@ -288,3 +288,11 @@ CREATE INDEX IF NOT EXISTS idx_generated_reports_resource ON generated_reports(r
 CREATE INDEX IF NOT EXISTS idx_generated_reports_resource_created ON generated_reports(resource_type, resource_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_pipeline_runs_status_started ON pipeline_runs(status, started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_pipeline_runs_requested_started ON pipeline_runs(requested_image, started_at DESC);
+
+
+CREATE TABLE IF NOT EXISTS service_heartbeats (
+    service TEXT NOT NULL,
+    instance TEXT NOT NULL,
+    last_seen TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (service, instance)
+);
