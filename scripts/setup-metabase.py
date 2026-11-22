@@ -205,10 +205,12 @@ def add_card(session: str, dashboard_id: int, card_id: int, row: int, col: int, 
             "visualization_settings": {},
         }
     )
+    # Modern Metabase dashboard API accepts the full dashcards collection.
+    # The old PUT /api/dashboard/:id/cards route is deprecated.
     request(
         "PUT",
-        f"/api/dashboard/{dashboard_id}/cards",
-        {"cards": cards_payload},
+        f"/api/dashboard/{dashboard_id}",
+        {"dashcards": cards_payload},
         token=session,
     )
 
