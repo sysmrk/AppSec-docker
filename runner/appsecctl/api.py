@@ -161,6 +161,7 @@ class UserRequest(BaseModel):
     display_name: str = Field(min_length=1, max_length=120)
     role: str = Field(pattern="^(admin|operator|viewer)$")
     api_key: str | None = Field(default=None, min_length=24)
+    issue_api_key: bool = False
     password: str = Field(min_length=12, max_length=256)
 
 
@@ -185,6 +186,7 @@ class PasswordRequest(BaseModel):
 
 
 def current_user(
+    request: Request,
     x_api_key: str | None = Header(default=None),
     appsec_session: str | None = Cookie(default=None),
 ) -> dict[str, Any]:
@@ -196,6 +198,10 @@ def current_user(
             user = db.user_by_session(conn, appsec_session)
     if not user:
         raise HTTPException(status_code=401, detail="authentication required")
+    if user.get("must_change_password") and appsec_session and not x_api_key:
+        allowed = ("/api/profile", "/api/profile/password", "/api/auth/logout")
+        if request.url.path not in allowed:
+            raise HTTPException(status_code=428, detail="Change your temporary password before using AppSec")
     return user
 
 
@@ -412,7 +418,12 @@ def create_user(request: UserRequest, user: dict[str, Any] = Depends(require_rol
             raise
         conn.execute("UPDATE users SET must_change_password=true WHERE id=%s", (user_id,))
         db.insert_audit(conn, str(user["id"]), "user.create", "user", user_id, {"username": request.username})
-    return {"id": user_id, "username": request.username, "role": request.role, "api_key": api_key}
+    result = {"id": user_id, "username": request.username, "role": request.role,
+              "must_change_password": True}
+    # API keys are off by default for human users; admins must explicitly issue one.
+    if request.api_key or request.issue_api_key:
+        result["api_key"] = api_key
+    return result
 
 
 
