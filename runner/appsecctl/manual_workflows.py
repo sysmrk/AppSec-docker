@@ -181,6 +181,19 @@ def decide(
             raise RuntimeError("cannot publish a patched image that failed the final policy")
         if prepared["publication_status"] != "prepared":
             raise RuntimeError("patched image is not in the approved prepared state")
+        from .registry import image_registry
+        registry_host = image_registry(str(prepared["patched_image_ref"]))
+        authorized_registry = conn.execute("""
+            SELECT id FROM registry_connections
+            WHERE host=%s AND allow_push=true
+              AND (project_id IS NULL OR project_id=%s)
+            LIMIT 1
+        """, (registry_host, locked["project_id"])).fetchone()
+        if not authorized_registry:
+            raise RuntimeError(
+                "Registry publication is not allowed: ask an admin to register the destination "
+                "and explicitly enable Push for this Project"
+            )
         import os
         if os.environ.get("APPSEC_REQUIRE_SECOND_APPROVER", "false").lower() == "true":
             if str(locked["approved_by"]) == str(user["id"]):
