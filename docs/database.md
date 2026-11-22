@@ -1,40 +1,42 @@
-# Database
+# Database and migrations
 
-The initial schema lives in [db/schema.sql](../db/schema.sql). Versioned upgrades use [Alembic migrations](../migrations/versions/) and are automatically applied by `./appsec start`.
+PostgreSQL is the source of truth. Schema baseline: [db/schema.sql](../db/schema.sql), version upgrades: [Alembic migrations](../migrations/versions/), applied by `./appsec start`.
 
-## Main tables
+## Main relations
 
-| Table | Purpose |
+| Table | Meaning |
 | --- | --- |
-| `images` | Unique image references |
-| `pipeline_runs` | A scan-only or explicit patch-enabled execution |
-| `scan_runs` | Individual Trivy scans, phase `original`, `patched`, or `manual` |
-| `vulnerabilities` | Parsed per-scan CVE and package details |
-| `patch_runs` | Optional Copa patch and registry push results |
-| `pipeline_jobs` | Queue, priority, status, `mode` (`scan` or `patch`), Project and pipeline ID |
-| `scan_diffs` | Fixed/remaining/introduced CVEs after optional patch |
-| `policy_results` | Policy decision on the last relevant scan |
-| `artifacts` | Stored SBOM, Trivy JSON and other files |
-| `scheduled_images` | Images queued on a recurrence |
-| `security_jobs`/`security_findings` | Secret scans and redacted findings |
-| `projects`/`users`/`team_members` | Identity and Project authorization |
-| `generated_reports` | Report metadata and download IDs |
+| `users`, `session_tokens`, `teams`, `team_members`, `projects` | Identity, session and authorization |
+| `images`, `pipeline_runs`, `pipeline_jobs` | Image references, pipeline attempts and queue; `mode` is `scan`, `patch` or internal `continue_patch` |
+| `manual_workflows` | Human-created workflow and persisted finish/patch decisions |
+| `scan_runs`, `vulnerabilities` | Trivy scan metadata, counts and CVE/package findings |
+| `patch_runs`, `scan_diffs` | Optional Copa patch status and original-vs-patched findings |
+| `artifacts`, `generated_reports` | SBOM, JSON and HTML paths plus download IDs |
+| `policy_results`, `policies` | Security policy rules and decisions |
+| `security_jobs`, `security_findings` | Gitleaks jobs and redacted findings |
+| `audit_logs`, `accepted_risks` | Security changes, approvals and expiring exceptions |
+| `service_heartbeats` | Worker/Scheduler liveness for the admin System Health view |
+| `scheduled_images` | Recurring scan registrations |
 
-## Upgrade safety
+## Manual workflow lifecycle
 
-Migration **0006** clears legacy Gitleaks raw secret values in PostgreSQL and intentionally cannot be reversed to reconstruct secrets. It **does not** purge old report files, object storage or backups. Rotate any real exposed secrets before or during remediation.
+`manual_workflows` stores `requested_image`, `project_id`, `created_by`, `scan_job_id`, optional `patch_job_id`, optional `decision` (`finish` or `approve_patch`), `approved_by`, `approved_at`, and timestamps. It has database constraints preventing patch jobs without corresponding approval metadata.
 
-Migration **0007** adds `pipeline_jobs.mode`. Existing queued jobs preserve **patch mode**, avoiding silent changes to previously accepted instructions; newly enqueued jobs and scheduled scans use **scan mode** by default.
+The initial job is always scan-only. A completed original scan and policy result must exist before an operator can finish or authorize a patch. The API locks the workflow row to serialize concurrent decisions. The approved continuation job uses `mode=continue_patch`, points to the **same** pipeline, and has `max_attempts=1`.
 
-Back up PostgreSQL before applying migrations. For production, test the migration against a staging copy and validate `alembic_version` and the new queue column.
+Job status and pipeline status are joined to derive the workflow view; no fake progress timers or fabricated findings are stored.
 
-## Raw reports
+## Migration history / upgrade warnings
 
-Trivy raw report JSON is retained for audit. Gitleaks raw Secret/Match/Line data is redacted for new reports and removed from legacy PostgreSQL records by migration 0006. Authentication and Project authorization apply to downloads.
+- **0006:** redacts historical Gitleaks secrets in PostgreSQL. Old report files, S3/MinIO objects and backups need manual cleanup and credential rotation.
+- **0007:** defaults new image queue entries to `scan`; pre-existing queued work preserves patch behavior for backward compatibility.
+- **0008:** adds heartbeat telemetry.
+- **0009:** introduces manual workflows and authorized `continue_patch` job mode.
 
-Do not expose the database directly to users or an unrestricted AI agent. The optional MCP integration requires a separate SELECT-only account and provides global analytics, not per-user RBAC.
+Back up before migrations and validate on a staging copy first. The initial schema includes the latest tables for legacy `init-db` compatibility; migrations use idempotent DDL where appropriate. Repeated `alembic upgrade head` must be safe.
 
+## Access and retention
 
-## Service heartbeat telemetry
+Reports require an AppSec login or API Key, with Project authorization. Unassigned guided runs are visible to creator/admin; Project runs to current Team members. Metabase uses its **separate** authentication and currently has global analytics access; for production use a least-privilege read-only DB role.
 
-`service_heartbeats` (`service`, `instance`, `last_seen`) is created in migration 0008. Workers/Scheduler update it periodically; the admin-only System Health view reads last-seen timestamps and real queue status. No Docker daemon credentials are stored here.
+If your organization has retention/deletion requirements, evaluate PostgreSQL, Docker volumes, S3/MinIO, backup snapshots, and Metabase's own database separately. Deleting a report link does not revoke exposed credentials.
