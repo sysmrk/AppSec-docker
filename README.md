@@ -99,3 +99,8 @@ For existing installations moving from the old pipeline:
 | [Production roadmap](docs/production-roadmap.md) | Remaining enterprise controls |
 
 This application is **not** a substitute for verifying images/signatures, secure registry credentials, runtime isolation or organization-specific security policy.
+
+
+## Operator health visibility
+
+Administrators can open **System health** in Control Center to see real PostgreSQL queue counts and the latest Worker/Scheduler heartbeats. It does not access Docker Socket or produce synthetic health states. For actual Docker/container diagnostics run `./appsec doctor`.
