@@ -4,7 +4,7 @@
 
 ## رفتار اصلی policy
 
-بعد از patch و scan دوباره image، policy روی scan نهایی اجرا می‌شود.
+در اجرای پیش‌فرض Policy روی اسکن اولیه اجرا می‌شود و هیچ Patch یا Push انجام نمی‌شود. در حالت پیشرفته `--patch`، Policy روی اسکن Image اصلاح‌شده اجرا می‌شود.
 
 مقادیر پیش‌فرض:
 
@@ -15,7 +15,7 @@ POLICY_MAX_MEDIUM=999999
 POLICY_MAX_LOW=999999
 ```
 
-یعنی اگر بعد از patch حتی یک vulnerability با شدت `CRITICAL` یا `HIGH` باقی بماند، pipeline با وضعیت `policy_failed` تمام می‌شود.
+اگر تعداد CVEهای Critical یا High در اسکن نهایی از حد مجاز بیشتر باشد، Pipeline با وضعیت `policy_failed` پایان می‌یابد.
 
 ## اجرای ساده در CI
 
@@ -41,7 +41,7 @@ stages:
 image_security:
   stage: security
   script:
-    - docker compose -f docker-compose.yaml up -d postgres buildkit
+    - docker compose -f docker-compose.yaml up -d postgres
     - ./scripts/appsecctl.sh migrate
     - ./scripts/appsecctl.sh ci image "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA"
   rules:
@@ -67,7 +67,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Start AppSec services
         run: |
-          docker compose -f docker-compose.yaml up -d postgres buildkit
+          docker compose -f docker-compose.yaml up -d postgres
           ./scripts/appsecctl.sh migrate
       - name: Run policy gate
         run: ./scripts/appsecctl.sh ci image "alpine:3.19"
@@ -81,7 +81,7 @@ pipeline {
   stages {
     stage('Image Security') {
       steps {
-        sh 'docker compose -f docker-compose.yaml up -d postgres buildkit'
+        sh 'docker compose -f docker-compose.yaml up -d postgres'
         sh './scripts/appsecctl.sh migrate'
         sh './scripts/appsecctl.sh ci image "$IMAGE_REF"'
       }
@@ -175,3 +175,8 @@ curl -X POST http://127.0.0.1:8080/appsec-api/api/policies \
 ### Secret scanning: fail closed
 
 `./scripts/appsecctl.sh ci security secrets https://github.com/example/repo.git` returns a non-zero exit code if the security job is not `success`, OR if high findings exceed `CI_MAX_HIGH`. This prevents an unsuccessful scanner run from reporting a green CI gate. Repo HTTPS hostnames must be allowed by `SECURITY_ALLOWED_GIT_HOSTS`.
+
+
+## Optional patch mode in CI
+
+Use `./scripts/appsecctl.sh ci image "$IMAGE_REF" --patch` **only** when BuildKit is running under the `patch` profile, the registry is configured and the write action is explicitly approved. Ordinary CI should remain scan-only to avoid an unexpected registry push.
