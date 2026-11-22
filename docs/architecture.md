@@ -64,3 +64,8 @@ Worker uses `FOR UPDATE SKIP LOCKED` for job claiming. Each image job has a mode
 - Secrets from Gitleaks must never be copied into returned findings. Historic artifacts from pre-hardening installations require cleanup.
 
 See [security review](security-review.md) and [production roadmap](production-roadmap.md).
+
+
+## System health without Docker Socket
+
+Worker and Scheduler periodically write timestamps to `service_heartbeats` (migration 0008). The admin-only `/appsec-api/api/ui/system/health` returns actual heartbeat ages and database queue counts. A stale heartbeat is **not** definitive failure because a worker can be busy scanning. Host diagnostics remain available through `./appsec doctor`.
