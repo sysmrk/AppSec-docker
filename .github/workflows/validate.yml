@@ -19,7 +19,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install optional MCP test dependencies
-        run: python -m pip install -r integrations/mcp/requirements.txt -r runner/requirements.txt
+        run: python -m pip install -r integrations/mcp/requirements.txt -r runner/requirements.txt httpx
       - name: Unit tests for security and MCP contracts
         run: |
           PYTHONPATH=runner:integrations/mcp python -m unittest discover -s tests -p 'test_*.py' -v
@@ -29,3 +29,45 @@ jobs:
         run: node --check runner/appsecctl/webui/assets/app.js
       - name: Validate CLI syntax
         run: python -m py_compile appsec
+
+  database-migration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: appsec
+          POSTGRES_PASSWORD: ci-test-password-only
+          POSTGRES_DB: appsec
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U appsec -d appsec"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://appsec:ci-test-password-only@localhost:5432/appsec
+      APPSEC_ADMIN_API_KEY: ci-long-admin-api-key-local-only
+      APPSEC_ADMIN_PASSWORD: ci-long-password-local-only
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install migrations and database dependencies
+        run: python -m pip install -r runner/requirements.txt sqlalchemy
+      - name: Apply all migrations to real PostgreSQL
+        run: python -m alembic -c alembic.ini upgrade head
+      - name: Check scan-only job schema and retry migration
+        run: |
+          PYTHONPATH=runner python - <<'PY'
+          from appsecctl import db
+          with db.connect() as conn:
+              db.ensure_admin_user(conn)
+              job_id = db.enqueue_pipeline(conn, 'nginx:stable')
+              mode = conn.execute("SELECT mode FROM pipeline_jobs WHERE id = %s", (job_id,)).fetchone()['mode']
+              assert mode == 'scan', mode
+              print('Postgres migration and scan mode verified')
+          PY
+          python -m alembic -c alembic.ini upgrade head
