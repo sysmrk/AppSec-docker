@@ -23,9 +23,9 @@ Responses are JSON-compatible. Each query is a bounded, parameterized `SELECT`. 
 ## 2. Start AppSec normally (MCP is OFF)
 
 ```bash
-cp .env.example .env
-# Set passwords and keys in .env, then:
-make init
+./appsec setup
+./appsec start
+./appsec doctor
 docker compose -f docker-compose.yaml ps
 ```
 
@@ -57,7 +57,7 @@ Stop only MCP, leaving the rest of AppSec running:
 make mcp-down
 ```
 
-Run normal AppSec without MCP: `make up`. Simply having the MCP source code, Dockerfile or extra configuration does not activate it.
+Run normal AppSec without MCP: `./appsec start`. Simply having the MCP source code, Dockerfile or extra configuration does not activate it.
 
 ## 4. Security: use a read-only PostgreSQL account in production
 
@@ -151,7 +151,7 @@ MCP **reads existing data**; it does not persist an AI conversation or create an
 - AI client: the model's response and tool invocation/results (subject to that product's logging/data policies).
 - MCP Inspector: the raw JSON for each called tool.
 - AppSec: original scan/pipeline/security job outputs remain in Postgres, Grafana, Metabase and authorized AppSec API endpoints.
-- Grafana: `http://127.0.0.1:8080` (local setup); Metabase: `http://127.0.0.1:3001` if started.
+- AppSec Control Center: `http://127.0.0.1:8080`; Grafana: `http://127.0.0.1:8080/grafana/`; Metabase: `http://127.0.0.1:3001` when started with `./appsec start --analytics`.
 - AppSec API: `curl -H "X-API-Key: <KEY>" http://127.0.0.1:8080/appsec-api/pipelines/<PIPELINE_UUID>`.
 - Logs: `make mcp-logs` for HTTP MCP service.
 
@@ -174,8 +174,13 @@ Never paste production credentials into AI prompts. Do not enable unrestricted s
 - [ ] MCP absent from normal `make up` / production profile
 - [ ] Read-only MCP SQL account in use
 - [ ] No outbound external access to the MCP port; loopback only
-- [ ] Inspector lists tools and returns data from seeded test scans
+- [ ] Inspector lists tools and returns data from real completed scans
 - [ ] Mutating commands / arbitrary SQL are not exposed as tools
 - [ ] Secret values never appear in tool payloads
 - [ ] Historical credentials rotated and old report artifacts purged
 - [ ] External gateways enforce OAuth + TLS and produce audit logs
+
+
+## Control Center vs MCP
+
+The Control Center is a real, authenticated, Project-aware browser interface for scan-only jobs, vulnerabilities and report downloads. MCP remains an optional read-only analytics integration; it creates no scans, enables no patching, and returns empty results until real scans run. See [user guide](user-guide.md).
