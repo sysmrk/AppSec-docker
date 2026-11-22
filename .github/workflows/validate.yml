@@ -76,6 +76,10 @@ jobs:
               pipeline_id = db.create_pipeline(conn, image_id, 'nginx:stable')
               detail = ui_queries.pipeline_details(conn, pipeline_id)
               assert detail['pipeline']['id'] == pipeline_id or str(detail['pipeline']['id']) == pipeline_id
-              print('Postgres migrations, scan mode, UI overview and pipeline detail verified')
+              db.record_service_heartbeat(conn, 'worker:image', 'ci-worker')
+              health = db.service_health_summary(conn)
+              assert health['database'] == 'connected'
+              assert any(item['service'] == 'worker:image' for item in health['heartbeats'])
+              print('Postgres migrations, scan mode, UI queries and heartbeat health verified')
           PY
           python -m alembic -c alembic.ini upgrade head
