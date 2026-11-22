@@ -575,14 +575,29 @@
   $("login-form").addEventListener("submit", async (event) => {
     event.preventDefault(); $("login-error").textContent = "";
     try {
-      const res = await request("/api/auth/login", { method: "POST", body: JSON.stringify({ username: $("username").value, password: $("password").value }) });
+      const res = await request("/api/auth/login", {
+        method: "POST",
+        body: JSON.stringify({
+          username: $("username").value,
+          password: $("password").value,
+          otp: $("login-mfa-block").hidden ? null : $("login-otp").value.trim()
+        })
+      });
       $("password").value = "";
+      $("login-otp").value = "";
+      $("login-mfa-block").hidden = true;
       showApp(res.user);
       selectView(res.user.must_change_password ? "profile" : "overview");
       if (!res.user.must_change_password) {
         await refreshOverview(); await loadProjects(); await loadCapabilities();
       }
-    } catch (error) { $("login-error").textContent = error.message; }
+    } catch (error) {
+      if (error.code === "MFA_REQUIRED") {
+        $("login-mfa-block").hidden = false;
+        $("login-otp").focus();
+      }
+      $("login-error").textContent = error.message;
+    }
   });
   $("logout-button").addEventListener("click", async () => {
     try { await request("/api/auth/logout", { method: "POST" }); } catch (_) { /* session may already be invalid */ }
