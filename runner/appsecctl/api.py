@@ -4,6 +4,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
+import secrets
 
 import os
 
@@ -112,11 +113,21 @@ class AcceptRiskRequest(BaseModel):
 
 
 class UserRequest(BaseModel):
-    username: str = Field(min_length=3)
-    display_name: str = Field(min_length=1)
+    username: str = Field(min_length=3, max_length=80, pattern="^[A-Za-z0-9._-]+$")
+    display_name: str = Field(min_length=1, max_length=120)
     role: str = Field(pattern="^(admin|operator|viewer)$")
-    api_key: str = Field(min_length=12)
-    password: str | None = Field(default=None, min_length=8)
+    api_key: str | None = Field(default=None, min_length=24)
+    password: str = Field(min_length=12, max_length=256)
+
+
+class UserUpdateRequest(BaseModel):
+    display_name: str | None = Field(default=None, min_length=1, max_length=120)
+    role: str | None = Field(default=None, pattern="^(admin|operator|viewer)$")
+    disabled: bool | None = None
+
+
+class UserResetPasswordRequest(BaseModel):
+    password: str = Field(min_length=12, max_length=256)
 
 
 class LoginRequest(BaseModel):
@@ -126,7 +137,7 @@ class LoginRequest(BaseModel):
 
 class PasswordRequest(BaseModel):
     current_password: str = Field(min_length=1)
-    new_password: str = Field(min_length=8)
+    new_password: str = Field(min_length=12, max_length=256)
 
 
 def current_user(
@@ -309,7 +320,14 @@ def change_password(request: PasswordRequest, user: dict[str, Any] = Depends(cur
         authenticated = db.authenticate_user(conn, user["username"], request.current_password)
         if not authenticated:
             raise HTTPException(status_code=401, detail="current password is invalid")
-        conn.execute("UPDATE users SET password_hash = %s WHERE id = %s", (db.password_hash(request.new_password), user["id"]))
+        if request.current_password == request.new_password:
+            raise HTTPException(status_code=422, detail="new password must differ from current password")
+        conn.execute("""
+            UPDATE users SET password_hash = %s, must_change_password=false,
+              password_changed_at=now(), failed_login_count=0, locked_until=NULL
+            WHERE id = %s
+        """, (db.password_hash(request.new_password), user["id"]))
+        db.revoke_all_sessions(conn, str(user["id"]))
         db.insert_audit(conn, str(user["id"]), "profile.password.change", "user", str(user["id"]), {})
     return {"status": "updated"}
 
@@ -340,10 +358,113 @@ def users(user: dict[str, Any] = Depends(require_role("admin"))) -> list[dict[st
 
 @app.post("/api/users")
 def create_user(request: UserRequest, user: dict[str, Any] = Depends(require_role("admin"))) -> dict[str, Any]:
+    api_key = request.api_key or secrets.token_urlsafe(48)
     with db.connect() as conn:
-        user_id = db.create_user(conn, request.username, request.display_name, request.role, request.api_key, request.password)
+        try:
+            user_id = db.create_user(conn, request.username, request.display_name, request.role, api_key, request.password)
+        except Exception as exc:
+            if "unique" in str(exc).lower() or "duplicate" in str(exc).lower():
+                raise HTTPException(status_code=409, detail="username already exists") from None
+            raise
+        conn.execute("UPDATE users SET must_change_password=true WHERE id=%s", (user_id,))
         db.insert_audit(conn, str(user["id"]), "user.create", "user", user_id, {"username": request.username})
-    return {"id": user_id, "username": request.username, "role": request.role}
+    return {"id": user_id, "username": request.username, "role": request.role, "api_key": api_key}
+
+
+
+@app.get("/api/users/{user_id}")
+def user_detail(user_id: str, actor: dict[str, Any] = Depends(require_role("admin"))) -> dict[str, Any]:
+    with db.connect() as conn:
+        record = conn.execute("""
+            SELECT id, username, display_name, role, disabled, must_change_password,
+                   failed_login_count, locked_until, password_changed_at, api_key_rotated_at,
+                   created_at, last_seen_at
+            FROM users WHERE id=%s
+        """, (user_id,)).fetchone()
+        if not record:
+            raise HTTPException(status_code=404, detail="user not found")
+        return {
+            "user": dict(record),
+            "teams": db.list_user_memberships(conn, user_id),
+            "sessions": db.list_user_sessions(conn, user_id),
+        }
+
+
+@app.patch("/api/users/{user_id}")
+def update_user(
+    user_id: str, request: UserUpdateRequest,
+    actor: dict[str, Any] = Depends(require_role("admin")),
+) -> dict[str, Any]:
+    if not request.model_fields_set:
+        raise HTTPException(status_code=422, detail="specify at least one user field to update")
+    with db.connect() as conn:
+        try:
+            record = db.update_user_admin(
+                conn, user_id, str(actor["id"]), display_name=request.display_name,
+                role=request.role, disabled=request.disabled,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+        if not record:
+            raise HTTPException(status_code=404, detail="user not found")
+        db.insert_audit(conn, str(actor["id"]), "user.update", "user", user_id, {
+            "role": record["role"], "disabled": record["disabled"],
+        })
+    return record
+
+
+@app.post("/api/users/{user_id}/reset-password")
+def reset_user_password(
+    user_id: str, request: UserResetPasswordRequest,
+    actor: dict[str, Any] = Depends(require_role("admin")),
+) -> dict[str, str]:
+    if str(user_id) == str(actor["id"]):
+        raise HTTPException(status_code=409, detail="change your own password in My Profile with the current password")
+    with db.connect() as conn:
+        if not db.reset_user_password(conn, user_id, request.password):
+            raise HTTPException(status_code=404, detail="user not found")
+        db.insert_audit(conn, str(actor["id"]), "user.password.reset", "user", user_id, {})
+    return {"status": "password_reset", "requires_change": "true"}
+
+
+@app.post("/api/users/{user_id}/rotate-api-key")
+def rotate_user_api_key(
+    user_id: str, actor: dict[str, Any] = Depends(require_role("admin")),
+) -> dict[str, str]:
+    with db.connect() as conn:
+        key = db.rotate_user_api_key(conn, user_id)
+        if not key:
+            raise HTTPException(status_code=404, detail="user not found")
+        db.insert_audit(conn, str(actor["id"]), "user.api_key.rotate", "user", user_id, {})
+    return {"status": "rotated", "api_key": key}
+
+
+@app.post("/api/users/{user_id}/revoke-sessions")
+def revoke_user_sessions(
+    user_id: str, actor: dict[str, Any] = Depends(require_role("admin")),
+) -> dict[str, int]:
+    with db.connect() as conn:
+        row = conn.execute("SELECT id FROM users WHERE id=%s", (user_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="user not found")
+        count = db.revoke_all_sessions(conn, user_id)
+        db.insert_audit(conn, str(actor["id"]), "user.sessions.revoke", "user", user_id, {"count": count})
+    return {"revoked": count}
+
+
+@app.delete("/api/teams/{team_id}/members/{user_id}")
+def remove_member(
+    team_id: str, user_id: str, actor: dict[str, Any] = Depends(require_role("admin")),
+) -> dict[str, str]:
+    with db.connect() as conn:
+        result = conn.execute(
+            "DELETE FROM team_members WHERE team_id=%s AND user_id=%s RETURNING user_id",
+            (team_id, user_id),
+        ).fetchone()
+        if not result:
+            raise HTTPException(status_code=404, detail="membership not found")
+        db.insert_audit(conn, str(actor["id"]), "team.member.remove", "team", team_id, {"user_id": user_id})
+    return {"status": "removed"}
 
 
 @app.post("/api/security-jobs")
