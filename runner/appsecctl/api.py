@@ -711,3 +711,10 @@ def ui_security_job(
 def ui_capabilities(user: dict[str, Any] = Depends(current_user)) -> dict[str, bool]:
     """Reflect active deployment state rather than assuming patch is available."""
     return {"patch_enabled": os.environ.get("APPSEC_PATCH_ENABLED", "false").lower() in ("1", "true", "yes")}
+
+
+@app.get("/api/ui/system/health")
+def ui_system_health(user: dict[str, Any] = Depends(require_role("admin"))) -> dict[str, Any]:
+    """Real service and queue health; no Docker Socket access from API."""
+    with db.connect() as conn:
+        return db.service_health_summary(conn)
