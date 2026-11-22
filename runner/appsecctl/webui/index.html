@@ -31,6 +31,7 @@
         <button class="nav-item" data-view="scan"><span>⊕</span> Scan image</button>
         <button class="nav-item" data-view="secrets"><span>⌘</span> Scan repository</button>
         <button class="nav-item" data-view="results"><span>≡</span> Results</button>
+        <button class="nav-item" data-view="health"><span>♡</span> System health</button>
         <button class="nav-item" data-view="integrations"><span>⬡</span> Integrations</button>
       </nav>
       <div class="sidebar-foot">
@@ -99,6 +100,18 @@
         <section id="view-results" class="view" hidden>
           <div class="page-heading"><div><p class="eyebrow">FINDINGS & REPORTS</p><h1>Scan results</h1><p class="muted">Select a real pipeline or repository scan from Overview to inspect findings and reports.</p></div></div>
           <div id="result-detail" class="panel"><div class="empty-state">No result selected yet. Open a scan from Overview.</div></div>
+        </section>
+        <section id="view-health" class="view" hidden>
+          <div class="page-heading"><div><p class="eyebrow">OPERATIONS</p><h1>System health</h1><p class="muted">Real database heartbeats and queue status. Administrator view only.</p></div><button id="health-refresh-button" class="outline">↻ Refresh</button></div>
+          <div class="stats">
+            <article class="stat"><span>Database</span><strong id="health-database">—</strong></article>
+            <article class="stat"><span>Queued image jobs</span><strong id="health-queued">—</strong></article>
+            <article class="stat"><span>Running image jobs</span><strong id="health-running">—</strong></article>
+            <article class="stat"><span>Queued repository scans</span><strong id="health-secret-queued">—</strong></article>
+          </div>
+          <div class="section-heading"><h2>Worker &amp; scheduler heartbeats</h2></div>
+          <div class="table-wrap"><table><thead><tr><th>Service</th><th>Instance</th><th>Last heartbeat</th><th>Status</th></tr></thead><tbody id="heartbeats-body"></tbody></table></div>
+          <p class="hint">An older heartbeat does not prove a worker failed: it may be busy scanning. Verify with <code>./appsec doctor</code> and <code>./appsec logs worker</code>. The API never accesses Docker Socket.</p>
         </section>
         <section id="view-integrations" class="view" hidden>
           <div class="page-heading"><div><p class="eyebrow">ADVANCED</p><h1>Integrations</h1><p class="muted">Optional components remain separate from normal image scanning.</p></div></div>
