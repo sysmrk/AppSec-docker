@@ -1,50 +1,47 @@
-# Enterprise Features — AppSec Control Center
+# Enterprise-Facing Identity and Governance
 
-The first-party **Administration** screen is intended to handle common operations without writing SQL or building a CI/CD pipeline.
+The built-in authentication model is intended for a self-hosted tool and an incremental Enterprise upgrade. It is **not** full external identity federation yet.
 
-## Users, teams, projects, and policy
+## User lifecycle
 
-An administrator can create Users, Teams and Projects; assign a user to a Team with a role of `owner`, `maintainer`, `member`, or `viewer`; and create Project-level vulnerability policies using Critical/High/Medium/Low thresholds. The UI generates each new user's random API key and shows it once. Treat it as a credential and store it only in a secret manager.
+Admins can use **Users & access** to inspect a user, roles, disabled/locked state, last login, password update, API key rotation, MFA status, Team memberships and recent web sessions. Actions include:
+- Create account with a temporary password requiring first-login change
+- Set display name or global role (`admin`, `operator`, `viewer`)
+- Disable/re-enable an account; disabled accounts lose login and old API access
+- Reset temporary password and revoke existing browser sessions
+- Revoke all sessions without changing the password
+- Rotate a machine/API key with **one-time display**; human users do not receive keys by default
+- Remove Team membership (can immediately change Project access)
 
-The **New manual scan** screen accepts a real image reference and launches scan-only. **My workflows** then presents the CVEs, SBOM and policy result and requires explicit human consent before any optional registry Patch/Push. The `approve_patch` decision needs Operator/Admin privileges and Project write permissions. A Project-scoped workflow is visible only to current Team members; an unassigned manual workflow belongs to its creator/admin.
+Server enforces protection from self-disable/self-demotion and loss of the final active Admin. Privilege changes and key events are logged through the audit subsystem. Five failed password attempts cause a 15-minute lock; admins can reset the affected password.
 
-Use the existing REST API for automation; never hard-code keys like the old `appsec-dev-key` sample. Export your real key in a secure session:
+## MFA
 
-```bash
-export APPSEC_API_KEY='REPLACE_WITH_GENERATED_KEY'
-curl -X POST http://127.0.0.1:8080/appsec-api/api/teams \
-  -H "X-API-Key: ${APPSEC_API_KEY}" -H 'Content-Type: application/json' \
-  -d '{"name":"Platform Security"}'
+Each account can opt into **TOTP authenticator MFA**, enforced for interactive login when enabled. Setup requires the current password, app enrollment and a valid code; recovery produces eight single-use codes, displayed once and stored as hashes. TOTP secrets are encrypted at rest using Fernet `APPSEC_MFA_ENCRYPTION_KEY`. Replayed TOTP steps are rejected. Enabling or disabling MFA invalidates existing web sessions.
 
-curl -X POST http://127.0.0.1:8080/appsec-api/api/projects \
-  -H "X-API-Key: ${APPSEC_API_KEY}" -H 'Content-Type: application/json' \
-  -d '{"name":"Core AppSec","slug":"core-appsec","team_id":"TEAM_UUID"}'
-```
+MFA is not magic account recovery: if both authenticator and recovery codes are lost, an approved operational identity recovery process is needed. Do not delete or rotate the encryption key casually. Store it in an enterprise secrets manager and back it up securely.
 
-API details: [API Guide](api-guide.md). Full human approval sequence: [Workflow Guide](workflow.md).
+The existing local authenticator is **not** OIDC, SAML, LDAP, AD or Keycloak integration. An external IdP connector, SCIM lifecycle provisioning, group-to-role mapping, MFA assurance policy, break-glass lifecycle and complete segregation of duties require separate implementation and testing.
 
-## Artifact storage and secrets
+## Teams, projects, permissions
 
-The normal local installation starts MinIO for S3-compatible report storage. `./appsec setup` generates random MinIO credentials in `.env`. Do **not** use the old sample password for real installations. Before production, replace the local root-level credentials with a bucket-limited service account and keep values in a real secrets manager.
+A Team owns zero or more Projects, and users have membership roles `owner`, `maintainer`, `member`, `viewer`. Global AppSec role controls operation type while Project membership controls scope and write access. Manual unassigned workflows are visible to creator/admin; Project workflows to authorized current Team members. Only Admin/Operator with Project write rights can submit approval. No Project role or client-side hidden button substitutes for server authorization.
 
-Configuration keys (replace placeholders with approved secrets):
+## Human approval / Registry governance
 
-```env
-ARTIFACT_STORAGE=s3
-S3_ENDPOINT_URL=http://minio:9000
-S3_BUCKET=appsec-artifacts
-S3_ACCESS_KEY_ID=YOUR_SERVICE_ACCOUNT
-S3_SECRET_ACCESS_KEY=YOUR_SECRET_VALUE
-```
+Manual scan starts Trivy/SBOM/Policy read-only. A human approves **local** Copa preparation and scanning; a **separate** human publication approval requires passed final Policy, registered `allow_push` Registry destination and patch-enabled Worker. Setting `APPSEC_REQUIRE_SECOND_APPROVER=true` requires another authorized reviewer. Both decisions are persisted. Ambiguous Registry Push is single-attempt and must be reconciled manually.
 
-Reports are generated locally and can be uploaded to S3-compatible storage. All downloads require valid AppSec identity and Project authorization. A database migration cannot purge already generated historical S3 reports or backups; rotate leaked credentials and remove old copies.
+## Metabase / MCP boundaries
 
-## Analytics vs operator workflows
+Metabase is the only visualization/BI integration, with distinct logins and **global** analytics SQL. It does not inherit AppSec per-Project restrictions. Use a read-only database role, restrict access and apply TLS/SSO at the perimeter. Optional MCP is read-only and not an execution or approval integration.
 
-**Metabase** is the single dashboard system; Grafana has been removed. The Metabase views cover image CVEs, policy outcomes, manual workflows, pending approvals and vulnerability trends. **Approvals must happen in Control Center, not Metabase.** Metabase has separate authentication and currently exposes aggregate data across Projects; restrict accounts and use a database SELECT-only role where feasible.
+## Outstanding Enterprise hardening
 
-**MCP / AI** is optional and read-only. It cannot perform scans, make authorization decisions, patch or push images.
+- Corporate OIDC/LDAP/SAML SSO, SCIM provisioning and central MFA assurance
+- Worker isolation (Docker Socket) and privileged BuildKit separation
+- Hardened operational recovery and rate limiting, CSRF/session review
+- True multi-host prepared-image staging/affinity, HA and DR acceptance
+- End-to-end Docker/Harbor/Copa/Browser tests, image digest pinning/signing, secret manager
+- Per-Project Metabase/analytics segregation rather than global shared dashboards
 
-## Enterprise production gates
-
-Open requirements include hardened worker isolation from Docker Socket, privileged BuildKit isolation, OIDC SSO/MFA, CSRF review, rate limiting, image digest pinning/signing, least-privilege Metabase and S3 credentials, verified backup/restore and complete Docker/Harbor/Copa/browser end-to-end acceptance tests. See [Security Review](security-review.md) and [Production Roadmap](production-roadmap.md).
+Treat the current release as a functional upgrade requiring staging validation, not a fully certified Enterprise product.

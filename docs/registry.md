@@ -1,45 +1,39 @@
-# Optional Harbor / Patch and Push Setup
+# Registry Management and Safe Publication
 
-**Harbor is not necessary for scan-only mode.** Default `./appsec start` does not launch privileged BuildKit and does not push images.
+## Register a destination
 
-## Existing enterprise registry
+In AppSec Control Center **Registries**, an Admin records an HTTPS Registry hostname (and optional port), alias, optional Project scope, and explicit `allow_push`. No passwords are stored here. For publication, the registered destination host must match `REGISTRY_HOST` from `.env` (and the configured `PATCHED_REPOSITORY` determines repository path). Worker Registry login/credentials must be provisioned separately.
 
-Configure `.env`:
-
+Example trusted Registry configuration:
 ```env
-REGISTRY_HOST=harbor.example.com
+REGISTRY_HOST=harbor.example.org:443
 PATCHED_REPOSITORY=security/appsec-patched
 ```
 
-Registry credentials must be available to the Docker daemon used by the worker. Registry authentication in a browser is not enough.
+**Default scan-only requires no Harbor.** To allow controlled local patch preparation, isolate the Worker and run `./appsec start --patching`.
 
-## Optional local Harbor
+## Human review sequence
 
-The local installer requires **strong explicitly configured credentials**; it no longer accepts the old known default passwords.
+1. Scan original image, review CVEs/Policy/SBOM.
+2. Explicitly approve `Prepare patch & rescan`: Copa/BuildKit produces a **local** image, no Push.
+3. Trivy scans the prepared image and evaluates the final Policy.
+4. Review fixed, remaining and new vulnerabilities. If Policy does not pass, publication is **blocked**.
+5. Choose `Finish without publishing` or explicitly `Approve registry Push`. Optionally require two distinct approvers with `APPSEC_REQUIRE_SECOND_APPROVER=true`.
+6. The Worker tags and pushes to the registered, approved destination **once**; it never silently retries ambiguous partial uploads.
 
+The old CLI one-shot `./scripts/appsecctl.sh run IMAGE --patch` can still build and push in a single step. Reserve it for explicitly approved automation; it is not the safer guided human workflow.
+
+## Harbor helper (optional)
+
+To install a local Harbor, pass **unique random** credentials at least 16 characters long; the helper has no acceptable default:
 ```bash
-export HARBOR_ADMIN_PASSWORD='USE_A_UNIQUE_RANDOM_PASSWORD_OF_AT_LEAST_16_CHARACTERS'
-export HARBOR_DB_PASSWORD='USE_ANOTHER_UNIQUE_RANDOM_PASSWORD_OF_AT_LEAST_16_CHARACTERS'
+export HARBOR_ADMIN_PASSWORD='REPLACE_WITH_A_RANDOM_SECRET'
+export HARBOR_DB_PASSWORD='REPLACE_WITH_A_DIFFERENT_RANDOM_SECRET'
 ./scripts/harbor.sh install
 ./scripts/harbor.sh login
 ```
+The helper uses `--password-stdin`, and the credentials must exist in the correct Worker/Docker environment for actual Push. Never publish untrusted registries or assume a browser login grants Docker permissions.
 
-The login helper uses `--password-stdin` rather than exposing a password on the Docker CLI command line. Avoid storing production secrets in shell history. Use HTTPS and trusted certificates for remote registry communication.
+## Scale and artifact retention
 
-## Explicit patch enablement
-
-```bash
-./appsec start --patching
-```
-
-BuildKit is a privileged optional Compose profile; only start it on isolated hosts. In Control Center choose **New manual scan**, wait for Trivy/SBOM/policy, open **My workflows** to review findings, then explicitly approve **Patch + registry push** with a checkbox and separate confirmation. Only an enabled and isolated BuildKit executor can run it.
-
-CLI advanced use:
-
-```bash
-./scripts/appsecctl.sh run registry.example.com/team/service:1.4.0 --patch
-```
-
-Copa may fail to patch unsupported packages. Inspect the final scan and policy result before promoting an image. Consider signing with Cosign, immutable registry tags, short-lived credentials and digest pinning.
-
-See [workflow](workflow.md) and [security review](security-review.md).
+Local prepared Docker images stay on the Worker daemon, not in PostgreSQL. A second Worker on a different host cannot automatically publish them. Multi-host/Enterprise requires Worker affinity or a dedicated staging registry and controlled Promotion design, with eventual digest signing and immutability controls. Registry metadata alone does not validate TLS or authenticate to the host.

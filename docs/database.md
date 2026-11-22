@@ -1,42 +1,30 @@
-# Database and migrations
+# AppSec Database Schema and Migrations
 
-PostgreSQL is the source of truth. Schema baseline: [db/schema.sql](../db/schema.sql), version upgrades: [Alembic migrations](../migrations/versions/), applied by `./appsec start`.
+PostgreSQL stores source image references, `images`, `pipeline_runs`, `scan_runs`, `vulnerabilities`, `artifacts`, `policy_results`, `patch_runs`, `scan_diffs`, `pipeline_jobs`, `manual_workflows`, `users`, `teams`, `team_members`, `projects`, `service_heartbeats`, `registry_connections`, `mfa_recovery_codes`, audit logs and generated reports.
 
-## Main relations
+## Recent Alembic revisions
 
-| Table | Meaning |
+| Revision | Change |
 | --- | --- |
-| `users`, `session_tokens`, `teams`, `team_members`, `projects` | Identity, session and authorization |
-| `images`, `pipeline_runs`, `pipeline_jobs` | Image references, pipeline attempts and queue; `mode` is `scan`, `patch` or internal `continue_patch` |
-| `manual_workflows` | Human-created workflow and persisted finish/patch decisions |
-| `scan_runs`, `vulnerabilities` | Trivy scan metadata, counts and CVE/package findings |
-| `patch_runs`, `scan_diffs` | Optional Copa patch status and original-vs-patched findings |
-| `artifacts`, `generated_reports` | SBOM, JSON and HTML paths plus download IDs |
-| `policy_results`, `policies` | Security policy rules and decisions |
-| `security_jobs`, `security_findings` | Gitleaks jobs and redacted findings |
-| `audit_logs`, `accepted_risks` | Security changes, approvals and expiring exceptions |
-| `service_heartbeats` | Worker/Scheduler liveness for the admin System Health view |
-| `scheduled_images` | Recurring scan registrations |
+| 0006 | Redact historical Gitleaks secrets in **DB** (does not purge files/S3/backups) |
+| 0007 | Scan-only default for new jobs, preserve old queued patch instructions |
+| 0008 | Worker/Scheduler heartbeat table |
+| 0009 | Manual workflow approval and one-time patch continuation |
+| 0010 | User lifecycle: lockout, password rotation, disable and session/API key audit |
+| 0011 | Separate prepared patch from final Registry publication approval and job |
+| 0012 | Registry metadata and image inventory indexes |
+| 0013 | Encrypted TOTP MFA and hashed single-use recovery codes |
 
-## Manual workflow lifecycle
+The baseline `db/schema.sql` and versioned Alembic upgrades aim to support fresh installs and existing DBs; test the exact old schema state in staging. `./appsec start` runs `alembic upgrade head` through the standard runner.
 
-`manual_workflows` stores `requested_image`, `project_id`, `created_by`, `scan_job_id`, optional `patch_job_id`, optional `decision` (`finish` or `approve_patch`), `approved_by`, `approved_at`, and timestamps. It has database constraints preventing patch jobs without corresponding approval metadata.
+## Manual workflow transactions
 
-The initial job is always scan-only. A completed original scan and policy result must exist before an operator can finish or authorize a patch. The API locks the workflow row to serialize concurrent decisions. The approved continuation job uses `mode=continue_patch`, points to the **same** pipeline, and has `max_attempts=1`.
+`manual_workflows` binds creator, Project scope, initial scan job, optional patch preparation job and separate publish job. Decisions and approving identity/time are persisted. Final publication is permitted only with prepared image, final passed Policy and registered authorized destination, and only a one-attempt publication job is queued. Optimistic UI state is not authorization; the backend locks the workflow and checks membership/role at the time of approval.
 
-Job status and pipeline status are joined to derive the workflow view; no fake progress timers or fabricated findings are stored.
+`patch_runs` records local image reference, publication state and timestamp. States may be `prepared`, `publishing`, `published`, or `uncertain`; ambiguous Push failures must be reconciled outside automatic retries.
 
-## Migration history / upgrade warnings
+## Security / backup
 
-- **0006:** redacts historical Gitleaks secrets in PostgreSQL. Old report files, S3/MinIO objects and backups need manual cleanup and credential rotation.
-- **0007:** defaults new image queue entries to `scan`; pre-existing queued work preserves patch behavior for backward compatibility.
-- **0008:** adds heartbeat telemetry.
-- **0009:** introduces manual workflows and authorized `continue_patch` job mode.
+Session tokens and API keys are hashed in the DB. Passwords use salted PBKDF2. TOTP secrets are Fernet-encrypted with a separate operator-managed environment key, while backup/recovery codes are hashed. Back up that encryption key separately from PostgreSQL and test full restore. Account revocation, Team membership and role changes are audited and should be monitored.
 
-Back up before migrations and validate on a staging copy first. The initial schema includes the latest tables for legacy `init-db` compatibility; migrations use idempotent DDL where appropriate. Repeated `alembic upgrade head` must be safe.
-
-## Access and retention
-
-Reports require an AppSec login or API Key, with Project authorization. Unassigned guided runs are visible to creator/admin; Project runs to current Team members. Metabase uses its **separate** authentication and currently has global analytics access; for production use a least-privilege read-only DB role.
-
-If your organization has retention/deletion requirements, evaluate PostgreSQL, Docker volumes, S3/MinIO, backup snapshots, and Metabase's own database separately. Deleting a report link does not revoke exposed credentials.
+Metabase's own application DB is separate; it uses a distinct login and global analytics view. Use a dedicated SELECT-only role for application data access in sensitive deployments.
