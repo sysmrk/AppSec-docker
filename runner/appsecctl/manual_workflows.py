@@ -70,7 +70,7 @@ _WORKFLOW_QUERY = """
 
 def _permission_clause() -> str:
     return """(
-        %s OR w.created_by = %s OR (
+        %s OR (w.project_id IS NULL AND w.created_by = %s) OR (
             w.project_id IS NOT NULL AND EXISTS (
                 SELECT 1 FROM projects pr
                 JOIN team_members tm ON tm.team_id = pr.team_id
