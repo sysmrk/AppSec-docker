@@ -16,6 +16,11 @@ def main() -> int:
     log_event("worker.started", poll_seconds=poll_seconds, queues=sorted(queues))
 
     while True:
+        with db.connect() as conn:
+            db.record_service_heartbeat(
+                conn, "worker:" + ",".join(sorted(queues)),
+                os.environ.get("HOSTNAME", "worker"),
+            )
         job = None
         if "image" in queues:
             with db.connect() as conn:
