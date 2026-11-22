@@ -68,6 +68,12 @@ Metabase (optional): run `./appsec start --analytics` and visit `http://127.0.0.
 
 MCP (optional): see [MCP guide](mcp.md). Connecting an AI is never necessary to use this UI.
 
+## 7. System Health (Administrator)
+
+The **System health** sidebar view is available to Admin users and is backed by real PostgreSQL data. It displays database reachability, current queue counts and the last recorded heartbeat from each Worker or Scheduler instance. Heartbeats are written by the services themselves; the UI/API never mounts Docker Socket.
+
+A heartbeat older than two minutes is labeled **stale / possibly busy** rather than falsely claiming the service is dead; long image scans can prevent a worker from polling until it finishes. To verify the actual container state run `./appsec doctor` and `./appsec status`.
+
 ## 7. Permission and security notes
 
 Admin can view platform-wide data. Other users see Project-scoped runs according to membership plus legacy global/unassigned jobs. Some platform-wide administration endpoints remain admin-only. All downloads require authentication, and a valid UUID is not authorization.
