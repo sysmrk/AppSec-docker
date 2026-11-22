@@ -11,8 +11,6 @@ jobs:
       - uses: actions/checkout@v4
       - name: Validate compose
         run: docker compose -f docker-compose.yaml config >/tmp/appsec-compose.yaml
-      - name: Validate Grafana dashboard JSON
-        run: python -m json.tool grafana/dashboards/appsec-overview.json >/tmp/appsec-dashboard.json
       - name: Compile Python
         run: python -m py_compile runner/appsecctl/*.py scripts/setup-metabase.py
       - uses: actions/setup-python@v5

@@ -18,7 +18,7 @@ def upgrade() -> None:
         CHECK (mode IN ('scan', 'patch', 'continue_patch'))
     """)
     op.execute("""
-        CREATE TABLE manual_workflows (
+        CREATE TABLE IF NOT EXISTS manual_workflows (
             id UUID PRIMARY KEY,
             requested_image TEXT NOT NULL,
             project_id UUID REFERENCES projects(id) ON DELETE SET NULL,
@@ -37,8 +37,8 @@ def upgrade() -> None:
             )
         )
     """)
-    op.execute("CREATE INDEX idx_manual_workflows_creator_created ON manual_workflows(created_by, created_at DESC)")
-    op.execute("CREATE INDEX idx_manual_workflows_project_created ON manual_workflows(project_id, created_at DESC)")
+    op.execute("CREATE INDEX IF NOT EXISTS idx_manual_workflows_creator_created ON manual_workflows(created_by, created_at DESC)")
+    op.execute("CREATE INDEX IF NOT EXISTS idx_manual_workflows_project_created ON manual_workflows(project_id, created_at DESC)")
 
 
 def downgrade() -> None:
