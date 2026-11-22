@@ -30,3 +30,43 @@
 .pill.completed{background:#dff1e7;color:#26724e}
 .pill.canceled,.pill.failed{background:#ffe7ec;color:#a12b4b}
 @media(max-width:700px){.inline-fields{grid-template-columns:1fr}.approval-actions>*{width:100%}}
+
+/* Consistent interaction surfaces: inventory, governance and diagnostics. */
+.preflight-box{display:grid;gap:10px;background:#f7fafb;border:1px solid var(--line);border-radius:10px;padding:18px;margin-top:12px}
+.preflight-box[hidden]{display:none}
+.preflight-line{display:grid;gap:4px;border-left:3px solid #9caebb;padding:7px 12px;font-size:12px}
+.preflight-line strong{color:#4c6277}
+.preflight-line.ok{border-color:var(--ok)}
+.preflight-line.warning{border-color:var(--warn)}
+.preflight-line.unverified{border-color:#a1a7b3}
+.preflight-line span{color:var(--muted);line-height:1.5}
+.row-controls{display:flex;align-items:center;justify-content:flex-end;gap:13px;margin:4px 0 20px}
+.compare-panel{margin-top:25px;padding-top:20px;border-top:1px solid var(--line);display:grid;gap:12px}
+.compare-panel select{width:100%;max-width:420px;padding:10px;border:1px solid var(--line);border-radius:8px;background:#fff}
+.compare-panel .primary{width:max-content}
+.compare-results{display:grid;gap:9px;background:#f6f9fb;border-radius:10px;padding:15px}
+.compare-results h3{font-size:13px;margin:10px 0 0}
+.compare-results ul{margin:0;padding-left:23px;font-size:12px;line-height:1.65}
+.user-summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(185px,1fr));gap:10px;margin:22px 0}
+.user-field{display:grid;gap:5px;border:1px solid var(--line);padding:12px 14px;border-radius:10px}
+.user-field strong{font-size:11px;color:var(--muted)}
+.user-field span{font-size:13px;overflow-wrap:anywhere}
+.user-edit{border-top:1px solid var(--line);border-bottom:1px solid var(--line);padding:20px 0;margin:20px 0;display:grid;grid-template-columns:180px minmax(200px,1fr);align-items:center;gap:12px}
+.user-edit label{font-size:12px;font-weight:700}
+.user-edit input:not([type="checkbox"]),.user-edit select{padding:10px;border:1px solid #cbd6df;border-radius:8px;max-width:480px;background:#fff}
+.user-edit .approval-checkbox{grid-column:1 / -1}
+.user-edit .primary{grid-column:1 / -1;width:max-content}
+.user-security-actions{display:grid;gap:6px;margin:24px 0}
+.user-action-row{display:flex;justify-content:space-between;align-items:center;gap:15px;border-bottom:1px solid var(--line);padding:12px 0}
+.user-action-row strong{font-size:13px;max-width:420px}
+.user-action-row button{flex:none}
+.user-teams{margin-top:18px;padding:18px;background:#fafbfc;border:1px solid var(--line);border-radius:12px}
+.user-teams h3{font-size:14px;margin:0 0 10px}
+.one-time-secret{padding:16px;font-size:12px;white-space:pre-wrap;overflow-wrap:anywhere;background:#eff3f6;border:1px solid var(--line);border-radius:9px}
+.diagnostic-item{padding:14px 17px;margin-top:10px;border:1px solid #f0c7cf;border-left:4px solid #b85368;border-radius:9px;background:#fff9fa}
+.diagnostic-item strong{font-size:12px;color:#a12f48}
+.diagnostic-item p{font-size:12px;margin-top:5px;line-height:1.55}
+#inventory-search{max-width:480px;min-width:210px;padding:12px 14px;border:1px solid #cbd6df;border-radius:9px}
+.approval-actions{align-items:center}
+.nav-item[hidden],.view[hidden],.preflight-box[hidden]{display:none!important}
+@media(max-width:700px){.user-edit{grid-template-columns:1fr}.user-edit .approval-checkbox,.user-edit .primary{grid-column:auto}.row-controls{justify-content:center}.user-action-row{align-items:flex-start;flex-direction:column}.user-action-row button{width:100%}.compare-panel select{max-width:none}}
