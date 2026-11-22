@@ -32,7 +32,7 @@ def _state(item: dict[str, Any]) -> str:
     scan_status = item.get("scan_job_status")
     if scan_status in ("failed", "canceled"):
         return "failed" if scan_status == "failed" else "canceled"
-    if scan_status == "success":
+    if scan_status == "success" and item.get("pipeline_status") in ("success", "policy_failed"):
         return "awaiting_approval"
     return "scanning" if scan_status == "running" else "queued"
 
@@ -119,9 +119,15 @@ def decide(
 
     # Serialized decision across concurrent tabs and API requests.
     locked = conn.execute(
-        """SELECT w.*, j.status AS scan_job_status, j.pipeline_id
+        """SELECT w.*, j.status AS scan_job_status, j.pipeline_id,
+                  pr.status AS pipeline_status,
+                  EXISTS (
+                    SELECT 1 FROM scan_runs sr WHERE sr.pipeline_id = j.pipeline_id
+                    AND sr.phase = 'original' AND sr.status = 'success'
+                  ) AS original_scan_ok
            FROM manual_workflows w
            JOIN pipeline_jobs j ON j.id = w.scan_job_id
+           LEFT JOIN pipeline_runs pr ON pr.id = j.pipeline_id
            WHERE w.id = %s FOR UPDATE OF w""",
         (_uuid(workflow_id),),
     ).fetchone()
@@ -135,8 +141,13 @@ def decide(
         conn.execute("UPDATE manual_workflows SET updated_at = now() WHERE id = %s", (_uuid(workflow_id),))
         return {"id": workflow_id, "state": "canceled"}
 
-    if locked["scan_job_status"] != "success" or not locked["pipeline_id"]:
-        raise RuntimeError("finish or patch requires a completed scan")
+    if (
+        locked["scan_job_status"] != "success"
+        or not locked["pipeline_id"]
+        or locked["pipeline_status"] not in ("success", "policy_failed")
+        or not locked["original_scan_ok"]
+    ):
+        raise RuntimeError("finish or patch requires a completed original scan and saved policy result")
 
     if action == "finish":
         conn.execute(
