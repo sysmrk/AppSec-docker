@@ -515,21 +515,17 @@
 
   $("user-form").addEventListener("submit", async event => {
     event.preventDefault();
-    const bytes = new Uint8Array(32);
-    crypto.getRandomValues(bytes);
-    const apiKey = Array.from(bytes).map(b => b.toString(16).padStart(2, "0")).join("");
     const payload = {
       username: $("new-username").value.trim(),
       display_name: $("new-displayname").value.trim(),
       role: $("new-user-role").value,
-      password: $("new-user-password").value,
-      api_key: apiKey
+      password: $("new-user-password").value
     };
     try {
       const created = await request("/api/users", { method: "POST", body: JSON.stringify(payload) });
       $("new-user-password").value = "";
-      $("new-user-result").textContent = "Created " + created.username
-        + ". One-time API key (store safely now): " + apiKey;
+      $("new-user-result").textContent = "Created " + created.username +
+        ". Temporary password must be changed at first login. API access is NOT issued automatically; an admin can issue a key in Users & access.";
       notification("New user created.");
       await loadAdminData();
     } catch (error) {
@@ -575,6 +571,7 @@
   });
   document.querySelectorAll("[data-view]").forEach(button => button.addEventListener("click", () => selectView(button.dataset.view)));
   document.addEventListener("appsec:open-workflow", event => openGuided(event.detail.id));
+  document.addEventListener("appsec:open-pipeline", event => openPipeline(event.detail.id));
   $("refresh-button").addEventListener("click", async () => { quiet(); try { await refreshOverview(); } catch (e) { notification(e.message, true); } });
   $("health-refresh-button").addEventListener("click", async () => { try { await refreshSystemHealth(); } catch (e) { notification(e.message, true); } });
   $("guided-refresh").addEventListener("click", async () => { try { await refreshGuided(); if (state.selectedWorkflow) await openGuided(state.selectedWorkflow); } catch (e) { notification(e.message, true); } });
