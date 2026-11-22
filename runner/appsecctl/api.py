@@ -226,7 +226,7 @@ def current_user(
         # Never downgrade an invalid API key into a cookie session.
     if not user:
         raise HTTPException(status_code=401, detail="authentication required")
-    if user.get("must_change_password") and appsec_session and not x_api_key:
+    if user.get("must_change_password"):
         allowed = ("/api/profile", "/api/profile/password", "/api/auth/logout")
         if request.url.path not in allowed:
             raise HTTPException(status_code=428, detail="Change your temporary password before using AppSec")
