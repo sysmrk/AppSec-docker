@@ -43,3 +43,6 @@ The new `integrations/mcp/` service has no Docker socket, report volumes or writ
 
 
 Additional follow-up: unscoped dashboard/history/teams/audit logs are admin-only; a source scan now cleans up the cloned workspace and Git no longer follows cross-host redirects. The `ci security` command is fail-closed when the scanner returns a non-success status. Legacy `DOWNLOADS_REQUIRE_AUTH=false` is ignored intentionally; authentication is always required.
+
+
+Scanner failure handling: Gitleaks uses an explicit detection exit code (17). Only 0 (no leaks) and 17 (leaks found) count as an executed scan; all other exit codes fail the job. The script also removes the temporary cloned repository in a finally block. `make down` now includes the optional MCP profile when shutting down the full stack.

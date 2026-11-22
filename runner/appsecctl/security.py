@@ -16,11 +16,12 @@ def env(name: str, default: str) -> str:
     return os.environ.get(name, default)
 
 
-def run_command(command: list[str], allow_failure: bool = False) -> None:
+def run_command(command: list[str], allow_failure: bool = False) -> int:
     print("+ " + " ".join(command), flush=True)
     result = subprocess.run(command, check=False)
     if result.returncode != 0 and not allow_failure:
         raise subprocess.CalledProcessError(result.returncode, command)
+    return result.returncode
 
 
 def report_name(kind: str, identifier: str, suffix: str = ".json") -> str:
@@ -106,7 +107,7 @@ def execute_security_job(job_id: str) -> str:
     try:
         if kind == "secrets":
             repo_path = prepare_repo(target, job_id)
-            run_command(
+            scan_exit_code = run_command(
                 [
                     "docker",
                     "run",
@@ -125,9 +126,14 @@ def execute_security_job(job_id: str) -> str:
                     f"/reports/{report_file}",
                     "--no-git",
                     "--redact=100",
+                    "--exit-code=17",
                 ],
                 allow_failure=True,
             )
+            # 0: no leaks; 17: leaks found (custom exit code). Other codes
+            # indicate scanner/runtime failure and must never pass CI.
+            if scan_exit_code not in (0, 17):
+                raise RuntimeError(f"Gitleaks failed with exit status {scan_exit_code}")
             if not report_path.exists():
                 raise RuntimeError("Gitleaks did not generate a report")
             raw = redact_gitleaks_report(json.loads(report_path.read_text(encoding="utf-8")))

@@ -563,3 +563,6 @@ For Claude Desktop STDIO configuration, Streamable HTTP testing, connecting AI c
 
 
 **Compatibility note:** CLI and host lifecycle scripts now use Docker Compose **v2** (`docker compose`), not the deprecated standalone `docker-compose`. Use `make validate` and `make test` before deployment. Root-level aggregations (dashboard/history/teams/audit logs) are admin-only; Project-scoped APIs still use per-project RBAC.
+
+
+Gitleaks uses exit code `17` for detected secrets; any other nonzero code is treated as a scanner failure, not a successful empty report. Temporary Git clones are removed at job completion. `make down` shuts down MCP too if it was explicitly started.
