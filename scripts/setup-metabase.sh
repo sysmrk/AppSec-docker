@@ -13,7 +13,11 @@ fi
 
 export METABASE_URL="${METABASE_URL:-http://127.0.0.1:3001}"
 export METABASE_ADMIN_EMAIL="${METABASE_ADMIN_EMAIL:-admin@appsec.local}"
-export METABASE_ADMIN_PASSWORD="${METABASE_ADMIN_PASSWORD:-AppSec-Metabase-2026!}"
+if [[ -z "${METABASE_ADMIN_PASSWORD:-}" || "${#METABASE_ADMIN_PASSWORD}" -lt 16 ]]; then
+  echo "METABASE_ADMIN_PASSWORD must be set to a random value of at least 16 characters in .env" >&2
+  exit 1
+fi
+export METABASE_ADMIN_PASSWORD
 export METABASE_SITE_NAME="${METABASE_SITE_NAME:-AppSec Analytics}"
 export METABASE_APPSEC_DB_HOST="${METABASE_APPSEC_DB_HOST:-postgres}"
 
