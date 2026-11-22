@@ -232,6 +232,9 @@ def credentials(_args) -> None:
         return
     print("Username: admin")
     print("Password:", settings.get("APPSEC_ADMIN_PASSWORD", "not set"))
+    print("Metabase URL: http://127.0.0.1:3001")
+    print("Metabase username:", settings.get("METABASE_ADMIN_EMAIL", "admin@appsec.local"))
+    print("Metabase password:", settings.get("METABASE_ADMIN_PASSWORD", "not set"))
     print("Never share this password or commit .env to Git.")
 
 
