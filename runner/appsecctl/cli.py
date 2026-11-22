@@ -185,7 +185,7 @@ def source_repository(image_ref: str) -> str:
     return image_ref
 
 
-def patch_from_scan(scan_id: str) -> tuple[str, str]:
+def patch_from_scan(scan_id: str, *, publish: bool = True) -> tuple[str, str]:
     patch_id = str(uuid4())
 
     with db.connect() as conn:
@@ -222,17 +222,25 @@ def patch_from_scan(scan_id: str) -> tuple[str, str]:
 
     try:
         run_command(command)
-        run_command(["docker", "tag", local_patched_ref, patched_ref])
-        run_command(["docker", "push", patched_ref])
+        if publish:
+            run_command(["docker", "tag", local_patched_ref, patched_ref])
+            run_command(["docker", "push", patched_ref])
         with db.connect() as conn:
             db.update_patch_success(conn, patch_id, None)
+            conn.execute("""
+                UPDATE patch_runs SET local_image_ref=%s,
+                  publication_status=%s,
+                  published_at=CASE WHEN %s THEN now() ELSE NULL END
+                WHERE id=%s
+            """, (local_patched_ref, "published" if publish else "prepared", publish, patch_id))
     except BaseException as exc:
         with db.connect() as conn:
             db.update_patch_failed(conn, patch_id, safe_message(exc, 'patch'))
         raise
 
-    print(json.dumps({"patch_id": patch_id, "patched_image": patched_ref}, indent=2))
-    return patch_id, patched_ref
+    print(json.dumps({"patch_id": patch_id, "patched_image": patched_ref,
+                      "published": publish}, indent=2))
+    return patch_id, patched_ref if publish else local_patched_ref
 
 
 def create_diff(pipeline_id: str, original_scan_id: str, patched_scan_id: str) -> str:
@@ -344,7 +352,7 @@ def continue_pipeline_patch(pipeline_id: str) -> str:
             (pipeline_id,),
         )
     try:
-        _, patched_ref = patch_from_scan(source_scan_id)
+        _, patched_ref = patch_from_scan(source_scan_id, publish=False)
         patched_scan_id = scan_image(patched_ref, "patched", pipeline_id)
         generate_sbom(patched_ref, "patched", patched_scan_id, pipeline_id)
         create_diff(pipeline_id, source_scan_id, patched_scan_id)
@@ -359,6 +367,47 @@ def continue_pipeline_patch(pipeline_id: str) -> str:
     write_pipeline_report_if_ready(pipeline_id)
     print_summary(pipeline_id)
     return pipeline_id
+
+
+def publish_prepared_patch(pipeline_id: str) -> str:
+    """Human-approved single-attempt publication after successful patched policy."""
+    with db.connect() as conn:
+        row = conn.execute("""
+            SELECT p.id, p.local_image_ref, p.patched_image_ref,
+                   p.publication_status, pol.status AS policy_status
+            FROM patch_runs p
+            JOIN LATERAL (
+                SELECT status FROM policy_results
+                WHERE pipeline_id=p.pipeline_id ORDER BY created_at DESC LIMIT 1
+            ) pol ON true
+            WHERE p.pipeline_id=%s AND p.status='success'
+            ORDER BY p.started_at DESC LIMIT 1
+            FOR UPDATE OF p
+        """, (pipeline_id,)).fetchone()
+        if not row or row["publication_status"] != "prepared" or not row["local_image_ref"]:
+            raise RuntimeError("No prepared, unpublished image exists for this workflow")
+        if row["policy_status"] != "passed":
+            raise RuntimeError("Patched image policy must pass before registry publication")
+        local_ref = str(row["local_image_ref"])
+        dest = str(row["patched_image_ref"])
+        patch_id = str(row["id"])
+        conn.execute("UPDATE patch_runs SET publication_status='publishing' WHERE id=%s", (patch_id,))
+    try:
+        run_command(["docker", "tag", local_ref, dest])
+        run_command(["docker", "push", dest])
+        with db.connect() as conn:
+            conn.execute("""
+                UPDATE patch_runs SET publication_status='published', published_at=now()
+                WHERE id=%s AND publication_status='publishing'
+            """, (patch_id,))
+    except BaseException:
+        with db.connect() as conn:
+            conn.execute("""
+                UPDATE patch_runs SET publication_status='uncertain'
+                WHERE id=%s AND publication_status='publishing'
+            """, (patch_id,))
+        raise
+    return str(pipeline_id)
 
 
 def write_pipeline_report_if_ready(pipeline_id: str) -> None:
