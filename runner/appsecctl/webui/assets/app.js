@@ -387,7 +387,8 @@
         showMetrics(result, [["Fixed", d.fixed_count], ["Remaining", d.remaining_count], ["Introduced", d.introduced_count]]);
         result.appendChild(button("Open final scan results →", () => openPipeline(w.pipeline_id)));
       }
-      if (w.state === "awaiting_approval") {
+      if (w.state === "awaiting_approval" &&
+          ["admin", "operator"].includes(state.user?.role)) {
         const controls = section(root, "Your decision is required");
         controls.appendChild(node("p", "info-note", "Nothing has been patched or pushed. Review the scan before continuing."));
         const actionRow = node("div", "approval-actions");
@@ -413,7 +414,8 @@
         }
         controls.appendChild(actionRow);
       }
-      if (["awaiting_publication", "publication_blocked"].includes(w.state)) {
+      if (["awaiting_publication", "publication_blocked"].includes(w.state) &&
+          ["admin", "operator"].includes(state.user?.role)) {
         const controls = section(root, "Final review: publish or stop");
         const lastPatch = patches[0];
         controls.appendChild(node("p", "info-note",
@@ -425,7 +427,7 @@
         stop.addEventListener("click", () => decideGuided(w.id, "skip_publish"));
         actions.appendChild(stop);
         if (w.state === "awaiting_publication" && data.patch_enabled &&
-            ["admin", "operator"].includes(state.user?.role)) {
+            data.publication_ready && ["admin", "operator"].includes(state.user?.role)) {
           const warn = node("p", "warning",
             "This is a separate registry write. Publishing is allowed only if the patched image passed policy. Failed pushes require manual reconciliation.");
           controls.appendChild(warn);
@@ -441,6 +443,13 @@
         } else if (w.state === "publication_blocked") {
           controls.appendChild(node("p", "warning",
             "Publication blocked because the patched image did not pass the final policy. You can finish without publishing."));
+        } else if (!data.publication_ready) {
+          controls.appendChild(node("p", "warning",
+            "Registry publication is not yet authorized. An admin must register the exact destination hostname and enable Push before you can approve."));
+        }
+        if (data.requires_second_approver) {
+          controls.appendChild(node("p", "info-note",
+            "Two-person approval is required: the operator approving publication must differ from the patch reviewer."));
         }
         controls.appendChild(actions);
       }
@@ -451,7 +460,17 @@
       }
       if (["failed", "patch_failed", "publish_failed"].includes(w.state)) {
         const failure = w.publish_error || w.patch_error || w.scan_error;
-        root.appendChild(node("p", "warning", "Operation failed: " + (failure || "See job diagnostics and ask an administrator for the correlation ID.")));
+        root.appendChild(node("p", "warning", "Operation failed: " +
+          (failure || "See job diagnostics and ask an administrator for the correlation ID.")));
+      }
+      if (data.diagnostics?.length) {
+        const diagnostics = section(root, "What went wrong and how to fix it");
+        data.diagnostics.forEach(info => {
+          const item = node("div", "diagnostic-item");
+          item.appendChild(node("strong", "", info.code + " — " + info.title));
+          item.appendChild(node("p", "muted", info.hint));
+          diagnostics.appendChild(item);
+        });
       }
       if (pipeline?.reports?.length || pipeline?.artifacts?.length) {
         const files = section(root, "Saved reports and SBOM");
@@ -614,7 +633,9 @@
       refreshOverview().catch(() => {});
       refreshHealth();
     }
-    if (state.view === "guided" && state.selectedWorkflow && !["awaiting_approval", "completed", "failed", "canceled"].includes(state.workflowState)) {
+    if (state.view === "guided" && state.selectedWorkflow && !["awaiting_approval", "awaiting_publication", "publication_blocked",
+      "completed", "completed_without_publish", "published",
+      "failed", "patch_failed", "publish_failed", "canceled"].includes(state.workflowState)) {
       openGuided(state.selectedWorkflow, true).catch(() => {});
       refreshGuided().catch(() => {});
     }
