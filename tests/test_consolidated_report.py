@@ -6,7 +6,7 @@ class ConsolidatedReportTests(unittest.TestCase):
     def test_initial_scan_never_claims_zero_after_patch(self):
         payload = {
             "pipeline": {"requested_image": "nginx:1", "status": "success"},
-            "scans": [{"id": "scan-1", "phase": "original", "critical_count": 3,
+            "scans": [{"id": "scan-1", "phase": "original", "status": "success", "critical_count": 3,
                        "high_count": 4, "raw_report": {"Results": []}}],
             "policies": [], "diffs": [],
         }
@@ -20,8 +20,8 @@ class ConsolidatedReportTests(unittest.TestCase):
         payload = {
             "pipeline": {"requested_image": "<script>alert(1)</script>", "status": "success"},
             "scans": [
-                {"id": "s1", "phase": "original", "critical_count": 4, "high_count": 0},
-                {"id": "s2", "phase": "patched", "critical_count": 1, "high_count": 0},
+                {"id": "s1", "phase": "original", "status": "success", "critical_count": 4, "high_count": 0},
+                {"id": "s2", "phase": "patched", "status": "success", "critical_count": 1, "high_count": 0},
             ],
             "diffs": [{"fixed_count": 3, "remaining_count": 1, "introduced_count": 0}],
             "policies": [{"scan_id": "s2", "status": "not_recommended",
@@ -47,4 +47,3 @@ class FailedScanTruthfulnessTests(unittest.TestCase):
         self.assertIn("SOURCE_PULL_FAILED", text)
         self.assertIn("no verified results", text)
         self.assertIn("Recommendation pending", text)
-        self.assertIn("No patched scan yet", text) if False else None
