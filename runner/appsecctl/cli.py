@@ -287,13 +287,16 @@ def evaluate_policy(pipeline_id: str, scan_id: str, project_id: str | None = Non
     return status
 
 
-def run_pipeline(image_ref: str, project_id: str | None = None, mode: str = "scan") -> str:
+def run_pipeline(image_ref: str, project_id: str | None = None, mode: str = "scan", job_id: str | None = None) -> str:
     """Scan an image and optionally prepare and evaluate a local patch."""
     if mode not in ("scan", "patch"):
         raise ValueError("mode must be scan or patch")
     with db.connect() as conn:
         image_id = db.get_or_create_image(conn, image_ref)
         pipeline_id = db.create_pipeline(conn, image_id, image_ref, project_id)
+        if job_id:
+            # Persist the link before network pulls, including failures.
+            conn.execute("UPDATE pipeline_jobs SET pipeline_id=%s WHERE id=%s", (pipeline_id, job_id))
 
     try:
         with db.connect() as conn:

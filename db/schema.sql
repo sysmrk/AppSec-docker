@@ -366,3 +366,13 @@ CREATE TABLE IF NOT EXISTS mfa_recovery_codes(
 );
 CREATE INDEX IF NOT EXISTS idx_mfa_recovery_user
   ON mfa_recovery_codes(user_id) WHERE used_at IS NULL;
+
+
+CREATE TABLE IF NOT EXISTS pending_image_removals(
+    id UUID PRIMARY KEY,
+    image_ref TEXT NOT NULL UNIQUE,
+    status TEXT NOT NULL DEFAULT 'queued',
+    attempts INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);

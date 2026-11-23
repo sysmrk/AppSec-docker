@@ -340,8 +340,10 @@
     const value=window.prompt("Permanent deletion (database, scans, report files and object storage).\nType DELETE to confirm:");
     if(value!=="DELETE")return;
     try{
-      await request("/api/pipelines/"+encodeURIComponent(id)+"/history?confirm="+encodeURIComponent(id),{method:"DELETE"});
-      notification("Pipeline history deleted. Related scan/report records and evidence removed.");
+      const result=await request("/api/pipelines/"+encodeURIComponent(id)+"/history?confirm="+encodeURIComponent(id),{method:"DELETE"});
+      notification("Pipeline DB history and evidence removed. "+
+        (result.local_tags_queued_for_removal ? result.local_tags_queued_for_removal+" local patched Docker tag(s) queued for Worker cleanup." : "No local tags to remove.")+
+        " Published images in remote registries are preserved.");
       $("result-detail").textContent="History deleted. No report is available.";
       await refreshGuided();await refreshOverview();
     }catch(error){notification(error.message,true);}

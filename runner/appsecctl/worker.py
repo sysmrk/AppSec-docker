@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import time
+import subprocess
 
 from . import db
 from .errors import safe_message, classify
@@ -9,6 +10,8 @@ from .cli import run_pipeline, continue_pipeline_patch, publish_prepared_patch
 from .logging_utils import log_event
 from .reports import notify, write_html_report, write_security_sarif
 from .security import execute_security_job
+from .history import claim_removal, finish_removal
+from .errors import safe_detail
 
 
 def main() -> int:
@@ -22,6 +25,24 @@ def main() -> int:
                 conn, "worker:" + ",".join(sorted(queues)),
                 os.environ.get("HOSTNAME", "worker"),
             )
+        cleanup = None
+        if "image" in queues:
+            with db.connect() as conn:
+                cleanup = claim_removal(conn)
+        if cleanup:
+            try:
+                result = subprocess.run(["docker", "image", "rm", cleanup["image_ref"]],
+                                        capture_output=True, text=True, timeout=90, check=False)
+                diagnostic = result.stderr or result.stdout or ""
+                error = None if result.returncode == 0 or "no such image" in diagnostic.lower() else (
+                    "exit " + str(result.returncode) + ": " + safe_detail(diagnostic))
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                error = type(exc).__name__
+            with db.connect() as conn:
+                finish_removal(conn, cleanup, error)
+            log_event("worker.image.cleanup", image=cleanup["image_ref"],
+                      result="success" if error is None else "failed")
+            continue
         job = None
         if "image" in queues:
             with db.connect() as conn:
@@ -47,7 +68,7 @@ def main() -> int:
                         else publish_prepared_patch(str(job["pipeline_id"]), job_id)
                     )
                 else:
-                    pipeline_id = run_pipeline(image_ref, project_id, mode=str(job.get("mode") or "scan"))
+                    pipeline_id = run_pipeline(image_ref, project_id, mode=str(job.get("mode") or "scan"), job_id=job_id)
                 with db.connect() as conn:
                     db.finish_job(conn, job_id, pipeline_id)
                     summary = db.pipeline_summary(conn, pipeline_id)
