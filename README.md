@@ -100,3 +100,8 @@ All data-changing cookie-session requests require a first-party browser header. 
 - [Security Review](docs/security-review.md) / [Production Roadmap](docs/production-roadmap.md)
 
 **Versioning:** changes are committed directly to `main` and annotated `change-<SHA>` tags are created automatically by GitHub Actions. The `VERSION` file controls semantic version tags. Always inspect CI and test in staging before deploying to a sensitive environment.
+
+
+## Operator experience update
+
+One visual Before/After report (severity bars, fixed/remaining/introduced CVEs, post-patch advisory); admin-managed strict priority image pull sources; custom approved publication image destination or local Docker tag; explicit history deletion of PostgreSQL and stored evidence; more precise sanitized error diagnostics. See the detailed documentation: [Consolidated Reports](docs/consolidated-report.md), [Source Priority](docs/image-source-priority.md), and [History Cleanup](docs/history-and-cleanup.md). The new Alembic revisions are 0014_image_source_priority and 0015_history_purge. Full WSL/Copa/browser E2E acceptance is still required.

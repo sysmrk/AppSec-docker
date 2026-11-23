@@ -73,3 +73,8 @@ Built-in MFA is not a replacement for enterprise OIDC/SSO. Metabase accounts and
 - CSRF browser-write protection uses a custom header and SameSite cookies. Review full CSRF/session protection and rate limiting during security acceptance.
 - Full Docker/Trivy/Copa/Harbor/browser E2E testing, backup/restore, HA and image digest/signature verification remain production gates.
 - Browser GUI does not upload Docker TAR archives; it accepts Registry image references only.
+
+
+## Trusted mirrors, operator reports and erasure
+
+Open Registries to add approved mirror hostnames in numeric priority order. Test from the Docker daemon and from the separate Copa BuildKit execution context. A successful Docker pull is not proof that BuildKit can fetch the same reference. Use the consolidated Before/After report for actual scan comparison and post-fix recommendation. The initial scan never blocks on policy. For a local output choose Keep patched image locally; to export a tar on the same Docker host, run docker save -o patched.tar IMAGE_REF with the exact local tag shown in UI. For registry output enter the full registry/repository:tag and approve publication separately. Admin history deletion is irreversible for live DB and evidence but intentionally preserves audit logs, remote published images and backups.

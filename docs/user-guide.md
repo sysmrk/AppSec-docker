@@ -72,3 +72,8 @@ Disabling MFA requires your password plus a fresh authenticator or unused recove
 Admins can inspect System Health, Worker/Scheduler heartbeats and logs. Heartbeat age alone is **not** proof the worker is dead—it may be busy scanning.
 
 Metabase at **http://127.0.0.1:3001** provides aggregated dashboards with separate authentication. MCP is optional, read-only and never necessary for manual use.
+
+
+## Consolidated results and source selection
+
+Admins configure strict source order under Registries. Once a source is configured, disabled and failed mirrors do not silently permit Docker Hub fallback. Original and post-fix findings share one visual report. Severity limits generate a non-blocking advisory after patching only. Choose Keep patched image locally, or separately approve the exact registered destination image. Admin history deletion clears DB and known evidence, while Worker cleans local patch tags asynchronously. More information: consolidated-report.md, image-source-priority.md and history-and-cleanup.md.

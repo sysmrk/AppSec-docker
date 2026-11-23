@@ -1,0 +1,9 @@
+# Delete pipeline history and associated evidence
+
+Admins may open a finished pipeline in Results or My workflows, select Delete this pipeline history, and type DELETE. The server requires an exact pipeline-ID confirmation and rejects deletion while related jobs are queued or running.
+
+This removes the selected pipeline's workflow, jobs, scan/CVE, policy, patch, diff, report/artifact and orphan image-inventory rows from PostgreSQL. Recorded evidence under /reports and the configured S3/MinIO bucket is also deleted. When evidence cleanup fails, the database deletion is rolled back and the error remains visible; previous partial file deletion may still have occurred.
+
+Local patched image tags are queued for removal by the image Worker because the API is deliberately denied Docker Socket access. Inspect GET /appsec-api/api/maintenance/image-removals and retry failed removals via POST /appsec-api/api/maintenance/image-removals/retry. A queued removal is not yet a completed Docker cleanup; image layers shared by other tags may remain in Docker storage.
+
+Security audit logs are retained. Published images in remote registries are not silently deleted. Shared base-image Docker cache, downloaded copies and backups are also outside this operation. Remote image deletion needs a separate explicit authorization and a full digest/destination confirmation. The control is not equivalent to backup erasure.
