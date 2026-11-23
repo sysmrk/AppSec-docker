@@ -91,9 +91,9 @@
             <div class="guided-intro"><strong>What happens next?</strong>
               <ol>
                 <li>Trivy scans the image and generates an SBOM</li>
-                <li>AppSec checks the policy and saves the results</li>
-                <li>You review the CVEs and choose to finish or approve patch + registry push</li>
-                <li>If approved, Copa patches, pushes, rescans and compares findings</li>
+                <li>AppSec saves the initial CVEs and SBOM; policy recommendation comes only after patching</li>
+                <li>You review CVEs and approve a local patch (optional)</li>
+                <li>Copa patches, rescans and compares; you then keep it locally or separately approve a registry Push</li>
               </ol>
             </div>
             <div class="form-actions">
@@ -137,7 +137,7 @@
           </form>
         </section>
         <section id="view-results" class="view" hidden>
-          <div class="page-heading"><div><p class="eyebrow">FINDINGS & REPORTS</p><h1>Scan results</h1><p class="muted">Select a real pipeline or repository scan from Overview to inspect findings and reports.</p></div></div>
+          <div class="page-heading"><div><p class="eyebrow">FINDINGS & REPORTS</p><h1>One clear report</h1><p class="muted">Initial scan, post-fix scan, changes and recommendation — all in one view with optional raw evidence.</p></div></div>
           <div id="result-detail" class="panel"><div class="empty-state">No result selected yet. Open a scan from Overview.</div></div>
         </section>
         <section id="view-health" class="view" hidden>
@@ -166,7 +166,19 @@
             <label class="approval-checkbox"><input type="checkbox" id="registry-allow-push"><span>Allow push configuration (still requires explicit human approval and worker credentials)</span></label>
             <button type="submit" class="primary">Register HTTPS registry</button>
           </form>
-          <div class="section-heading"><h2>Configured registry endpoints</h2></div>
+          <div class="section-heading"><h2>Trusted image pull sources (strict priority)</h2></div>
+          <p class="hint">Configure mirror endpoints for Docker Hub images. For nginx:1.27-alpine, a source hub.hamdocker.ir is tried as hub.hamdocker.ir/library/nginx:1.27-alpine. Lower numbers are tried first. Once any source is configured, AppSec NEVER falls back to Docker Hub.</p>
+          <form id="pull-source-form" class="panel form-panel">
+            <label for="pull-source-name">Source alias</label>
+            <input id="pull-source-name" placeholder="iran-mirror-1" minlength="2" maxlength="50" required>
+            <label for="pull-source-host">Mirror host (no https:// or path)</label>
+            <input id="pull-source-host" placeholder="hub.hamdocker.ir" maxlength="255" required>
+            <label for="pull-source-priority">Priority (1 is highest)</label>
+            <input id="pull-source-priority" type="number" min="1" max="10000" value="1" required>
+            <button type="submit" class="primary">Add trusted source</button>
+          </form>
+          <div class="table-wrap"><table><thead><tr><th>Alias</th><th>Host</th><th>Priority</th><th>Enabled</th><th>Actions</th></tr></thead><tbody id="pull-sources-body"></tbody></table></div>
+          <div class="section-heading"><h2>Configured publication registries</h2></div>
           <div class="table-wrap"><table><thead><tr><th>Alias</th><th>Host</th><th>Scope</th><th>Push configuration</th><th></th></tr></thead><tbody id="registries-body"></tbody></table></div>
           <p class="hint">Registering a host does not grant Docker credentials, test TLS or perform registry operations.</p>
         </section>

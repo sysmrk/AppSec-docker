@@ -206,59 +206,147 @@
       holder.appendChild(node("p", "info-note", "Showing up to 200 findings for the selected scan and severity."));
     } catch (error) { holder.textContent = error.message; }
   }
+
+  /* One data-driven panel for both Results and My Workflows. No fabricated scan totals. */
+  function renderUnifiedSummary(root, d) {
+    const scans = d?.scans || [], old = scans.find(s => s.phase === "original");
+    const after = scans.find(s => s.phase === "patched");
+    const diff = d?.diffs?.[0], recommendation = d?.policies?.find(p => after && p.status && ["recommended", "not_recommended"].includes(p.status));
+    const block = section(root, "Initial scan vs post-fix scan");
+    block.classList.add("unified-summary");
+    const phases = node("div", "scan-phases");
+    [["01 · INITIAL SCAN", old], ["02 · AFTER PATCH", after]].forEach(([name, scan], i) => {
+      const card = node("article", "scan-phase-card " + (i ? "phase-after" : "phase-before"));
+      card.appendChild(node("span", "phase-label", name));
+      card.appendChild(node("strong", "phase-count",
+        scan ? ["critical_count", "high_count", "medium_count", "low_count"].reduce((n,k)=>n+Number(scan[k]||0),0) : "—"));
+      card.appendChild(node("small", "", scan ? "Detected OS vulnerabilities · " + scan.status : "Not scanned yet · no result available"));
+      phases.appendChild(card);
+    });
+    block.appendChild(phases);
+    const rows = node("div", "severity-graph"), palette = {
+      CRITICAL: "#d74466", HIGH: "#ec8c43", MEDIUM: "#d6aa38", LOW: "#2aa88a"
+    };
+    const sev = [["CRITICAL","critical_count"],["HIGH","high_count"],["MEDIUM","medium_count"],["LOW","low_count"]];
+    const scale = Math.max(1, ...sev.flatMap(([,key])=>[Number(old?.[key]||0),Number(after?.[key]||0)]));
+    for (const [name, key] of sev) {
+      const wrap = node("div", "severity-graph-row"), values = node("div", "severity-values");
+      const chart = node("div", "severity-chart");
+      wrap.appendChild(node("strong", "severity-name", name));
+      for (const [phase,scan] of [["before",old],["after",after]]) {
+        const lane=node("div","severity-track"),bar=node("div","severity-fill "+phase);
+        const n=Number(scan?.[key]||0);
+        bar.style.width=(n?Math.max(2,n/scale*100):0)+"%";
+        bar.style.backgroundColor=palette[name];
+        lane.appendChild(bar);chart.appendChild(lane);
+      }
+      values.appendChild(node("strong","",old?String(old[key]||0):"—"));
+      values.appendChild(node("span","","→"));
+      values.appendChild(node("strong","",after?String(after[key]||0):"—"));
+      wrap.appendChild(chart);wrap.appendChild(values);rows.appendChild(wrap);
+    }
+    block.appendChild(node("p","info-note","Top bar: original scan · Bottom bar: post-patch scan. Same scale for all severities."));
+    block.appendChild(rows);
+    if (diff) {
+      const changes=node("div","change-metrics");
+      for (const [label,count,kind] of [["Fixed",diff.fixed_count,"fixed"],["Remaining",diff.remaining_count,"remaining"],["Introduced",diff.introduced_count,"introduced"]]) {
+        const item=node("article","change-metric "+kind);
+        item.appendChild(node("strong","",count));item.appendChild(node("span","",label));changes.appendChild(item);
+      }
+      block.appendChild(changes);
+    } else {
+      block.appendChild(node("p","info-note","No post-fix comparison yet. This remains pending until an actual patched rescan completes."));
+    }
+    const advisory=node("div","recommend-banner "+
+      (recommendation?.status==="recommended"?"good":recommendation?.status==="not_recommended"?"caution":"pending"));
+    const words=recommendation?.status==="recommended"?"Recommended":
+      recommendation?.status==="not_recommended"?"Not recommended":"Recommendation pending";
+    advisory.appendChild(node("strong","",words));
+    advisory.appendChild(node("p","",recommendation?
+      "Based only on post-fix scan findings. Advisory thresholds do not fail or pass the workflow.":
+      "Policy is evaluated only after the patched rescan, not at the initial scan."));
+    if (recommendation?.violations?.length) {
+      const reasons=node("ul");
+      recommendation.violations.forEach(v=>reasons.appendChild(node("li","",
+        v.severity+": "+v.count+" found; recommended maximum "+v.limit)));
+      advisory.appendChild(reasons);
+    }
+    block.appendChild(advisory);
+    const html = d?.reports?.find(x=>x.format==="html");
+    if (html) {
+      const a=node("a","primary report-main-link","Open single visual report ↗");
+      a.href=prefix+"/api/reports/"+encodeURIComponent(html.id)+"/download";
+      a.target="_blank";a.rel="noopener";block.appendChild(a);
+    }
+  }
+
   async function openPipeline(id) {
     selectView("results");
-    const root = $("result-detail"); root.textContent = "Loading pipeline…";
+    const root=$("result-detail");root.textContent="Loading consolidated report…";
     try {
-      const d = await request("/api/ui/pipelines/" + encodeURIComponent(id));
-      clear(root); root.className = "panel result-panel";
-      const top = node("div", "result-header"), left = node("div");
-      left.appendChild(node("h2", "", d.pipeline.requested_image));
-      left.appendChild(node("p", "info-note", "Pipeline: " + d.pipeline.id));
-      top.appendChild(left); top.appendChild(statusPill(d.pipeline.status)); root.appendChild(top);
-      if (d.pipeline.error_message) root.appendChild(node("p", "warning", d.pipeline.error_message));
-      const original = d.scans.find(s => s.phase === "original"), patched = d.scans.find(s => s.phase === "patched");
-      const resultScan = patched || original;
-      if (resultScan) showMetrics(root, [["Critical", resultScan.critical_count], ["High", resultScan.high_count], ["Medium", resultScan.medium_count], ["Low", resultScan.low_count]]);
-      if (d.policies.length) {
-        const s = section(root, "Policy gate");
-        const item = d.policies[0];
-        const label = node("p");
-        label.appendChild(statusPill(item.status));
-        s.appendChild(label);
-        if (Array.isArray(item.violations) && item.violations.length) {
-          detailsTable(s, [["Severity", "severity"], ["Count", "count"], ["Limit", "limit"]], item.violations);
-        }
-      }
-      if (d.diffs.length) {
-        const diff = d.diffs[0];
-        const sec = section(root, "Before / after patch");
-        showMetrics(sec, [["Fixed CVEs", diff.fixed_count], ["Remaining", diff.remaining_count], ["Introduced", diff.introduced_count]]);
+      const d=await request("/api/ui/pipelines/"+encodeURIComponent(id));
+      clear(root);root.className="panel result-panel";
+      const top=node("div","result-header"), left=node("div");
+      left.appendChild(node("p","eyebrow","IMAGE SECURITY · ONE REPORT"));
+      left.appendChild(node("h2","",d.pipeline.requested_image));
+      left.appendChild(node("p","info-note","Pipeline "+d.pipeline.id));
+      top.appendChild(left);top.appendChild(statusPill(d.pipeline.status));root.appendChild(top);
+      renderUnifiedSummary(root,d);
+      if (d.pipeline.error_message) {
+        const p=section(root,"Execution error");
+        p.appendChild(node("p","warning",d.pipeline.error_message));
       }
       if (d.scans.length) {
-        const sec = section(root, "Vulnerabilities");
-        const filters = node("div", "filters"), selector = node("select", "result-filter"), severity = node("select", "result-filter");
-        selector.id = "scan-select";
-        d.scans.forEach(s => { const opt = node("option", "", s.phase + " · " + s.status); opt.value = String(s.id); selector.appendChild(opt); });
-        if (resultScan) selector.value = String(resultScan.id);
-        ["All severities", "CRITICAL", "HIGH", "MEDIUM", "LOW", "UNKNOWN"].forEach((value, i) => { const opt = node("option", "", value); opt.value = i === 0 ? "" : value; severity.appendChild(opt); });
-        filters.appendChild(selector); filters.appendChild(severity); sec.appendChild(filters);
-        const div = node("div"); div.id = "finding-table"; sec.appendChild(div);
-        const refresh = () => loadVulnerabilities(selector.value, severity.value);
-        selector.addEventListener("change", refresh); severity.addEventListener("change", refresh);
-        await refresh();
+        const evidence=node("details","advanced-evidence"),caption=node("summary","","Browse individual CVEs (advanced)");
+        evidence.appendChild(caption);
+        const filters=node("div","filters"),selector=node("select","result-filter"),severity=node("select","result-filter");
+        d.scans.forEach(item=>{
+          const option=node("option","",item.phase+" · "+item.status);
+          option.value=String(item.id);selector.appendChild(option);
+        });
+        const last=d.scans.find(x=>x.phase==="patched")||d.scans[0];
+        selector.value=String(last.id);
+        ["All severities","CRITICAL","HIGH","MEDIUM","LOW","UNKNOWN"].forEach((name,i)=>{
+          const o=node("option","",name);o.value=i?name:"";severity.appendChild(o);
+        });
+        filters.appendChild(selector);filters.appendChild(severity);evidence.appendChild(filters);
+        const table=node("div");table.id="finding-table";evidence.appendChild(table);
+        root.appendChild(evidence);
+        const load=()=>loadVulnerabilities(selector.value,severity.value);
+        selector.addEventListener("change",load);severity.addEventListener("change",load);
+        evidence.addEventListener("toggle",()=>{if(evidence.open&&table.childNodes.length===0)load();});
       }
-      const reports = section(root, "Downloads");
-      const links = node("div", "results-list");
-      [...d.reports.map(r => ({ title: "Report · " + r.format, path: "/api/reports/" + r.id + "/download" })),
-        ...d.artifacts.map(a => ({ title: a.kind + " · " + a.format, path: "/api/artifacts/" + a.id + "/download" }))].forEach(info => {
-        const a = node("a", "mini-link", info.title + " ↗");
-        a.href = prefix + info.path; a.target = "_blank"; a.rel = "noopener";
-        links.appendChild(a);
+      const advanced=node("details","advanced-evidence");
+      advanced.appendChild(node("summary","","Raw evidence & SBOM (advanced downloads)"));
+      const links=node("div","results-list");
+      d.artifacts.forEach(a=>{
+        const link=node("a","mini-link",a.kind+" · "+a.format+" ↗");
+        link.href=prefix+"/api/artifacts/"+encodeURIComponent(a.id)+"/download";
+        link.target="_blank";link.rel="noopener";links.appendChild(link);
       });
-      reports.appendChild(links.childNodes.length ? links : node("p", "info-note", "No downloadable reports yet."));
-    } catch (error) { root.textContent = error.message; notification(error.message, true); }
+      advanced.appendChild(links.childNodes.length?links:node("p","info-note","No artifacts available"));
+      root.appendChild(advanced);
+      if(state.user?.role==="admin") {
+        const danger=node("div","history-danger");
+        danger.appendChild(node("p","info-note","Remove this finished pipeline and its stored evidence permanently."));
+        const remove=node("button","outline small","Delete this pipeline history");
+        remove.addEventListener("click",()=>deletePipelineHistory(d.pipeline.id));
+        danger.appendChild(remove);root.appendChild(danger);
+      }
+    }catch(error){root.textContent=error.message;notification(error.message,true);}
   }
+
+  async function deletePipelineHistory(id) {
+    const value=window.prompt("Permanent deletion (database, scans, report files and object storage).\nType DELETE to confirm:");
+    if(value!=="DELETE")return;
+    try{
+      await request("/api/pipelines/"+encodeURIComponent(id)+"/history?confirm="+encodeURIComponent(id),{method:"DELETE"});
+      notification("Pipeline history deleted. Related scan/report records and evidence removed.");
+      $("result-detail").textContent="History deleted. No report is available.";
+      await refreshGuided();await refreshOverview();
+    }catch(error){notification(error.message,true);}
+  }
+
   async function openSecretJob(id) {
     selectView("results");
     const root = $("result-detail"); root.textContent = "Loading repository scan…";
@@ -300,7 +388,7 @@
       const row = node("tr");
       cell(row, w.requested_image, "wide-text");
       const c = cell(row, ""); c.appendChild(statusPill(w.state));
-      cell(row, w.pipeline_status || "—");
+      cell(row, w.policy_status || "Pending post-patch");
       cell(row, date(w.created_at));
       const act = cell(row, "");
       const label = w.state === "awaiting_approval" ? "Review & decide →" : "Open workflow →";
@@ -325,7 +413,8 @@
       if (!window.confirm("Final action: push the validated patched image to the registry? This cannot safely be retried automatically.")) return;
     }
     if (action === "cancel" && !window.confirm("Cancel this queued scan?")) return;
-    const payload = { action, confirm_patch: action === "approve_patch", confirm_push: action === "approve_publish" };
+    const payload = { action, confirm_patch: action === "approve_patch", confirm_push: action === "approve_publish",
+      destination: action === "approve_publish" ? $("publish-destination")?.value?.trim() : null };
     try {
       await request("/api/manual-workflows/" + encodeURIComponent(workflowId) + "/decision", {
         method: "POST", body: JSON.stringify(payload)
@@ -335,7 +424,7 @@
       const messages = {
         approve_patch: "Local patch preparation approved. AppSec will rescan before asking for publication approval.",
         approve_publish: "Registry publication approved and queued. Check the final status before retrying any failure.",
-        skip_publish: "Review completed; patched image has NOT been published.",
+        skip_publish: "Patched image kept in your local Docker engine; no registry push was performed.",
         finish: "Workflow completed without image modification.",
         cancel: "Queued scan canceled."
       };
@@ -358,7 +447,7 @@
       root.appendChild(node("h2", "", w.requested_image));
       root.appendChild(node("p", "info-note", "Workflow ID: " + w.id + " · Created: " + date(w.created_at)));
       const summary = node("div", "result-stats");
-      for (const [title, value] of [["Current state", w.state], ["Policy result", w.policy_status || w.pipeline_status || "Not evaluated"], ["Patch allowed", data.patch_enabled ? "Enabled" : "Disabled"]]) {
+      for (const [title, value] of [["Current state", w.state], ["Post-fix recommendation", w.policy_status || "Pending rescan"], ["Patch mode", data.patch_enabled ? "Enabled" : "Disabled"]]) {
         const c = node("div", "mini-stat"); c.appendChild(node("strong", "", value));
         c.appendChild(node("span", "", title)); summary.appendChild(c);
       }
@@ -397,23 +486,16 @@
       const ol = node("ol", "manual-timeline");
       const scanFailed = w.scan_job_status === "failed";
       stepItem(ol, "1. Queue and scan image", "Trivy inspects the actual image and saves vulnerability findings.", scanFailed ? "failed" : w.scan_job_status === "success" ? "done" : w.scan_job_status === "running" ? "running" : "waiting");
-      stepItem(ol, "2. Generate SBOM and evaluate policy", "CycloneDX, severity counts and security rules.", sbomReady && pipeline?.policies?.length ? "done" : scanFailed ? "failed" : w.scan_job_status === "running" ? "running" : "waiting");
+      stepItem(ol, "2. Generate SBOM", "Save original vulnerability evidence; no policy verdict in the initial scan.", sbomReady ? "done" : scanFailed ? "failed" : w.scan_job_status === "running" ? "running" : "waiting");
       stepItem(ol, "3. Review original findings", "Human approval is needed before local patching.", w.decision ? "done" : w.state === "awaiting_approval" ? "running" : "waiting");
       stepItem(ol, "4. Prepare local patched image", "Copa uses BuildKit but does not push to the registry.", w.decision === "finish" ? "skipped" : w.patch_job_status === "success" ? "done" : w.patch_job_status === "failed" ? "failed" : w.decision === "approve_patch" ? "running" : "waiting");
-      stepItem(ol, "5. Rescan & compare", "Trivy scans the local patched image; policy is evaluated before publication.", w.decision === "finish" ? "skipped" : diffs.length > 0 && patched ? "done" : w.decision === "approve_patch" ? "running" : "waiting");
+      stepItem(ol, "5. Rescan & compare", "Trivy rescans the local patch and provides an advisory recommendation.", w.decision === "finish" ? "skipped" : diffs.length > 0 && patched ? "done" : w.decision === "approve_patch" ? "running" : "waiting");
       stepItem(ol, "6. Separate publication approval", "Review the new findings and explicitly approve registry Push, or finish without publishing.", w.publish_decision ? "done" : ["awaiting_publication","publication_blocked"].includes(w.state) ? "running" : w.decision === "finish" ? "skipped" : "waiting");
       stepItem(ol, "7. Publish & final report", "Only a validated, policy-passed image can be published.", ["published","completed","completed_without_publish"].includes(w.state) ? "done" : w.state === "publishing" ? "running" : "waiting");
       sec.appendChild(ol);
-      if (orig) {
-        const results = section(root, "Initial scan results");
-        showMetrics(results, [["Critical", orig.critical_count], ["High", orig.high_count], ["Medium", orig.medium_count], ["Low", orig.low_count]]);
-        results.appendChild(button("View CVE table and complete reports →", () => openPipeline(w.pipeline_id)));
-      }
-      if (diffs.length) {
-        const d = diffs[diffs.length - 1];
-        const result = section(root, "After approval: vulnerability changes");
-        showMetrics(result, [["Fixed", d.fixed_count], ["Remaining", d.remaining_count], ["Introduced", d.introduced_count]]);
-        result.appendChild(button("Open final scan results →", () => openPipeline(w.pipeline_id)));
+      if (pipeline?.pipeline) {
+        renderUnifiedSummary(root, pipeline);
+        root.appendChild(button("Open detailed findings →", () => openPipeline(w.pipeline_id)));
       }
       if (["awaiting_publication", "publication_blocked"].includes(w.state) &&
           ["admin", "operator"].includes(state.user?.role)) {
@@ -423,15 +505,25 @@
           "Prepared image: " + (lastPatch?.patched_image_ref || "Unavailable") +
           ". The patched version was scanned locally. No registry push has happened."));
         const actions = node("div", "approval-actions");
-        const stop = node("button", "outline", "Finish without publishing");
+        const local = patches[0]?.local_image_ref;
+        controls.appendChild(node("p","info-note","Local Docker tag: "+(local||"Not recorded")+
+          ". Keep the image on this WSL Docker host without a registry Push."));
+        const stop = node("button", "outline", "Keep patched image locally");
         stop.type = "button";
         stop.addEventListener("click", () => decideGuided(w.id, "skip_publish"));
         actions.appendChild(stop);
         if (w.state === "awaiting_publication" && data.patch_enabled &&
             data.publication_ready && ["admin", "operator"].includes(state.user?.role)) {
           const warn = node("p", "warning",
-            "This is a separate registry write. Publishing is allowed only if the patched image passed policy. Failed pushes require manual reconciliation.");
+            "This is a separate registry write. The post-fix recommendation is advisory, not a gate. Always review CVEs and validate the exact destination before approving.");
           controls.appendChild(warn);
+          const destLabel=node("label","", "Destination image (registry.example.org/team/image:tag)");
+          destLabel.htmlFor="publish-destination";
+          const destInput=document.createElement("input");destInput.id="publish-destination";
+          destInput.value=lastPatch?.patched_image_ref||data.registry_destination||"";
+          destInput.placeholder="registry.example.org/team/patched:1";
+          destInput.style.width="100%";destInput.style.padding="11px";
+          controls.appendChild(destLabel);controls.appendChild(destInput);
           const label = node("label", "approval-checkbox");
           const checkbox = document.createElement("input");
           checkbox.type = "checkbox"; checkbox.id = "publish-confirm";
@@ -443,9 +535,7 @@
           actions.appendChild(publish);
         } else if (w.state === "publication_blocked") {
           controls.appendChild(node("p", "warning",
-            w.policy_status === "report_only" ?
-              "Publication requires enforced policy to pass. This scan used report-only mode." :
-              "Publication blocked because the patched image did not pass the final policy. You can finish without publishing."));
+            "Post-fix rescan or recommendation is not yet complete. You can keep the local image, but cannot approve a registry push yet."));
         } else if (!data.publication_ready) {
           controls.appendChild(node("p", "warning",
             "Registry publication is not yet authorized. An admin must register the exact destination hostname and enable Push before you can approve."));
@@ -487,25 +577,27 @@
         const diagnostics = section(root, "What went wrong and how to fix it");
         data.diagnostics.forEach(info => {
           const item = node("div", "diagnostic-item");
-          item.appendChild(node("strong", "", info.code + " — " + info.title));
-          item.appendChild(node("p", "muted", info.hint));
+          item.appendChild(node("strong", "", "["+info.stage+"] "+info.code + " — " + info.title));
+          if(info.detail)item.appendChild(node("pre","diagnostic-detail",info.detail));
+          item.appendChild(node("p", "muted", "How to fix: "+info.hint));
           diagnostics.appendChild(item);
         });
       }
-      if (pipeline?.reports?.length || pipeline?.artifacts?.length) {
-        const files = section(root, "Saved reports and SBOM");
-        const links = node("div", "results-list");
-        for (const r of (pipeline?.reports || [])) {
-          const a = node("a", "mini-link", "Report · " + r.format + " ↗");
-          a.href = prefix + "/api/reports/" + encodeURIComponent(r.id) + "/download";
-          a.target = "_blank"; a.rel = "noopener"; links.appendChild(a);
-        }
-        for (const r of (pipeline?.artifacts || [])) {
-          const a = node("a", "mini-link", r.kind + " · " + r.format + " ↗");
-          a.href = prefix + "/api/artifacts/" + encodeURIComponent(r.id) + "/download";
-          a.target = "_blank"; a.rel = "noopener"; links.appendChild(a);
-        }
-        files.appendChild(links);
+      if (pipeline?.artifacts?.length) {
+        const details=node("details","advanced-evidence");
+        details.appendChild(node("summary","","Raw JSON and SBOM (advanced)"));
+        const links=node("div","results-list");
+        pipeline.artifacts.forEach(a=>{
+          const link=node("a","mini-link",a.kind+" · "+a.format+" ↗");
+          link.href=prefix+"/api/artifacts/"+encodeURIComponent(a.id)+"/download";
+          link.rel="noopener";link.target="_blank";links.appendChild(link);
+        });
+        details.appendChild(links);root.appendChild(details);
+      }
+      if(state.user?.role==="admin"&&w.pipeline_id) {
+        const danger=node("div","history-danger");
+        danger.appendChild(button("Delete this workflow & history",()=>deletePipelineHistory(w.pipeline_id)));
+        root.appendChild(danger);
       }
     } catch (error) {
       if (!silent) root.textContent = error.message;

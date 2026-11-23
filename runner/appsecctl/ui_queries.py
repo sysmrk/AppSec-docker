@@ -91,7 +91,7 @@ def pipeline_details(conn, pipeline_id: str) -> dict[str, Any]:
                   medium_count, low_count, unknown_count, started_at, finished_at, error_message
            FROM scan_runs WHERE pipeline_id = %s ORDER BY started_at ASC""", (pid,))
     patches = _rows(conn,
-        """SELECT id, patched_image_ref, publication_status, published_at, status, started_at, finished_at, error_message
+        """SELECT id, local_image_ref, patched_image_ref, publication_status, published_at, status, started_at, finished_at, error_message
            FROM patch_runs WHERE pipeline_id = %s ORDER BY started_at DESC LIMIT 10""", (pid,))
     diffs = _rows(conn,
         """SELECT fixed_count, remaining_count, introduced_count, created_at

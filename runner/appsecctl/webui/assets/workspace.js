@@ -295,6 +295,35 @@
     root.appendChild(sessions);
   }
 
+  async function refreshPullSources() {
+    const rows=await api("/api/image-pull-sources");
+    const body=$("pull-sources-body");clear(body);
+    for(const source of rows){
+      const tr=document.createElement("tr");
+      cell(tr,source.name);cell(tr,source.host);
+      const priority=element("input","");priority.type="number";priority.min="1";priority.max="10000";
+      priority.value=String(source.priority);priority.className="priority-input";
+      cell(tr,"").appendChild(priority);
+      const enabled=element("input","");enabled.type="checkbox";enabled.checked=source.enabled;
+      cell(tr,"").appendChild(enabled);
+      const actions=cell(tr,"");
+      actions.appendChild(button("Save",async()=>{
+        try{
+          await send("/api/image-pull-sources/"+encodeURIComponent(source.id),
+            {priority:Number(priority.value),enabled:enabled.checked},"PUT");
+          notice("Source priority saved. Lower numbers are pulled first.");await refreshPullSources();
+        }catch(e){notice(e.message,true);}
+      },"outline small"));
+      actions.appendChild(button("Remove",async()=>{
+        if(!confirm("Remove this image pull source? Future scans will stop using it."))return;
+        try{await api("/api/image-pull-sources/"+encodeURIComponent(source.id),{method:"DELETE"});
+          await refreshPullSources();notice("Source removed.");}catch(e){notice(e.message,true);}
+      },"outline small"));
+      body.appendChild(tr);
+    }
+    if(!rows.length)empty(body,5,"No source policy configured. Direct image pulls remain enabled until you add your first source.");
+  }
+
   async function refreshRegistries() {
     const rows = await api("/api/registries");
     const body = $("registries-body"); clear(body);
@@ -313,6 +342,7 @@
       body.appendChild(tr);
     });
     if (!rows.length) empty(body, 5, "No registries configured. Add one above; credentials remain on the worker.");
+    await refreshPullSources();
     const projects = await api("/api/projects");
     const select = $("registry-project"); const old = select.value;
     while (select.options.length > 1) select.remove(1);
@@ -335,6 +365,19 @@
   });
   $("approvals-refresh").addEventListener("click", () => refreshApprovals().catch(e => notice(e.message, true)));
   $("users-refresh").addEventListener("click", () => refreshUsers().catch(e => notice(e.message, true)));
+  $("pull-source-form").addEventListener("submit",async event=>{
+    event.preventDefault();
+    try{
+      await send("/api/image-pull-sources",{
+        name:$("pull-source-name").value.trim(),
+        host:$("pull-source-host").value.trim(),
+        priority:Number($("pull-source-priority").value),
+        enabled:true
+      });
+      notice("Trusted source added. Future image pulls follow strictly sorted priorities; no Docker Hub fallback.");
+      await refreshPullSources();
+    }catch(error){notice(error.message,true);}
+  });
   $("registry-form").addEventListener("submit", async event => {
     event.preventDefault();
     try {
@@ -356,6 +399,10 @@
     try {
       const data = await api("/api/preflight/image?image=" + encodeURIComponent(image));
       clear(root);
+      if(data.sources?.length){
+        const order=element("div","Image source order: "+data.sources.map(s=>s.priority+". "+s.ref).join(" → "),"preflight-line");
+        root.appendChild(order);
+      }
       data.checks.forEach(c => {
         const line = element("div", "", "preflight-line " + c.status);
         line.appendChild(element("strong", c.name + ": " + c.status.toUpperCase()));

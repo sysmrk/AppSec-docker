@@ -70,3 +70,34 @@
 .approval-actions{align-items:center}
 .nav-item[hidden],.view[hidden],.preflight-box[hidden]{display:none!important}
 @media(max-width:700px){.user-edit{grid-template-columns:1fr}.user-edit .approval-checkbox,.user-edit .primary{grid-column:auto}.row-controls{justify-content:center}.user-action-row{align-items:flex-start;flex-direction:column}.user-action-row button{width:100%}.compare-panel select{max-width:none}}
+
+
+/* Visual before / after: all figures come from API scan rows. */
+.unified-summary{background:linear-gradient(180deg,#f6faff,#fff 48%);border-radius:16px;padding:22px;border:1px solid #dce9f7}
+.scan-phases{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:20px 0}
+.scan-phase-card{display:grid;gap:8px;padding:22px;border-radius:14px;color:white;min-width:0;box-shadow:0 14px 24px #1d38551d}
+.phase-before{background:linear-gradient(130deg,#274d78,#467ea4)}.phase-after{background:linear-gradient(130deg,#137c88,#19ac92)}
+.phase-label{font-size:11px;font-weight:800;letter-spacing:.12em}.phase-count{font-size:42px;line-height:1}
+.scan-phase-card small{font-size:12px;color:#d7f5f2;line-height:1.5}
+.severity-graph{display:grid;gap:9px;margin:20px 0}.severity-graph-row{display:grid;grid-template-columns:96px minmax(110px,1fr) 90px;gap:12px;align-items:center}
+.severity-name{font-size:11px;letter-spacing:.04em}.severity-chart{display:grid;gap:5px}
+.severity-track{height:12px;border-radius:10px;background:#edf3f8;overflow:hidden}
+.severity-fill{height:100%;border-radius:9px}.severity-fill.before{opacity:.4}.severity-fill.after{opacity:1}
+.severity-values{display:flex;justify-content:flex-end;gap:6px;font-size:12px}.severity-values span{color:#90a0b1}
+.change-metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:20px 0}
+.change-metric{display:grid;gap:5px;text-align:center;padding:18px;border-radius:12px;background:white;border:1px solid #e2eaf2}
+.change-metric strong{font-size:30px}.change-metric span{font-size:12px;font-weight:700}
+.change-metric.fixed strong{color:#14866c}.change-metric.remaining strong{color:#a46717}.change-metric.introduced strong{color:#c33d5c}
+.recommend-banner{padding:17px;border-radius:12px;margin:20px 0;line-height:1.55}
+.recommend-banner.good{background:#e5f7ef;border:1px solid #b1e3cc;color:#116843}
+.recommend-banner.caution{background:#fff1e8;border:1px solid #f4cfb6;color:#965128}
+.recommend-banner.pending{background:#edf4fc;border:1px solid #cedff1;color:#365e88}
+.recommend-banner strong{font-size:15px}.recommend-banner p{margin:6px 0}.recommend-banner ul{margin:8px 0 0;padding-left:20px}
+.report-main-link{display:inline-block;text-decoration:none;margin-top:10px}
+.advanced-evidence{margin:17px 0;border:1px solid #dbe6f0;border-radius:13px;padding:17px}
+.advanced-evidence summary{cursor:pointer;font-weight:750;color:#34506b}
+.advanced-evidence[open] summary{margin-bottom:14px}
+.history-danger{border-top:1px solid #eed6db;margin:30px 0 0;padding:16px 0;display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+.history-danger button{color:#b52e4f;border-color:#e5aebc}.diagnostic-detail{white-space:pre-wrap;overflow-wrap:anywhere;color:#7d2644;background:#fff0f3;padding:12px;border-radius:8px;font:12px/1.6 ui-monospace,monospace}
+.priority-input{width:85px;padding:8px;border:1px solid #cbd6df;border-radius:8px}
+@media(max-width:700px){.scan-phases{grid-template-columns:1fr}.severity-graph-row{grid-template-columns:73px minmax(100px,1fr) 70px}.change-metrics{grid-template-columns:1fr 1fr 1fr}.change-metric{padding:9px}.change-metric strong{font-size:24px}}
