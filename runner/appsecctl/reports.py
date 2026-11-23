@@ -21,13 +21,26 @@ def reports_dir() -> Path:
 
 def write_html_report(resource_type: str, resource_id: str, payload: dict[str, Any]) -> str:
     ensure_report_ready(resource_type, payload)
-    path = reports_dir() / f"report-{resource_type}-{resource_id}-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.html"
+    name = (f"report-pipeline-{resource_id}.html" if resource_type == "pipeline"
+            else f"report-{resource_type}-{resource_id}-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.html")
+    path = reports_dir() / name
     title = f"{resource_type.replace('_', ' ').title()} Report"
     document = pipeline_report_html(resource_id, payload) if resource_type == "pipeline" else security_report_html(resource_id, payload)
     path.write_text(document, encoding="utf-8")
     stored_path = upload_artifact(str(path), f"{resource_type}/{resource_id}")
     with db.connect() as conn:
-        db.insert_generated_report(conn, resource_type, resource_id, "html", stored_path)
+        if resource_type == "pipeline":
+            existing = db.latest_generated_report(conn, resource_type, resource_id, "html")
+            if existing:
+                conn.execute("UPDATE generated_reports SET path=%s, created_at=now() WHERE id=%s",
+                             (stored_path, existing["id"]))
+                conn.execute("""DELETE FROM generated_reports
+                                WHERE resource_type=%s AND resource_id=%s AND format='html' AND id<>%s""",
+                             (resource_type, resource_id, existing["id"]))
+            else:
+                db.insert_generated_report(conn, resource_type, resource_id, "html", stored_path)
+        else:
+            db.insert_generated_report(conn, resource_type, resource_id, "html", stored_path)
     return stored_path
 
 
@@ -43,149 +56,9 @@ def ensure_report_ready(resource_type: str, payload: dict[str, Any]) -> None:
 
 
 def pipeline_report_html(resource_id: str, payload: dict[str, Any]) -> str:
-    pipeline = row_dict(payload.get("pipeline"))
-    scans = [row_dict(item) for item in payload.get("scans", [])]
-    patches = [row_dict(item) for item in payload.get("patches", [])]
-    diffs = [row_dict(item) for item in payload.get("diffs", [])]
-    policies = [row_dict(item) for item in payload.get("policies", [])]
-    artifacts = [row_dict(item) for item in payload.get("artifacts", [])]
-
-    scan_details: list[dict[str, Any]] = []
-    detail_by_key: dict[tuple[str, str, str], dict[str, Any]] = {}
-    image_metadata = []
-    type_summary: dict[tuple[str, str, str, str], int] = {}
-    for scan in scans:
-        scan_id = str(scan.get("id") or "")
-        if not scan_id:
-            continue
-        raw_report = row_dict(scan.get("raw_report"))
-        image_metadata.append(image_metadata_row(scan, raw_report))
-        for detail in trivy_vulnerability_rows(scan, raw_report):
-            scan_details.append(detail)
-            detail_by_key[vuln_key(detail)] = detail
-            summary_key = (
-                str(detail.get("phase") or ""),
-                str(detail.get("result_class") or ""),
-                str(detail.get("result_type") or ""),
-                str(detail.get("severity") or ""),
-            )
-            type_summary[summary_key] = type_summary.get(summary_key, 0) + 1
-
-    vulnerabilities: list[dict[str, Any]] = []
-    for scan in scans:
-        scan_id = str(scan.get("id") or "")
-        if not scan_id:
-            continue
-        with db.connect() as conn:
-            scan_vulns = db.vulnerabilities_for_scan(conn, scan_id)
-        for vuln in scan_vulns:
-            base = {"phase": scan.get("phase"), "image": scan.get("image_ref"), **row_dict(vuln)}
-            vulnerabilities.append({**base, **detail_by_key.get(vuln_key(base), {})})
-
-    fixed: list[dict[str, Any]] = []
-    remaining: list[dict[str, Any]] = []
-    introduced: list[dict[str, Any]] = []
-    for diff in diffs:
-        fixed.extend(enrich_vulnerabilities(json_list(diff.get("fixed_vulnerabilities")), detail_by_key))
-        remaining.extend(enrich_vulnerabilities(json_list(diff.get("remaining_vulnerabilities")), detail_by_key))
-        introduced.extend(enrich_vulnerabilities(json_list(diff.get("introduced_vulnerabilities")), detail_by_key))
-
-    original_total = scan_total(latest_phase(scans, "original"))
-    patched_total = scan_total(latest_phase(scans, "patched"))
-    fixed_count = sum(int(row.get("fixed_count") or 0) for row in diffs)
-    reduction_percent = round((fixed_count / original_total) * 100, 2) if original_total else 0
-    type_rows = [
-        {"phase": phase, "class": result_class, "type": result_type, "severity": severity, "count": count}
-        for (phase, result_class, result_type, severity), count in sorted(type_summary.items())
-    ]
-
-    title = "AppSec Image Pipeline Report"
-    summary = [
-        {
-            "pipeline_id": resource_id,
-            "image": pipeline.get("requested_image"),
-            "status": pipeline.get("status"),
-            "original_vulnerabilities": original_total,
-            "patched_vulnerabilities": patched_total,
-            "fixed_by_copa": fixed_count,
-            "reduction_percent": f"{reduction_percent}%",
-            "started_at": pipeline.get("started_at"),
-            "finished_at": pipeline.get("finished_at"),
-            "error": pipeline.get("error_message"),
-        }
-    ]
-
-    body = "\n".join(
-        [
-            header(title, resource_id),
-            section(
-                "Pipeline Summary",
-                paragraph("This report is generated only after the pipeline reaches a terminal state, so scan, Copa, diff, and policy results are collected together.")
-                + table(summary, ["pipeline_id", "image", "status", "original_vulnerabilities", "patched_vulnerabilities", "fixed_by_copa", "reduction_percent", "started_at", "finished_at", "error"]),
-            ),
-            section(
-                "Image Metadata",
-                table(image_metadata, ["phase", "image", "version", "digest", "image_id", "size", "os", "architecture", "created", "layers"]),
-            ),
-            section(
-                "Scan Stages",
-                table(
-                    scans,
-                    [
-                        "id",
-                        "phase",
-                        "image_ref",
-                        "status",
-                        "critical_count",
-                        "high_count",
-                        "medium_count",
-                        "low_count",
-                        "unknown_count",
-                        "started_at",
-                        "finished_at",
-                    ],
-                ),
-            ),
-            section(
-                "Copa Patch Runs",
-                table(patches, ["id", "source_image_ref", "patched_image_ref", "status", "started_at", "finished_at", "error_message"]),
-            ),
-            section(
-                "Policy Results",
-                table([policy_row(item) for item in policies], ["id", "scan_id", "status", "rules", "violations", "created_at"]),
-            ),
-            section(
-                "Copa Fix Summary",
-                paragraph(f"Copa reduced fixable vulnerabilities by {esc(reduction_percent)}% in this pipeline.")
-                + table(diffs, ["id", "fixed_count", "remaining_count", "introduced_count", "created_at"]),
-            ),
-            section(
-                "Vulnerability Type Summary",
-                table(type_rows, ["phase", "class", "type", "severity", "count"]),
-            ),
-            section(
-                "Fixed Vulnerabilities",
-                vuln_table(fixed),
-            ),
-            section(
-                "Remaining Vulnerabilities",
-                vuln_table(remaining),
-            ),
-            section(
-                "Introduced Vulnerabilities",
-                vuln_table(introduced),
-            ),
-            section(
-                "All Vulnerabilities By Scan",
-                vuln_table(scan_details or vulnerabilities, include_phase=True),
-            ),
-            section(
-                "Generated Artifacts",
-                table(artifacts, ["id", "kind", "format", "image_ref", "scan_id", "created_at"]),
-            ),
-        ]
-    )
-    return page(title, body)
+    """One colorful, standalone Before/After report instead of many stage tables."""
+    from .consolidated_report import render
+    return render(resource_id, payload)
 
 
 def security_report_html(resource_id: str, payload: dict[str, Any]) -> str:
