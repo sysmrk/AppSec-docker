@@ -80,6 +80,8 @@ def preflight(conn, image: str, user: dict[str, Any]) -> dict[str, Any]:
     workers = db.service_health_summary(conn)["heartbeats"]
     image_workers = [w for w in workers if w["service"].startswith("worker:") and "image" in w["service"]]
     recent = any(w["seconds_ago"] < 180 for w in image_workers)
+    from .image_sources import candidates
+    pull_order = candidates(conn, ref)
     checks = [
         {"name": "Image reference", "status": "ok", "hint": "Reference format is accepted; image existence is not yet verified."},
         {"name": "Scanning worker", "status": "ok" if recent else "warning",
@@ -89,6 +91,7 @@ def preflight(conn, image: str, user: dict[str, Any]) -> dict[str, Any]:
                  ("Docker Hub default; credentials depend on Worker." if not host else
                   "Registry not registered; an admin can register it. Docker credentials must also exist on Worker.")},
         {"name": "Image pull", "status": "unverified",
-         "hint": "The platform has not attempted to pull this image; a real scan confirms actual access."},
+         "hint": "Pull is attempted strictly in configured source priority order; real access is tested by the Worker."},
     ]
-    return {"image": ref, "registry": found, "checks": checks, "ready_for_attempt": True}
+    return {"image": ref, "registry": found, "sources": pull_order,
+            "checks": checks, "ready_for_attempt": True}

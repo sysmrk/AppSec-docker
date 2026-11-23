@@ -63,3 +63,9 @@ def evaluate(scan: dict[str, Any], rules: dict[str, Any] | None = None) -> tuple
     if not active_rules.get("enforce", True):
         return "report_only", active_rules, violations
     return ("passed" if not violations else "failed", active_rules, violations)
+
+
+def recommend(scan: dict[str, Any], rules: dict[str, Any] | None = None) -> tuple[str, dict[str, Any], list[dict[str, Any]]]:
+    """Advisory only, executed on the *post-patch* scan; never a pass/fail gate."""
+    _, active, violations = evaluate(scan, rules)
+    return ("not_recommended" if violations else "recommended", active, violations)

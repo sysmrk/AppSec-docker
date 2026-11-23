@@ -100,6 +100,18 @@ class PipelineRequest(BaseModel):
     confirm_patch: bool = False
 
 
+class ImagePullSourceRequest(BaseModel):
+    name: str = Field(min_length=2, max_length=50)
+    host: str = Field(min_length=3, max_length=255)
+    priority: int = Field(ge=1, le=10000)
+    enabled: bool = True
+
+
+class ImagePullSourceUpdate(BaseModel):
+    priority: int = Field(ge=1, le=10000)
+    enabled: bool = True
+
+
 class RegistryRequest(BaseModel):
     name: str = Field(min_length=2, max_length=50)
     host: str = Field(min_length=3, max_length=255)
@@ -116,6 +128,7 @@ class ManualDecisionRequest(BaseModel):
     action: str = Field(pattern="^(finish|approve_patch|cancel|approve_publish|skip_publish)$")
     confirm_patch: bool = False
     confirm_push: bool = False
+    destination: str | None = Field(default=None, max_length=1024)
 
 
 class ScheduleRequest(BaseModel):
@@ -1055,7 +1068,7 @@ def get_manual_workflow(
             if record.get(attr):
                 info = ui_error(record[attr], stage)
                 diagnostics.append(info)
-                record[attr] = info["title"]
+                record[attr] = info.get("detail") or info["title"]
         destination = os.environ.get("REGISTRY_HOST", "").rstrip("/") + "/" + (
             os.environ.get("PATCHED_REPOSITORY", "").strip("/")
         )
@@ -1094,7 +1107,7 @@ def decide_manual_workflow(
             raise HTTPException(status_code=409, detail="patch executor disabled; ask an administrator to start --patching")
     with db.connect() as conn:
         try:
-            result = mw.decide(conn, workflow_id, user, request.action, request.confirm_push)
+            result = mw.decide(conn, workflow_id, user, request.action, request.confirm_push, request.destination)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from None
         except PermissionError as exc:
@@ -1104,9 +1117,59 @@ def decide_manual_workflow(
         db.insert_audit(
             conn, str(user["id"]), "manual." + request.action,
             "manual_workflow", workflow_id,
-            {"confirmed_patch": request.confirm_patch, "confirmed_push": request.confirm_push},
+            {"confirmed_patch": request.confirm_patch, "confirmed_push": request.confirm_push,
+             "destination": result.get("destination")},
         )
     return result
+
+
+@app.get("/api/image-pull-sources")
+def list_image_pull_sources(user: dict[str, Any] = Depends(current_user)) -> list[dict[str, Any]]:
+    from . import image_sources
+    with db.connect() as conn:
+        return image_sources.list_sources(conn)
+
+
+@app.post("/api/image-pull-sources", status_code=201)
+def create_image_pull_source(request: ImagePullSourceRequest, user: dict[str, Any] = Depends(require_role("admin"))) -> dict[str, Any]:
+    from . import image_sources
+    with db.connect() as conn:
+        try:
+            result = image_sources.add(conn, request.name, request.host, request.priority, request.enabled)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
+        db.insert_audit(conn, str(user["id"]), "image_source.create", "image_pull_source", str(result["id"]),
+                        {"host": result["host"], "priority": result["priority"]})
+    return result
+
+
+@app.put("/api/image-pull-sources/{source_id}")
+def update_image_pull_source(source_id: str, request: ImagePullSourceUpdate, user: dict[str, Any] = Depends(require_role("admin"))) -> dict[str, Any]:
+    from . import image_sources
+    with db.connect() as conn:
+        try:
+            result = image_sources.update(conn, source_id, request.priority, request.enabled)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
+        if not result:
+            raise HTTPException(status_code=404, detail="source not found")
+        db.insert_audit(conn, str(user["id"]), "image_source.update", "image_pull_source", source_id,
+                        {"priority": request.priority, "enabled": request.enabled})
+    return result
+
+
+@app.delete("/api/image-pull-sources/{source_id}")
+def delete_image_pull_source(source_id: str, user: dict[str, Any] = Depends(require_role("admin"))) -> dict[str, str]:
+    from . import image_sources
+    with db.connect() as conn:
+        try:
+            removed = image_sources.remove(conn, source_id)
+        except ValueError:
+            raise HTTPException(status_code=404, detail="source not found") from None
+        if not removed:
+            raise HTTPException(status_code=404, detail="source not found")
+        db.insert_audit(conn, str(user["id"]), "image_source.delete", "image_pull_source", source_id, {})
+    return {"status": "deleted"}
 
 
 @app.get("/api/registries")

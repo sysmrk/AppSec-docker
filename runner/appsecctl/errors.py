@@ -10,6 +10,8 @@ import subprocess
 from typing import Any
 
 _CATALOG = [
+    ("SOURCE_PULL_FAILED", r"^SOURCE_PULL_FAILED:", "Image unavailable from approved sources", "Check each source's HTTP code, image path, permissions and TLS; no Docker Hub fallback was attempted.", True),
+    ("REGISTRY_PUSH_DENIED", r"^REGISTRY_PUSH_DENIED:", "Registry push permission revoked", "Have an admin review the destination registry authorization.", False),
     ("TRIVY_JAVA_DB", r"java db update failed|unable to initialize the java db|failed to (?:download|update) (?:the )?java db", "Trivy Java database unavailable", "Check TRIVY_JAVA_DB_REPOSITORY, registry access and the Trivy cache.", True),
     ("REPO_TARGET", r"^REPO_TARGET:", "Repository target is invalid", "Use an approved HTTPS Git host and repository path.", False),
     ("GIT_CLONE_TIMEOUT", r"^GIT_CLONE_TIMEOUT:", "Repository clone timed out", "Check DNS, proxy and HTTPS access from the Worker.", True),
@@ -45,7 +47,30 @@ def classify(value: Any, stage: str = "execution") -> dict[str, Any]:
 
 def safe_message(value: Any, stage: str = "execution") -> str:
     item = classify(value, stage)
-    return item["code"] + ": " + item["title"]
+    raw = value.stderr if isinstance(value, subprocess.CalledProcessError) else value
+    if str(raw or "").startswith(item["code"] + ":"):
+        detail = str(raw).split(":", 1)[1].strip()[:1600]
+    elif isinstance(value, subprocess.CalledProcessError):
+        detail = "exit=" + str(value.returncode) + "; " + safe_detail(raw)
+    else:
+        detail = ""
+    return item["code"] + ": " + item["title"] + (" | " + detail if detail else "")
 
 def ui_error(value: Any, stage: str = "execution") -> dict[str, Any] | None:
-    return classify(value, stage) if value else None
+    if not value:
+        return None
+    info = classify(value, stage)
+    if str(value).startswith(info["code"] + ":"):
+        info["detail"] = str(value).split("|", 1)[-1].strip()[:1600] if "|" in str(value) else str(value).split(":", 1)[1].strip()[:350]
+    return info
+
+
+def safe_detail(value: Any) -> str:
+    """Expose concrete scanner reason without tokens, credentials or full command args."""
+    raw = str(value or "")
+    raw = re.sub(r"(?i)(https?://)[^/\s@]+:[^/\s@]+@", r"\1[credentials]@", raw)
+    raw = re.sub(r"(?i)\b(bearer|authorization|password|token|secret|api[-_]?key)\s*[:=]\s*[^;\s]+",
+                 r"\1=[REDACTED]", raw)
+    raw = re.sub(r"(?i)([?&](?:token|key|signature|password|secret)=)[^&\s]+", r"\1[REDACTED]", raw)
+    lines = [re.sub(r"[\x00-\x1f]", " ", x).strip() for x in raw.splitlines() if x.strip()]
+    return (lines[-1] if lines else "No scanner diagnostic was returned")[:350]

@@ -37,7 +37,7 @@ def _state(item: dict[str, Any]) -> str:
             if pub_status in ("failed", "canceled"):
                 return "publish_failed"
             return "publishing" if pub_status == "running" else "publish_queued"
-        if item.get("pipeline_status") == "success" and item.get("policy_status") == "passed":
+        if item.get("pipeline_status") == "success" and item.get("policy_status") in ("recommended", "not_recommended", "passed"):
             return "awaiting_publication"
         return "publication_blocked"
     scan_status = item.get("scan_job_status")
@@ -120,7 +120,7 @@ def get_workflow(conn, workflow_id: str, user: dict[str, Any]) -> dict[str, Any]
 
 def decide(
     conn, workflow_id: str, user: dict[str, Any], action: str,
-    confirm_push: bool = False,
+    confirm_push: bool = False, destination: str | None = None,
 ) -> dict[str, Any]:
     if action not in ("finish", "approve_patch", "cancel", "approve_publish", "skip_publish"):
         raise ValueError("invalid decision")
@@ -183,12 +183,17 @@ def decide(
             return {"id": workflow_id, "state": "completed_without_publish"}
         if not confirm_push:
             raise ValueError("registry publication requires confirm_push=true")
-        if prepared["final_policy"] != "passed" or locked["pipeline_status"] != "success":
-            raise RuntimeError("cannot publish a patched image that failed the final policy")
+        if prepared["final_policy"] not in ("recommended", "not_recommended", "passed") or locked["pipeline_status"] != "success":
+            raise RuntimeError("post-patch recommendation is missing; rescan must complete first")
         if prepared["publication_status"] != "prepared":
             raise RuntimeError("patched image is not in the approved prepared state")
         from .registry import image_registry
-        registry_host = image_registry(str(prepared["patched_image_ref"]))
+        from .image_sources import image_path
+        publish_ref = (destination or str(prepared["patched_image_ref"])).strip()
+        if len(publish_ref) > 1024 or not image_registry(publish_ref):
+            raise ValueError("Enter a complete destination registry/repository:tag")
+        image_path(publish_ref)
+        registry_host = image_registry(publish_ref)
         authorized_registry = conn.execute("""
             SELECT id FROM registry_connections
             WHERE host=%s AND allow_push=true
@@ -204,6 +209,8 @@ def decide(
         if os.environ.get("APPSEC_REQUIRE_SECOND_APPROVER", "false").lower() == "true":
             if str(locked["approved_by"]) == str(user["id"]):
                 raise PermissionError("a different authorized operator must approve publishing")
+        conn.execute("UPDATE patch_runs SET patched_image_ref=%s WHERE id=%s",
+                     (publish_ref, prepared["id"]))
         publish_job = str(uuid4())
         conn.execute("""
             INSERT INTO pipeline_jobs(id, requested_image, status, priority,
@@ -216,7 +223,7 @@ def decide(
                 updated_at=now() WHERE id=%s
         """, (publish_job, user["id"], _uuid(workflow_id)))
         return {"id": workflow_id, "state": "publish_queued",
-                "publish_job_id": publish_job, "destination": prepared["patched_image_ref"]}
+                "publish_job_id": publish_job, "destination": publish_ref}
 
     if locked["decision"] is not None:
         raise RuntimeError("workflow already decided")

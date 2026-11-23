@@ -1,3 +1,13 @@
+CREATE TABLE IF NOT EXISTS image_pull_sources (
+    id UUID PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    host TEXT NOT NULL,
+    priority INTEGER NOT NULL CHECK (priority BETWEEN 1 AND 10000),
+    enabled BOOLEAN NOT NULL DEFAULT true,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_image_pull_sources_order ON image_pull_sources(enabled, priority, created_at);
+
 CREATE TABLE IF NOT EXISTS images (
     id UUID PRIMARY KEY,
     name TEXT NOT NULL,

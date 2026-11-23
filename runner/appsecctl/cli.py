@@ -12,7 +12,7 @@ from uuid import uuid4
 from alembic import command as alembic_command
 from alembic.config import Config as AlembicConfig
 
-from . import db, policy
+from . import db, policy, image_sources
 from .errors import safe_message
 from .reports import write_html_report, write_security_sarif
 from .security import enqueue_security_job, run_security_job
@@ -275,11 +275,12 @@ def create_diff(pipeline_id: str, original_scan_id: str, patched_scan_id: str) -
     return diff_id
 
 
-def evaluate_policy(pipeline_id: str, scan_id: str, project_id: str | None = None) -> str:
+def evaluate_policy(pipeline_id: str, scan_id: str, project_id: str | None = None, *, advisory: bool = False) -> str:
     with db.connect() as conn:
         scan = db.get_scan(conn, scan_id)
         rules_from_db = db.active_policy_rules(conn, project_id)
-        status, rules, violations = policy.evaluate(scan, rules_from_db)
+        status, rules, violations = (policy.recommend(scan, rules_from_db) if advisory
+                                    else policy.evaluate(scan, rules_from_db))
         db.insert_policy_result(conn, pipeline_id, scan_id, status, rules, violations)
 
     print(json.dumps({"policy": status, "violations": violations}, indent=2))
@@ -295,8 +296,10 @@ def run_pipeline(image_ref: str, project_id: str | None = None, mode: str = "sca
         pipeline_id = db.create_pipeline(conn, image_id, image_ref, project_id)
 
     try:
-        original_scan_id = scan_image(image_ref, "original", pipeline_id)
-        generate_sbom(image_ref, "original", original_scan_id, pipeline_id)
+        with db.connect() as conn:
+            resolved_image = image_sources.pull_image(conn, image_ref)
+        original_scan_id = scan_image(resolved_image, "original", pipeline_id)
+        generate_sbom(resolved_image, "original", original_scan_id, pipeline_id)
         policy_scan_id = original_scan_id
         if mode == "patch":
             _, patched_ref = patch_from_scan(original_scan_id)
@@ -304,9 +307,11 @@ def run_pipeline(image_ref: str, project_id: str | None = None, mode: str = "sca
             generate_sbom(patched_ref, "patched", patched_scan_id, pipeline_id)
             create_diff(pipeline_id, original_scan_id, patched_scan_id)
             policy_scan_id = patched_scan_id
-        policy_status = evaluate_policy(pipeline_id, policy_scan_id, project_id)
+        # Initial scan reports findings only. Post-patch policy is advisory.
+        if mode == "patch":
+            evaluate_policy(pipeline_id, policy_scan_id, project_id, advisory=True)
         with db.connect() as conn:
-            db.finish_pipeline(conn, pipeline_id, "policy_failed" if policy_status == "failed" else "success")
+            db.finish_pipeline(conn, pipeline_id, "success")
     except BaseException as exc:
         with db.connect() as conn:
             db.finish_pipeline(conn, pipeline_id, "failed", safe_message(exc, 'pipeline'))
@@ -352,9 +357,9 @@ def continue_pipeline_patch(pipeline_id: str) -> str:
         patched_scan_id = scan_image(patched_ref, "patched", pipeline_id)
         generate_sbom(patched_ref, "patched", patched_scan_id, pipeline_id)
         create_diff(pipeline_id, source_scan_id, patched_scan_id)
-        policy_status = evaluate_policy(pipeline_id, patched_scan_id, project_id)
+        evaluate_policy(pipeline_id, patched_scan_id, project_id, advisory=True)
         with db.connect() as conn:
-            db.finish_pipeline(conn, pipeline_id, "policy_failed" if policy_status == "failed" else "success")
+            db.finish_pipeline(conn, pipeline_id, "success")
     except BaseException as exc:
         with db.connect() as conn:
             db.finish_pipeline(conn, pipeline_id, "failed", safe_message(exc, 'pipeline'))
@@ -391,8 +396,20 @@ def publish_prepared_patch(pipeline_id: str, publish_job_id: str) -> str:
         """, (pipeline_id, publish_job_id)).fetchone()
         if not row or row["publication_status"] != "prepared" or not row["local_image_ref"]:
             raise RuntimeError("No prepared, unpublished image exists for this workflow")
-        if row["policy_status"] != "passed":
-            raise RuntimeError("Patched image policy must pass before registry publication")
+        if row["policy_status"] not in ("recommended", "not_recommended", "passed"):
+            raise RuntimeError("The post-patch recommendation is missing")
+        # Revalidate registry authorization at execution time (revocation-safe).
+        from .registry import image_registry
+        host = image_registry(str(row["patched_image_ref"]))
+        authorized = conn.execute("""
+            SELECT 1 FROM registry_connections r
+            JOIN manual_workflows w ON w.publish_job_id=%s
+            WHERE r.host=%s AND r.allow_push=true
+              AND (r.project_id IS NULL OR r.project_id=w.project_id)
+            LIMIT 1
+        """, (publish_job_id, host)).fetchone()
+        if not authorized:
+            raise RuntimeError("REGISTRY_PUSH_DENIED: destination permission revoked before execution")
         local_ref = str(row["local_image_ref"])
         dest = str(row["patched_image_ref"])
         patch_id = str(row["id"])
