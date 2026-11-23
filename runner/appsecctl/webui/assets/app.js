@@ -636,7 +636,7 @@
     const query = project ? "?project_id=" + encodeURIComponent(project) : "";
     const rules = await request("/api/policies/effective" + query);
     if ($("policy-project").value !== project) return;
-    $("policy-mode").value = rules.enforce ? "enforce" : "report_only";
+    // All policy decisions are now advisory after the second scan.
     for (const severity of ["critical", "high", "medium", "low"]) {
       $("policy-" + severity).value = rules["max_" + severity];
     }
@@ -691,7 +691,7 @@
   bindForm("policy-form", () => ({
     name: $("policy-name").value.trim(), project_id: $("policy-project").value || null,
     rules: {
-      enforce: $("policy-mode").value === "enforce",
+      enforce: false,
       max_critical: Number($("policy-critical").value),
       max_high: Number($("policy-high").value),
       max_medium: Number($("policy-medium").value),

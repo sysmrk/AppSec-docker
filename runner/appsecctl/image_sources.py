@@ -38,7 +38,13 @@ def candidates(conn: Any, requested: str) -> list[dict[str, Any]]:
            WHERE enabled=true ORDER BY priority ASC, created_at ASC, name ASC"""
     ).fetchall()
     if not rows:
-        # Legacy behavior for installations with no trusted sources configured.
+        configured = conn.execute(
+            "SELECT EXISTS(SELECT 1 FROM image_pull_sources) AS configured"
+        ).fetchone()
+        if configured and configured["configured"]:
+            # Fail closed: disabled sources NEVER authorize an unconfigured Docker Hub pull.
+            return []
+        # Backward-compatible direct pulls only on installations with no source policy.
         return [{"name": "direct (no source policy)", "ref": requested, "priority": 0}]
     return [{"name": row["name"], "ref": str(row["host"]).rstrip("/") + "/" + path,
              "priority": row["priority"]} for row in rows]
@@ -89,7 +95,10 @@ def pull_image(conn: Any, requested: str) -> str:
     """
     from .errors import safe_detail
     attempts = []
-    for item in candidates(conn, requested):
+    ordered = candidates(conn, requested)
+    if not ordered:
+        raise RuntimeError("SOURCE_PULL_FAILED: All trusted image sources are disabled; enable a source in Registries.")
+    for item in ordered:
         ref = item["ref"]
         try:
             result = subprocess.run(["docker", "pull", ref], capture_output=True,

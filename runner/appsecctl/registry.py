@@ -95,5 +95,8 @@ def preflight(conn, image: str, user: dict[str, Any]) -> dict[str, Any]:
         {"name": "Image pull", "status": "unverified",
          "hint": "Pull is attempted strictly in configured source priority order; real access is tested by the Worker."},
     ]
+    if not pull_order:
+        checks.append({"name": "Trusted source", "status": "warning",
+                       "hint": "All configured image sources are disabled; no direct Docker Hub fallback is permitted."})
     return {"image": ref, "registry": found, "sources": pull_order,
-            "checks": checks, "ready_for_attempt": True}
+            "checks": checks, "ready_for_attempt": bool(pull_order)}

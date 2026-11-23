@@ -33,3 +33,14 @@ class SourcePriorityTests(unittest.TestCase):
     def test_policy_advice_is_not_a_gate(self):
         self.assertEqual(policy.recommend({"critical_count": 4}, {"max_critical": 0})[0], "not_recommended")
         self.assertEqual(policy.recommend({"critical_count": 0}, {"max_critical": 0})[0], "recommended")
+
+
+class NoFallbackWhenDisabled(unittest.TestCase):
+    def test_all_sources_disabled_must_fail_closed(self):
+        conn = MagicMock()
+        conn.execute.return_value.fetchall.return_value = []
+        conn.execute.return_value.fetchone.return_value = {"configured": True}
+        with patch.object(image_sources.subprocess, "run") as runner:
+            with self.assertRaisesRegex(RuntimeError, "All trusted image sources are disabled"):
+                image_sources.pull_image(conn, "nginx:1")
+        runner.assert_not_called()
