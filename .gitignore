@@ -1,5 +1,7 @@
 .env
 data/
+/trivy-cache/
+/buildkit-local.toml
 *.pyc
 __pycache__/
 .pytest_cache/

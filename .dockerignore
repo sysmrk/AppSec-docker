@@ -2,6 +2,7 @@
 **/__pycache__
 *.pyc
 .env
+trivy-cache/
 postgres-data
 registry-data
 buildkit-data

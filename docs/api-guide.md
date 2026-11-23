@@ -199,7 +199,7 @@ API فعلی همان API معمول FastAPI است. MCP یک سرویس مست�
 
 ## Scan-only default and explicit patching
 
-New `POST /appsec-api/pipelines` requests default to `mode=scan`: Trivy, SBOM, policy and report, with **no automatic patch or push**. Advanced patch requests require a running privileged patch executor (`./appsec start --patching`), approved registry credentials, and `confirm_patch=true`:
+New `POST /appsec-api/pipelines` requests default to `mode=scan`: Trivy, SBOM, policy and report, with **no automatic patch or push**. Advanced patch requests prepare and evaluate a local image. They require a running privileged patch executor (`./appsec start --patching`) and `confirm_patch=true`. Registry publication goes through the guided approval workflow:
 
 ```bash
 curl -X POST http://127.0.0.1:8080/appsec-api/pipelines \

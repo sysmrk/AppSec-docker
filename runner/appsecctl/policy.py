@@ -28,16 +28,23 @@ def rules_from_env() -> dict[str, int]:
     }
 
 
-def normalize_rules(rules: dict[str, Any]) -> dict[str, int]:
-    return {
+def normalize_rules(rules: dict[str, Any]) -> dict[str, int | bool]:
+    enforce = rules.get("enforce", True)
+    if not isinstance(enforce, bool):
+        raise ValueError("enforce must be a boolean")
+    normalized = {
+        "enforce": enforce,
         "max_critical": int(rules.get("max_critical", 0)),
         "max_high": int(rules.get("max_high", 0)),
         "max_medium": int(rules.get("max_medium", 999999)),
         "max_low": int(rules.get("max_low", 999999)),
     }
+    if any(normalized[f"max_{severity}"] < 0 for severity in SEVERITY_FIELDS):
+        raise ValueError("policy thresholds must be nonnegative")
+    return normalized
 
 
-def evaluate(scan: dict[str, Any], rules: dict[str, int] | None = None) -> tuple[str, dict[str, int], list[dict[str, Any]]]:
+def evaluate(scan: dict[str, Any], rules: dict[str, Any] | None = None) -> tuple[str, dict[str, Any], list[dict[str, Any]]]:
     active_rules = normalize_rules(rules) if rules else rules_from_env()
     violations = []
 
@@ -53,4 +60,6 @@ def evaluate(scan: dict[str, Any], rules: dict[str, int] | None = None) -> tuple
                 }
             )
 
+    if not active_rules.get("enforce", True):
+        return "report_only", active_rules, violations
     return ("passed" if not violations else "failed", active_rules, violations)

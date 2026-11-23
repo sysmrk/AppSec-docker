@@ -25,9 +25,9 @@ def env(name: str, default: str) -> str:
     return os.environ.get(name, default)
 
 
-def run_command(command: list[str]) -> None:
+def run_command(command: list[str], *, capture_errors: bool = False) -> None:
     print("+ " + " ".join(command), flush=True)
-    subprocess.run(command, check=True)
+    subprocess.run(command, check=True, stderr=subprocess.PIPE if capture_errors else None, text=capture_errors)
 
 
 def report_name(prefix: str, identifier: str) -> str:
@@ -74,13 +74,19 @@ def docker_base() -> list[str]:
     return ["docker", "run", "--rm", "--network", env("TOOL_NETWORK", "appsec-net")]
 
 
+def trivy_database_options() -> list[str]:
+    return [
+        "-e", f"TRIVY_DB_REPOSITORY={env('TRIVY_DB_REPOSITORY', 'ghcr.io/aquasecurity/trivy-db:2')}",
+        "-e", f"TRIVY_JAVA_DB_REPOSITORY={env('TRIVY_JAVA_DB_REPOSITORY', 'ghcr.io/aquasecurity/trivy-java-db:1')}",
+    ]
+
+
 def scan_image(image_ref: str, phase: str, pipeline_id: str | None = None) -> str:
     scan_id = str(uuid4())
     reports_dir = Path(env("REPORTS_DIR", "/reports"))
     reports_volume = env("REPORTS_VOLUME", "appsec_reports")
     trivy_cache_volume = env("TRIVY_CACHE_VOLUME", "appsec_trivy_cache")
     trivy_image = env("TRIVY_IMAGE", "aquasec/trivy:latest")
-    trivy_db_repository = env("TRIVY_DB_REPOSITORY", "ghcr.io/aquasecurity/trivy-db:2")
     report_file = report_name(f"trivy-{phase}", scan_id)
     report_path = reports_dir / report_file
     container_report_path = f"/reports/{report_file}"
@@ -89,9 +95,7 @@ def scan_image(image_ref: str, phase: str, pipeline_id: str | None = None) -> st
         image_id = db.get_or_create_image(conn, image_ref)
         db.insert_scan_started(conn, scan_id, pipeline_id, image_id, image_ref, phase)
 
-    command = docker_base() + [
-        "-e",
-        f"TRIVY_DB_REPOSITORY={trivy_db_repository}",
+    command = docker_base() + trivy_database_options() + [
         "-v",
         "/var/run/docker.sock:/var/run/docker.sock",
         "-v",
@@ -113,7 +117,7 @@ def scan_image(image_ref: str, phase: str, pipeline_id: str | None = None) -> st
     ]
 
     try:
-        run_command(command)
+        run_command(command, capture_errors=True)
         report = json.loads(report_path.read_text(encoding="utf-8"))
         counts, vulnerabilities = parse_trivy_report(report)
         with db.connect() as conn:
@@ -135,14 +139,11 @@ def generate_sbom(image_ref: str, phase: str, scan_id: str, pipeline_id: str | N
     reports_volume = env("REPORTS_VOLUME", "appsec_reports")
     trivy_cache_volume = env("TRIVY_CACHE_VOLUME", "appsec_trivy_cache")
     trivy_image = env("TRIVY_IMAGE", "aquasec/trivy:latest")
-    trivy_db_repository = env("TRIVY_DB_REPOSITORY", "ghcr.io/aquasecurity/trivy-db:2")
     sbom_file = report_name(f"sbom-{phase}", artifact_id).replace(".json", ".cdx.json")
     sbom_path = reports_dir / sbom_file
     container_sbom_path = f"/reports/{sbom_file}"
 
-    command = docker_base() + [
-        "-e",
-        f"TRIVY_DB_REPOSITORY={trivy_db_repository}",
+    command = docker_base() + trivy_database_options() + [
         "-v",
         "/var/run/docker.sock:/var/run/docker.sock",
         "-v",
@@ -158,7 +159,7 @@ def generate_sbom(image_ref: str, phase: str, scan_id: str, pipeline_id: str | N
         image_ref,
     ]
 
-    run_command(command)
+    run_command(command, capture_errors=True)
     with db.connect() as conn:
         db.insert_artifact(conn, pipeline_id, scan_id, image_ref, "sbom", "cyclonedx-json", str(sbom_path))
     return str(sbom_path)
@@ -185,7 +186,7 @@ def source_repository(image_ref: str) -> str:
     return image_ref
 
 
-def patch_from_scan(scan_id: str, *, publish: bool = True) -> tuple[str, str]:
+def patch_from_scan(scan_id: str) -> tuple[str, str]:
     patch_id = str(uuid4())
 
     with db.connect() as conn:
@@ -222,25 +223,20 @@ def patch_from_scan(scan_id: str, *, publish: bool = True) -> tuple[str, str]:
 
     try:
         run_command(command)
-        if publish:
-            run_command(["docker", "tag", local_patched_ref, patched_ref])
-            run_command(["docker", "push", patched_ref])
         with db.connect() as conn:
             db.update_patch_success(conn, patch_id, None)
             conn.execute("""
-                UPDATE patch_runs SET local_image_ref=%s,
-                  publication_status=%s,
-                  published_at=CASE WHEN %s THEN now() ELSE NULL END
+                UPDATE patch_runs SET local_image_ref=%s, publication_status='prepared'
                 WHERE id=%s
-            """, (local_patched_ref, "published" if publish else "prepared", publish, patch_id))
+            """, (local_patched_ref, patch_id))
     except BaseException as exc:
         with db.connect() as conn:
             db.update_patch_failed(conn, patch_id, safe_message(exc, 'patch'))
         raise
 
-    print(json.dumps({"patch_id": patch_id, "patched_image": patched_ref,
-                      "published": publish}, indent=2))
-    return patch_id, patched_ref if publish else local_patched_ref
+    print(json.dumps({"patch_id": patch_id, "patched_image": local_patched_ref,
+                      "published": False}, indent=2))
+    return patch_id, local_patched_ref
 
 
 def create_diff(pipeline_id: str, original_scan_id: str, patched_scan_id: str) -> str:
@@ -291,7 +287,7 @@ def evaluate_policy(pipeline_id: str, scan_id: str, project_id: str | None = Non
 
 
 def run_pipeline(image_ref: str, project_id: str | None = None, mode: str = "scan") -> str:
-    """Run a safe scan-only workflow unless patch/push is explicitly requested."""
+    """Scan an image and optionally prepare and evaluate a local patch."""
     if mode not in ("scan", "patch"):
         raise ValueError("mode must be scan or patch")
     with db.connect() as conn:
@@ -310,7 +306,7 @@ def run_pipeline(image_ref: str, project_id: str | None = None, mode: str = "sca
             policy_scan_id = patched_scan_id
         policy_status = evaluate_policy(pipeline_id, policy_scan_id, project_id)
         with db.connect() as conn:
-            db.finish_pipeline(conn, pipeline_id, "success" if policy_status == "passed" else "policy_failed")
+            db.finish_pipeline(conn, pipeline_id, "policy_failed" if policy_status == "failed" else "success")
     except BaseException as exc:
         with db.connect() as conn:
             db.finish_pipeline(conn, pipeline_id, "failed", safe_message(exc, 'pipeline'))
@@ -352,13 +348,13 @@ def continue_pipeline_patch(pipeline_id: str) -> str:
             (pipeline_id,),
         )
     try:
-        _, patched_ref = patch_from_scan(source_scan_id, publish=False)
+        _, patched_ref = patch_from_scan(source_scan_id)
         patched_scan_id = scan_image(patched_ref, "patched", pipeline_id)
         generate_sbom(patched_ref, "patched", patched_scan_id, pipeline_id)
         create_diff(pipeline_id, source_scan_id, patched_scan_id)
         policy_status = evaluate_policy(pipeline_id, patched_scan_id, project_id)
         with db.connect() as conn:
-            db.finish_pipeline(conn, pipeline_id, "success" if policy_status == "passed" else "policy_failed")
+            db.finish_pipeline(conn, pipeline_id, "policy_failed" if policy_status == "failed" else "success")
     except BaseException as exc:
         with db.connect() as conn:
             db.finish_pipeline(conn, pipeline_id, "failed", safe_message(exc, 'pipeline'))
@@ -369,7 +365,7 @@ def continue_pipeline_patch(pipeline_id: str) -> str:
     return pipeline_id
 
 
-def publish_prepared_patch(pipeline_id: str) -> str:
+def publish_prepared_patch(pipeline_id: str, publish_job_id: str) -> str:
     """Human-approved single-attempt publication after successful patched policy."""
     with db.connect() as conn:
         row = conn.execute("""
@@ -377,13 +373,22 @@ def publish_prepared_patch(pipeline_id: str) -> str:
                    p.publication_status, pol.status AS policy_status
             FROM patch_runs p
             JOIN LATERAL (
-                SELECT status FROM policy_results
-                WHERE pipeline_id=p.pipeline_id ORDER BY created_at DESC LIMIT 1
+                SELECT pol.status FROM policy_results pol
+                JOIN scan_runs sr ON sr.id=pol.scan_id
+                WHERE pol.pipeline_id=p.pipeline_id AND sr.phase='patched' AND sr.status='success'
+                  AND sr.image_ref=p.local_image_ref
+                ORDER BY pol.created_at DESC LIMIT 1
             ) pol ON true
             WHERE p.pipeline_id=%s AND p.status='success'
+              AND EXISTS (
+                  SELECT 1 FROM manual_workflows w
+                  JOIN pipeline_jobs scan_job ON scan_job.id=w.scan_job_id
+                  WHERE scan_job.pipeline_id=p.pipeline_id AND w.publish_job_id=%s
+                    AND w.publish_decision='approve_publish' AND w.published_by IS NOT NULL
+              )
             ORDER BY p.started_at DESC LIMIT 1
             FOR UPDATE OF p
-        """, (pipeline_id,)).fetchone()
+        """, (pipeline_id, publish_job_id)).fetchone()
         if not row or row["publication_status"] != "prepared" or not row["local_image_ref"]:
             raise RuntimeError("No prepared, unpublished image exists for this workflow")
         if row["policy_status"] != "passed":
@@ -463,12 +468,12 @@ def main(argv: list[str] | None = None) -> int:
 
     run_parser = subparsers.add_parser("run")
     run_parser.add_argument("image")
-    run_parser.add_argument("--patch", action="store_true", help="Explicitly patch and push after scanning (advanced)")
+    run_parser.add_argument("--patch", action="store_true", help="Prepare and rescan a local patched image")
 
     enqueue_parser = subparsers.add_parser("enqueue")
     enqueue_parser.add_argument("image")
     enqueue_parser.add_argument("--priority", type=int, default=100)
-    enqueue_parser.add_argument("--patch", action="store_true", help="Explicitly enable patch and push")
+    enqueue_parser.add_argument("--patch", action="store_true", help="Queue local patch preparation and rescanning")
 
     jobs_parser = subparsers.add_parser("jobs")
     jobs_parser.add_argument("--limit", type=int, default=20)
@@ -487,7 +492,7 @@ def main(argv: list[str] | None = None) -> int:
     ci_subparsers = ci_parser.add_subparsers(dest="ci_command", required=True)
     ci_image_parser = ci_subparsers.add_parser("image")
     ci_image_parser.add_argument("image")
-    ci_image_parser.add_argument("--patch", action="store_true", help="Patch/push explicitly")
+    ci_image_parser.add_argument("--patch", action="store_true", help="Evaluate a locally patched image")
     ci_security_parser = ci_subparsers.add_parser("security")
     ci_security_parser.add_argument("kind", choices=("secrets",))
     ci_security_parser.add_argument("target")

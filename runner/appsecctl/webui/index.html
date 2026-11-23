@@ -232,13 +232,14 @@
             <form id="policy-form" class="panel form-panel"><h2>Security policy</h2>
               <label for="policy-project">Project</label><select id="policy-project"><option value="">Global default (admin)</option></select>
               <label for="policy-name">Policy name</label><input id="policy-name" value="security-gate" required minlength="2">
+              <label for="policy-mode">Enforcement</label><select id="policy-mode"><option value="enforce">Enforce thresholds</option><option value="report_only">Report only (enforcement disabled)</option></select>
               <div class="inline-fields">
                 <div><label for="policy-critical">Maximum Critical</label><input type="number" id="policy-critical" min="0" value="0" required></div>
                 <div><label for="policy-high">Maximum High</label><input type="number" id="policy-high" min="0" value="0" required></div>
                 <div><label for="policy-medium">Maximum Medium</label><input type="number" id="policy-medium" min="0" value="999999" required></div>
                 <div><label for="policy-low">Maximum Low</label><input type="number" id="policy-low" min="0" value="999999" required></div>
               </div>
-              <p class="hint">A newly created policy is versioned and used for subsequent scans.</p>
+              <p class="hint">Applies to subsequent scans. Report-only mode records findings without failing the scan. Publishing requires a policy pass.</p>
               <button type="submit" class="primary">Save policy</button>
             </form>
             <form id="user-form" class="panel form-panel"><h2>Create a user</h2>

@@ -1,11 +1,25 @@
 import os
+import subprocess
+import tempfile
 import unittest
 from unittest.mock import patch
 
 from appsecctl.sanitization import MASK, redact_gitleaks_report, validate_repo_target, sanitize_security_detail
+from appsecctl import security
+from appsecctl.errors import safe_message
 
 
 class SecretSanitizationTests(unittest.TestCase):
+    def test_repository_timeout_has_safe_stage_code(self):
+        with tempfile.TemporaryDirectory() as workspace, \
+             patch.dict(os.environ, {"WORKSPACES_DIR": workspace, "SECURITY_ALLOWED_GIT_HOSTS": "github.com"}), \
+             patch.object(security, "run_command", side_effect=subprocess.TimeoutExpired(["SENTINEL"], 120)):
+            with self.assertRaises(RuntimeError) as raised:
+                security.prepare_repo("https://github.com/org/repo", "job")
+        message = safe_message(raised.exception, "repository")
+        self.assertTrue(message.startswith("GIT_CLONE_TIMEOUT:"))
+        self.assertNotIn("SENTINEL", message)
+
     def test_gitleaks_secret_fields_removed(self):
         source = [{"Match": "password=TOP_SECRET", "Secret": "TOP_SECRET",
                    "Line": "password=TOP_SECRET", "RuleID": "generic-api-key"}]

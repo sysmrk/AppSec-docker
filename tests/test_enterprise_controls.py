@@ -39,7 +39,9 @@ class EnterpriseContractTests(unittest.TestCase):
         self.assertEqual(result["fixed"][0]["vulnerability_id"], "CVE-1")
 
     def test_manual_state_requires_publish_after_patch(self):
-        item = {"decision": "approve_patch", "patch_job_status": "success", "pipeline_status": "success"}
+        item = {"decision": "approve_patch", "patch_job_status": "success", "pipeline_status": "success",
+                "policy_status": "passed"}
+        self.assertEqual(manual_workflows._state({**item, "policy_status": "report_only"}), "publication_blocked")
         self.assertEqual(manual_workflows._state(item), "awaiting_publication")
         self.assertEqual(manual_workflows._state({**item, "pipeline_status": "policy_failed"}), "publication_blocked")
         self.assertEqual(manual_workflows._state({**item, "publish_decision": "approve_publish",

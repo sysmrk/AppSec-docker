@@ -179,9 +179,9 @@ curl -X POST http://127.0.0.1:8080/appsec-api/api/policies \
 
 ## Optional patch mode in CI
 
-Use `./scripts/appsecctl.sh ci image "$IMAGE_REF" --patch` **only** when BuildKit is running under the `patch` profile, the registry is configured and the write action is explicitly approved. Ordinary CI should remain scan-only to avoid an unexpected registry push.
+Use `./scripts/appsecctl.sh ci image "$IMAGE_REF" --patch` when BuildKit is running under the `patch` profile and local patch evaluation is required. The job prepares and rescans a local image.
 
 
 ## Manual approval vs CI automation
 
-Normal CI remains scan-only. The Control Center's guided workflow uses two separate approvals: first local patch preparation/scan, then publishing the policy-passed image to an explicitly approved Registry. The legacy advanced CLI `--patch` can still use a one-shot Patch+Push; only trusted automation operators should use it. Configure isolated executors and scoped credentials, review final policy and sign/promote images through approved enterprise controls.
+Normal CI remains scan-only. The Control Center's guided workflow uses two separate approvals: first local patch preparation/scan, then publishing the policy-passed image to an explicitly approved Registry. The advanced CLI `--patch` stops after evaluating the local patch. Configure isolated executors and scoped credentials, review final policy and sign/promote images through approved enterprise controls.

@@ -37,7 +37,9 @@ def _state(item: dict[str, Any]) -> str:
             if pub_status in ("failed", "canceled"):
                 return "publish_failed"
             return "publishing" if pub_status == "running" else "publish_queued"
-        return "awaiting_publication" if item.get("pipeline_status") == "success" else "publication_blocked"
+        if item.get("pipeline_status") == "success" and item.get("policy_status") == "passed":
+            return "awaiting_publication"
+        return "publication_blocked"
     scan_status = item.get("scan_job_status")
     if scan_status in ("failed", "canceled"):
         return "failed" if scan_status == "failed" else "canceled"
@@ -72,12 +74,16 @@ _WORKFLOW_QUERY = """
            p.status AS patch_job_status, p.last_error AS patch_error,
            pub.status AS publish_job_status, pub.last_error AS publish_error,
            COALESCE(p.pipeline_id, s.pipeline_id) AS pipeline_id,
-           pr.status AS pipeline_status
+           pr.status AS pipeline_status, pol.status AS policy_status
     FROM manual_workflows w
     JOIN pipeline_jobs s ON s.id = w.scan_job_id
     LEFT JOIN pipeline_jobs p ON p.id = w.patch_job_id
     LEFT JOIN pipeline_jobs pub ON pub.id = w.publish_job_id
     LEFT JOIN pipeline_runs pr ON pr.id = COALESCE(p.pipeline_id, s.pipeline_id)
+    LEFT JOIN LATERAL (
+        SELECT status FROM policy_results WHERE pipeline_id=pr.id
+        ORDER BY created_at DESC LIMIT 1
+    ) pol ON true
 """
 
 

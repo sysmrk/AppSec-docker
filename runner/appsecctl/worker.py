@@ -44,7 +44,7 @@ def main() -> int:
                     pipeline_id = (
                         continue_pipeline_patch(str(job["pipeline_id"]))
                         if job["mode"] == "continue_patch"
-                        else publish_prepared_patch(str(job["pipeline_id"]))
+                        else publish_prepared_patch(str(job["pipeline_id"]), job_id)
                     )
                 else:
                     pipeline_id = run_pipeline(image_ref, project_id, mode=str(job.get("mode") or "scan"))

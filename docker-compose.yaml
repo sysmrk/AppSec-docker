@@ -16,13 +16,14 @@ x-runner-env: &runner-env
   POSTGRES_PASSWORD_FILE: ${POSTGRES_PASSWORD_FILE:-}
   TRIVY_IMAGE: ${TRIVY_IMAGE:-aquasec/trivy:latest}
   TRIVY_DB_REPOSITORY: ${TRIVY_DB_REPOSITORY:-ghcr.io/aquasecurity/trivy-db:2}
+  TRIVY_JAVA_DB_REPOSITORY: ${TRIVY_JAVA_DB_REPOSITORY:-ghcr.io/aquasecurity/trivy-java-db:1}
   BUILDKIT_CONTAINER: ${BUILDKIT_CONTAINER:-appsec-buildkit}
   COPA_TIMEOUT: ${COPA_TIMEOUT:-30m}
   REGISTRY_HOST: ${REGISTRY_HOST:-localhost:8081}
   PATCHED_REPOSITORY: ${PATCHED_REPOSITORY:-library/appsec-patched}
   REPORTS_DIR: /reports
   REPORTS_VOLUME: ${REPORTS_VOLUME:-appsec_reports}
-  TRIVY_CACHE_VOLUME: ${TRIVY_CACHE_VOLUME:-appsec_trivy_cache}
+  TRIVY_CACHE_VOLUME: ${TRIVY_CACHE_PATH:-${PWD}/trivy-cache}
   WORKSPACES_VOLUME: ${WORKSPACES_VOLUME:-appsec_workspaces}
   TOOL_NETWORK: ${TOOL_NETWORK:-appsec-net}
   WORKSPACES_DIR: /workspaces
@@ -115,7 +116,7 @@ services:
       - appsec-net
 
   buildkit:
-    image: moby/buildkit:latest
+    image: ${BUILDKIT_IMAGE:-moby/buildkit:latest}
     container_name: ${BUILDKIT_CONTAINER:-appsec-buildkit}
     restart: unless-stopped
     privileged: true
@@ -390,14 +391,14 @@ services:
         while true; do
           docker run --rm \
             -e TRIVY_DB_REPOSITORY="${TRIVY_DB_REPOSITORY:-ghcr.io/aquasecurity/trivy-db:2}" \
-            -v "${TRIVY_CACHE_VOLUME:-appsec_trivy_cache}:/root/.cache/trivy" \
+            -v "${TRIVY_CACHE_PATH:-${PWD}/trivy-cache}:/root/.cache/trivy" \
             "${TRIVY_IMAGE:-aquasec/trivy:latest}" image --download-db-only;
           sleep "$${TRIVY_DB_UPDATE_INTERVAL_SECONDS:-21600}";
         done
     environment:
       TRIVY_IMAGE: ${TRIVY_IMAGE:-aquasec/trivy:latest}
       TRIVY_DB_REPOSITORY: ${TRIVY_DB_REPOSITORY:-ghcr.io/aquasecurity/trivy-db:2}
-      TRIVY_CACHE_VOLUME: ${TRIVY_CACHE_VOLUME:-appsec_trivy_cache}
+      TRIVY_CACHE_VOLUME: ${TRIVY_CACHE_PATH:-${PWD}/trivy-cache}
       TRIVY_DB_UPDATE_INTERVAL_SECONDS: ${TRIVY_DB_UPDATE_INTERVAL_SECONDS:-21600}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock

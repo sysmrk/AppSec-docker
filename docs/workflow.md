@@ -34,6 +34,6 @@ State data resides in `manual_workflows`, `pipeline_jobs`, `patch_runs`, `scan_r
 
 A publication job has `max_attempts=1`; a failed or uncertain registry push must be reconciled manually. The worker may need access to its local prepared image between approval steps. In multi-host deployments, use host affinity or a trusted staging registry with controlled promotion before scaling horizontally; local Docker caches are not portable.
 
-CLI/CI flows still support scan-only defaults via `./scripts/appsecctl.sh run IMAGE` and `./scripts/appsecctl.sh ci image IMAGE`. The legacy explicit one-shot `--patch` CLI can perform both Patch and Push and must be restricted to trusted automation operators. The human-guided two-step safety model applies to the Control Center workflow.
+CLI/CI flows still support scan-only defaults via `./scripts/appsecctl.sh run IMAGE` and `./scripts/appsecctl.sh ci image IMAGE`. The explicit `--patch` option prepares and rescans a local image. Registry publication requires a separate approval in the Control Center workflow.
 
 No synthetic CVEs, placeholder image states or test results are shown to users. The preflight check deliberately marks actual pull/authentication as **unverified** until a real scan.

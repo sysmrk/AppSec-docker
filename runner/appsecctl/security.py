@@ -9,6 +9,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from . import db
+from .errors import safe_message
 from .sanitization import MASK, redact_gitleaks_report, validate_repo_target
 
 
@@ -16,11 +17,11 @@ def env(name: str, default: str) -> str:
     return os.environ.get(name, default)
 
 
-def run_command(command: list[str], allow_failure: bool = False) -> int:
-    print("+ " + " ".join(command), flush=True)
-    result = subprocess.run(command, check=False)
-    if result.returncode != 0 and not allow_failure:
-        raise subprocess.CalledProcessError(result.returncode, command)
+def run_command(command: list[str], **options) -> int:
+    result = subprocess.run(
+        command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        check=False, **options,
+    )
     return result.returncode
 
 
@@ -30,12 +31,31 @@ def report_name(kind: str, identifier: str, suffix: str = ".json") -> str:
 
 
 def prepare_repo(target: str, job_id: str) -> Path:
+    try:
+        target = validate_repo_target(target)
+    except ValueError:
+        raise RuntimeError("REPO_TARGET: invalid repository target") from None
     base = Path(env("WORKSPACES_DIR", "/workspaces"))
     base.mkdir(parents=True, exist_ok=True)
     dest = base / job_id
     if dest.exists():
         shutil.rmtree(dest)
-    run_command(["git", "-c", "http.followRedirects=false", "-c", "protocol.file.allow=never", "clone", "--depth", "1", validate_repo_target(target), str(dest)])
+    exit_code = None
+    try:
+        exit_code = run_command(
+            ["git", "-c", "http.followRedirects=false", "-c", "protocol.file.allow=never",
+             "clone", "--depth", "1", target, str(dest)],
+            timeout=120, env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+        )
+        if exit_code:
+            raise RuntimeError("GIT_CLONE_FAILED: git clone returned an error")
+    except subprocess.TimeoutExpired:
+        raise RuntimeError("GIT_CLONE_TIMEOUT: git clone exceeded 120 seconds") from None
+    except OSError:
+        raise RuntimeError("GIT_CLONE_FAILED: could not start git") from None
+    finally:
+        if exit_code != 0 and dest.exists():
+            shutil.rmtree(dest)
     return dest
 
 
@@ -128,15 +148,17 @@ def execute_security_job(job_id: str) -> str:
                     "--redact=100",
                     "--exit-code=17",
                 ],
-                allow_failure=True,
             )
             # 0: no leaks; 17: leaks found (custom exit code). Other codes
             # indicate scanner/runtime failure and must never pass CI.
+            if scan_exit_code == 125:
+                raise RuntimeError("GITLEAKS_DOCKER: docker run failed before scanner execution")
             if scan_exit_code not in (0, 17):
-                raise RuntimeError(f"Gitleaks failed with exit status {scan_exit_code}")
-            if not report_path.exists():
-                raise RuntimeError("Gitleaks did not generate a report")
-            raw = redact_gitleaks_report(json.loads(report_path.read_text(encoding="utf-8")))
+                raise RuntimeError("GITLEAKS_FAILED: scanner returned an unexpected exit status")
+            try:
+                raw = redact_gitleaks_report(json.loads(report_path.read_text(encoding="utf-8")))
+            except (OSError, ValueError):
+                raise RuntimeError("GITLEAKS_REPORT: expected a readable JSON report") from None
             report_path.write_text(json.dumps(raw, indent=2), encoding="utf-8")
             findings = parse_gitleaks(raw)
         else:
@@ -148,7 +170,7 @@ def execute_security_job(job_id: str) -> str:
             db.insert_security_findings(conn, job_id, findings)
     except BaseException as exc:
         with db.connect() as conn:
-            db.update_security_job_failed(conn, job_id, str(exc))
+            db.update_security_job_failed(conn, job_id, safe_message(exc, "repository"))
         raise
     finally:
         # Cloned source trees can contain the very secrets we just detected.

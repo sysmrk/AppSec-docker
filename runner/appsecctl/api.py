@@ -676,12 +676,31 @@ def policies(project_id: str | None = None, user: dict[str, Any] = Depends(curre
 
 @app.post("/api/policies")
 def create_policy(request: PolicyRequest, user: dict[str, Any] = Depends(require_role("admin", "operator"))) -> dict[str, Any]:
+    from .policy import normalize_rules
+    if not request.project_id and user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="global policies require admin")
+    try:
+        rules = normalize_rules(request.rules)
+    except (TypeError, ValueError, OverflowError):
+        raise HTTPException(status_code=422, detail="invalid policy mode or severity limits") from None
     with db.connect() as conn:
         if request.project_id and not db.user_can_access_project(conn, user, request.project_id, write=True):
             raise HTTPException(status_code=403, detail="project access denied")
-        policy_id = db.create_policy(conn, request.name, request.rules, request.project_id, str(user["id"]))
+        policy_id = db.create_policy(conn, request.name, rules, request.project_id, str(user["id"]))
         db.insert_audit(conn, str(user["id"]), "policy.create", "policy", policy_id, request.model_dump())
     return {"id": policy_id, "name": request.name}
+
+
+@app.get("/api/policies/effective")
+def effective_policy(project_id: str | None = None, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    from .policy import normalize_rules, rules_from_env
+    if not project_id and user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="global policies require admin")
+    with db.connect() as conn:
+        if project_id:
+            require_project(conn, user, project_id)
+        rules = db.active_policy_rules(conn, project_id)
+    return normalize_rules(rules or rules_from_env())
 
 
 @app.get("/api/security-jobs")

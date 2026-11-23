@@ -21,7 +21,7 @@ PATCHED_REPOSITORY=security/appsec-patched
 5. Choose `Finish without publishing` or explicitly `Approve registry Push`. Optionally require two distinct approvers with `APPSEC_REQUIRE_SECOND_APPROVER=true`.
 6. The Worker tags and pushes to the registered, approved destination **once**; it never silently retries ambiguous partial uploads.
 
-The old CLI one-shot `./scripts/appsecctl.sh run IMAGE --patch` can still build and push in a single step. Reserve it for explicitly approved automation; it is not the safer guided human workflow.
+The CLI command `./scripts/appsecctl.sh run IMAGE --patch` prepares a local patch, rescans it and evaluates policy. Use the guided workflow for approved Registry publication.
 
 ## Harbor helper (optional)
 

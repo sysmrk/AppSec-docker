@@ -303,7 +303,8 @@
       cell(row, w.pipeline_status || "—");
       cell(row, date(w.created_at));
       const act = cell(row, "");
-      act.appendChild(button("Open workflow →", () => openGuided(w.id)));
+      const label = w.state === "awaiting_approval" ? "Review & decide →" : "Open workflow →";
+      act.appendChild(button(label, () => openGuided(w.id)));
       body.appendChild(row);
     });
   }
@@ -357,11 +358,38 @@
       root.appendChild(node("h2", "", w.requested_image));
       root.appendChild(node("p", "info-note", "Workflow ID: " + w.id + " · Created: " + date(w.created_at)));
       const summary = node("div", "result-stats");
-      for (const [title, value] of [["Current state", w.state], ["Policy result", w.pipeline_status || "Not evaluated"], ["Patch allowed", data.patch_enabled ? "Enabled" : "Disabled"]]) {
+      for (const [title, value] of [["Current state", w.state], ["Policy result", w.policy_status || w.pipeline_status || "Not evaluated"], ["Patch allowed", data.patch_enabled ? "Enabled" : "Disabled"]]) {
         const c = node("div", "mini-stat"); c.appendChild(node("strong", "", value));
         c.appendChild(node("span", "", title)); summary.appendChild(c);
       }
       root.appendChild(summary);
+      if (w.state === "awaiting_approval" &&
+          ["admin", "operator"].includes(state.user?.role)) {
+        const controls = section(root, "Your decision is required");
+        controls.appendChild(node("p", "info-note", "Scan complete. Review the findings below, then choose how to finish this workflow."));
+        const actionRow = node("div", "approval-actions");
+        const finish = node("button", "outline", "✓ Finish without patching");
+        finish.type = "button"; finish.addEventListener("click", () => decideGuided(w.id, "finish"));
+        actionRow.appendChild(finish);
+        if (data.patch_enabled) {
+          const warning = node("div", "warning",
+            "Registry destination: " + (data.registry_destination || "not configured") +
+            ". This step creates a LOCAL patched image only. Registry publication requires a separate approval after the rescan.");
+          controls.appendChild(warning);
+          const label = node("label", "approval-checkbox");
+          const checkbox = document.createElement("input");
+          checkbox.type = "checkbox"; checkbox.id = "approval-confirm";
+          label.appendChild(checkbox);
+          label.appendChild(node("span", "", "I approve building a local patched image for rescanning; no registry Push at this step."));
+          controls.appendChild(label);
+          const approve = node("button", "primary", "Prepare patch & rescan");
+          approve.type = "button"; approve.addEventListener("click", () => decideGuided(w.id, "approve_patch"));
+          actionRow.appendChild(approve);
+        } else {
+          controls.appendChild(node("p", "info-note", "Patching is disabled in this deployment. You can safely finish now; an administrator can enable patching later."));
+        }
+        controls.appendChild(actionRow);
+      }
       const scans = pipeline?.scans || [], artifacts = pipeline?.artifacts || [], patches = pipeline?.patches || [], diffs = pipeline?.diffs || [];
       const orig = scans.find(s => s.phase === "original"), patched = scans.find(s => s.phase === "patched");
       const sbomReady = artifacts.some(a => a.kind === "sbom" && (!orig || a.scan_id === orig.id));
@@ -386,33 +414,6 @@
         const result = section(root, "After approval: vulnerability changes");
         showMetrics(result, [["Fixed", d.fixed_count], ["Remaining", d.remaining_count], ["Introduced", d.introduced_count]]);
         result.appendChild(button("Open final scan results →", () => openPipeline(w.pipeline_id)));
-      }
-      if (w.state === "awaiting_approval" &&
-          ["admin", "operator"].includes(state.user?.role)) {
-        const controls = section(root, "Your decision is required");
-        controls.appendChild(node("p", "info-note", "Nothing has been patched or pushed. Review the scan before continuing."));
-        const actionRow = node("div", "approval-actions");
-        const finish = node("button", "outline", "✓ Finish without patching");
-        finish.type = "button"; finish.addEventListener("click", () => decideGuided(w.id, "finish"));
-        actionRow.appendChild(finish);
-        if (data.patch_enabled) {
-          const warning = node("div", "warning",
-            "Registry destination: " + (data.registry_destination || "not configured") +
-            ". This step creates a LOCAL patched image only. Registry publication requires a separate approval after the rescan.");
-          controls.appendChild(warning);
-          const label = node("label", "approval-checkbox");
-          const checkbox = document.createElement("input");
-          checkbox.type = "checkbox"; checkbox.id = "approval-confirm";
-          label.appendChild(checkbox);
-          label.appendChild(node("span", "", "I approve building a local patched image for rescanning; no registry Push at this step."));
-          controls.appendChild(label);
-          const approve = node("button", "primary", "Prepare patch & rescan");
-          approve.type = "button"; approve.addEventListener("click", () => decideGuided(w.id, "approve_patch"));
-          actionRow.appendChild(approve);
-        } else {
-          controls.appendChild(node("p", "info-note", "Patching is disabled in this deployment. You can safely finish now; an administrator can enable patching later."));
-        }
-        controls.appendChild(actionRow);
       }
       if (["awaiting_publication", "publication_blocked"].includes(w.state) &&
           ["admin", "operator"].includes(state.user?.role)) {
@@ -442,7 +443,9 @@
           actions.appendChild(publish);
         } else if (w.state === "publication_blocked") {
           controls.appendChild(node("p", "warning",
-            "Publication blocked because the patched image did not pass the final policy. You can finish without publishing."));
+            w.policy_status === "report_only" ?
+              "Publication requires enforced policy to pass. This scan used report-only mode." :
+              "Publication blocked because the patched image did not pass the final policy. You can finish without publishing."));
         } else if (!data.publication_ready) {
           controls.appendChild(node("p", "warning",
             "Registry publication is not yet authorized. An admin must register the exact destination hostname and enable Push before you can approve."));
@@ -534,7 +537,21 @@
     replaceOptions("member-team", teams);
     replaceOptions("member-user", users, "Select user", "username");
     replaceOptions("policy-project", projects, "Global default (admin)");
+    await loadPolicyRules();
   }
+
+  async function loadPolicyRules() {
+    const project = $("policy-project").value;
+    const query = project ? "?project_id=" + encodeURIComponent(project) : "";
+    const rules = await request("/api/policies/effective" + query);
+    if ($("policy-project").value !== project) return;
+    $("policy-mode").value = rules.enforce ? "enforce" : "report_only";
+    for (const severity of ["critical", "high", "medium", "low"]) {
+      $("policy-" + severity).value = rules["max_" + severity];
+    }
+  }
+
+  $("policy-project").addEventListener("change", () => loadPolicyRules().catch(error => notification(error.message, true)));
 
   function bindForm(id, buildPayload, endpoint, success) {
     $(id).addEventListener("submit", async event => {
@@ -583,6 +600,7 @@
   bindForm("policy-form", () => ({
     name: $("policy-name").value.trim(), project_id: $("policy-project").value || null,
     rules: {
+      enforce: $("policy-mode").value === "enforce",
       max_critical: Number($("policy-critical").value),
       max_high: Number($("policy-high").value),
       max_medium: Number($("policy-medium").value),

@@ -39,6 +39,10 @@ AppSec UI: **http://127.0.0.1:8080**. Metabase Analytics: **http://127.0.0.1:300
 
 Patch preparation and publication require opt-in privileged BuildKit: `./appsec start --patching`, approved Registry credentials available to the Worker, and Registry metadata marked `allow_push`. Default installation remains scan-only.
 
+Trivy stores its vulnerability and Java databases in `trivy-cache/` at the project root. Set `TRIVY_CACHE_PATH` to an absolute host path to use a different directory. When upgrading an installation with an existing `appsec_trivy_cache` Docker volume, copy its contents into the host cache before restarting the scanner to retain downloaded databases.
+
+In **Administration → Security policy**, select a project or the global default and save severity limits. **Report only** keeps the findings and disables threshold enforcement for scans using that policy. Registry publication requires an enforced policy pass after patching.
+
 ## Main navigation
 
 | Screen | Purpose |
