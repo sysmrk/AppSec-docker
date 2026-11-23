@@ -56,9 +56,11 @@ def badge(value: str, kind: str) -> str:
 
 
 def bars(scans: list[dict], original: dict | None, patched: dict | None) -> str:
-    if not original:
-        return '<p class="muted">No original scan is available yet.</p>'
-    scale = max([number(s.get(field)) for s in scans for _, field, _ in SEVERITIES] + [1])
+    if not original or original.get("status") != "success":
+        return '<p class="muted">Original scan is missing or did not complete successfully; counts are unavailable.</p>'
+    if patched and patched.get("status") != "success":
+        patched = None
+    scale = max([number(s.get(field)) for s in scans if s.get("status") == "success" for _, field, _ in SEVERITIES] + [1])
     body = []
     for label, field, color in SEVERITIES:
         old = number(original.get(field))
@@ -78,8 +80,9 @@ def bars(scans: list[dict], original: dict | None, patched: dict | None) -> str:
 
 def findings_table(title: str, scan: dict | None) -> str:
     items = findings(scan)
-    if not scan:
-        return '<details><summary>' + e(title) + ' — not yet available</summary></details>'
+    if not scan or scan.get("status") != "success":
+        status = scan.get("status", "not yet available") if scan else "not yet available"
+        return '<details><summary>' + e(title) + ' — ' + e(status) + ' (no verified results)</summary></details>'
     rows = "".join(
         "<tr><td>" + e(v["cve"]) + "</td><td><b>" + e(v["severity"]) + "</b></td>"
         "<td>" + e(v["package"]) + "</td><td>" + e(v["installed"]) + "</td><td>" +
@@ -103,16 +106,18 @@ def render(resource_id: str, payload: dict[str, Any]) -> str:
     policies = (payload.get("policies") or [])
     final_policy = next((dict(x) for x in reversed(policies)
                          if patched and str(x.get("scan_id")) == str(patched.get("id"))), None)
-    if final_policy is None and patched and policies:
+    if final_policy is None and patched and patched.get("status") == "success" and policies:
         final_policy = dict(policies[-1])
+    if not patched or patched.get("status") != "success":
+        final_policy = None
     recommended = str(final_policy.get("status")) if final_policy else "pending"
     advisory = {
         "recommended": ("Recommended for publication", "good", "Post-patch findings meet the configured recommendation thresholds."),
         "not_recommended": ("Publication not recommended", "bad", "Post-patch findings exceed advisory thresholds. A human must review the risks."),
         "pending": ("Recommendation pending", "neutral", "Recommendation is calculated only after the patched scan completes."),
     }.get(recommended, ("Legacy policy status: " + recommended, "neutral", "Older workflow policy result; please review before publishing."))
-    original_total = sum(number(original.get(field)) for _,field,_ in SEVERITIES) if original else None
-    patched_total = sum(number(patched.get(field)) for _,field,_ in SEVERITIES) if patched else None
+    original_total = sum(number(original.get(field)) for _,field,_ in SEVERITIES) if original and original.get("status") == "success" else None
+    patched_total = sum(number(patched.get(field)) for _,field,_ in SEVERITIES) if patched and patched.get("status") == "success" else None
     value = lambda x: str(x) if x is not None else "—"
     metric = lambda label,count,note: '<div class="metric"><span>' + e(label) + '</span><strong>' + e(value(count)) + '</strong><small>' + e(note) + "</small></div>"
     cards = (metric("Initial scan", original_total, "Vulnerabilities before patch")

@@ -209,8 +209,11 @@
 
   /* One data-driven panel for both Results and My Workflows. No fabricated scan totals. */
   function renderUnifiedSummary(root, d) {
-    const scans = d?.scans || [], old = scans.find(s => s.phase === "original");
-    const after = scans.find(s => s.phase === "patched");
+    const scans = d?.scans || [];
+    const originalRecord = scans.find(s => s.phase === "original");
+    const finalRecord = scans.find(s => s.phase === "patched");
+    const old = originalRecord?.status === "success" ? originalRecord : null;
+    const after = finalRecord?.status === "success" ? finalRecord : null;
     const diff = d?.diffs?.[0], recommendation = d?.policies?.find(p => after && p.status && ["recommended", "not_recommended"].includes(p.status));
     const block = section(root, "Initial scan vs post-fix scan");
     block.classList.add("unified-summary");
@@ -220,7 +223,10 @@
       card.appendChild(node("span", "phase-label", name));
       card.appendChild(node("strong", "phase-count",
         scan ? ["critical_count", "high_count", "medium_count", "low_count"].reduce((n,k)=>n+Number(scan[k]||0),0) : "—"));
-      card.appendChild(node("small", "", scan ? "Detected OS vulnerabilities · " + scan.status : "Not scanned yet · no result available"));
+      const record=i?finalRecord:originalRecord;
+      card.appendChild(node("small", "", scan ? "Detected OS vulnerabilities · verified scan" :
+        record?.status === "failed" ? "Scan failed · results unavailable" :
+        record?.status === "running" ? "Scan running · results pending" : "Not scanned yet · no result available"));
       phases.appendChild(card);
     });
     block.appendChild(phases);

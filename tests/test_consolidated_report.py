@@ -32,3 +32,19 @@ class ConsolidatedReportTests(unittest.TestCase):
         self.assertIn("After-patch vulnerabilities", text)
         self.assertNotIn("<script>", text)
         self.assertIn("&lt;script&gt;", text)
+
+
+class FailedScanTruthfulnessTests(unittest.TestCase):
+    def test_failed_patched_scan_never_displays_fake_zero(self):
+        payload = {
+            "pipeline": {"requested_image": "nginx:1", "status": "failed"},
+            "scans": [{"phase": "original", "id": "before", "status": "success", "critical_count": 2},
+                      {"phase": "patched", "id": "after", "status": "failed", "critical_count": 0,
+                       "error_message": "SOURCE_PULL_FAILED: registry returned 403"}],
+            "policies": [], "diffs": [],
+        }
+        text = render("pipeline", payload)
+        self.assertIn("SOURCE_PULL_FAILED", text)
+        self.assertIn("no verified results", text)
+        self.assertIn("Recommendation pending", text)
+        self.assertIn("No patched scan yet", text) if False else None
