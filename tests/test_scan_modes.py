@@ -41,6 +41,7 @@ class ScanModeTests(unittest.TestCase):
         with patch.object(cli.db, "connect", return_value=context), \
              patch.object(cli.db, "get_or_create_image", return_value="image-id"), \
              patch.object(cli.db, "create_pipeline", return_value="pipeline-id"), \
+             patch.object(cli.image_sources, "pull_image", return_value="nginx:stable"), \
              patch.object(cli, "scan_image", return_value="scan-id"), \
              patch.object(cli, "generate_sbom"), \
              patch.object(cli, "patch_from_scan") as patcher, \
@@ -56,6 +57,7 @@ class ScanModeTests(unittest.TestCase):
         with patch.object(cli.db, "connect", return_value=context), \
              patch.object(cli.db, "get_or_create_image", return_value="image-id"), \
              patch.object(cli.db, "create_pipeline", return_value="pipeline-id"), \
+             patch.object(cli.image_sources, "pull_image", return_value="nginx:stable"), \
              patch.object(cli, "scan_image", side_effect=["source-scan", "patched-scan"]), \
              patch.object(cli, "generate_sbom"), \
              patch.object(cli, "patch_from_scan", return_value=("patch-id", "patched-image")) as patcher, \

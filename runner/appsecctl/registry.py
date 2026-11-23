@@ -62,6 +62,8 @@ def list_registries(conn, user: dict[str, Any]) -> list[dict[str, Any]]:
 
 def image_registry(image_ref: str) -> str | None:
     """Docker defaults unqualified refs to Docker Hub; explicit host is first segment."""
+    if "/" not in image_ref:
+        return None
     first = image_ref.split("/", 1)[0]
     if "." in first or ":" in first or first == "localhost":
         return first.lower()

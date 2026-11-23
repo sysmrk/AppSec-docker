@@ -237,7 +237,7 @@ services:
       - production
 
   metabase:
-    image: ${METABASE_IMAGE:-metabase/metabase:v0.62.2.2}
+    image: ${METABASE_IMAGE:-metabase/metabase:v0.63.19}
     restart: unless-stopped
     depends_on:
       postgres:
