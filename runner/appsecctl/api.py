@@ -357,6 +357,52 @@ def create_pipeline(
     return {"job_id": job_id, "image": request.image, "mode": request.mode, "status": "queued"}
 
 
+@app.delete("/api/pipelines/{pipeline_id}/history")
+def delete_pipeline_history(
+    pipeline_id: str, confirm: str,
+    user: dict[str, Any] = Depends(require_role("admin")),
+) -> dict[str, Any]:
+    """Admin-only, typed-confirmation purge. No remote registry image deletion."""
+    from .history import purge_pipeline
+    from .errors import safe_detail
+    if confirm != pipeline_id:
+        raise HTTPException(status_code=422, detail="Confirmation must match Pipeline ID")
+    with db.connect() as conn:
+        try:
+            result = purge_pipeline(conn, pipeline_id)
+        except LookupError:
+            raise HTTPException(status_code=404, detail="Pipeline not found") from None
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail="Evidence cleanup failed: " + safe_detail(exc)) from None
+        db.insert_audit(conn, str(user["id"]), "history.purged", "maintenance", None,
+                        {"evidence_removed": result["evidence_removed"],
+                         "local_tags_queued_for_removal": result["local_tags_queued_for_removal"]})
+    return result
+
+
+@app.get("/api/maintenance/image-removals")
+def image_removal_status(user: dict[str, Any] = Depends(require_role("admin"))) -> list[dict[str, Any]]:
+    with db.connect() as conn:
+        return [dict(row) for row in conn.execute(
+            "SELECT image_ref, status, attempts, last_error, created_at FROM pending_image_removals ORDER BY created_at DESC LIMIT 100"
+        ).fetchall()]
+
+
+@app.post("/api/maintenance/image-removals/retry")
+def retry_failed_image_removals(user: dict[str, Any] = Depends(require_role("admin"))) -> dict[str, int]:
+    with db.connect() as conn:
+        rows = conn.execute(
+            "UPDATE pending_image_removals SET status='queued' WHERE status='failed' RETURNING id"
+        ).fetchall()
+        db.insert_audit(conn, str(user["id"]), "image_cleanup.retry", "maintenance", None,
+                        {"requeued": len(rows)})
+    return {"requeued": len(rows)}
+
+
 @app.get("/jobs")
 def list_jobs(limit: int = 20, user: dict[str, Any] = Depends(current_user)) -> list[dict[str, Any]]:
     with db.connect() as conn:
