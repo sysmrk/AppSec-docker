@@ -515,7 +515,7 @@
         stop.addEventListener("click", () => decideGuided(w.id, "skip_publish"));
         actions.appendChild(stop);
         if (w.state === "awaiting_publication" && data.patch_enabled &&
-            data.publication_ready && ["admin", "operator"].includes(state.user?.role)) {
+            ["admin", "operator"].includes(state.user?.role)) {
           const warn = node("p", "warning",
             "This is a separate registry write. The post-fix recommendation is advisory, not a gate. Always review CVEs and validate the exact destination before approving.");
           controls.appendChild(warn);
@@ -538,9 +538,6 @@
         } else if (w.state === "publication_blocked") {
           controls.appendChild(node("p", "warning",
             "Post-fix rescan or recommendation is not yet complete. You can keep the local image, but cannot approve a registry push yet."));
-        } else if (!data.publication_ready) {
-          controls.appendChild(node("p", "warning",
-            "Registry publication is not yet authorized. An admin must register the exact destination hostname and enable Push before you can approve."));
         }
         if (data.requires_second_approver) {
           controls.appendChild(node("p", "info-note",
