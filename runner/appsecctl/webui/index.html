@@ -239,6 +239,10 @@
         </section>
         <section id="view-settings" class="view" hidden>
           <div class="page-heading"><div><p class="eyebrow">ADMINISTRATION</p><h1>Projects & policies</h1><p class="muted">Configure Project ownership and security gates without editing raw database records.</p></div></div>
+          <section class="panel form-panel"><div class="section-heading"><h2>Tool updates</h2><button type="button" id="tool-check" class="outline">Check now</button></div>
+            <p class="hint">Checks stable official releases every six hours. Admin approval applies verified updates to future jobs. Scanner pulls use approved registry priority; Copa uses its official release SHA256.</p>
+            <div class="table-wrap"><table><thead><tr><th>Tool</th><th>Installed</th><th>Latest stable</th><th>State</th><th>Checked</th><th>Action</th></tr></thead><tbody id="tool-updates-body"></tbody></table></div>
+          </section>
           <div class="integration-grid">
             <form id="team-form" class="panel form-panel"><h2>Create team</h2>
               <label for="team-name">Team name</label><input id="team-name" required minlength="2">
@@ -259,7 +263,8 @@
                 <div><label for="policy-critical">Maximum Critical</label><input type="number" id="policy-critical" min="0" value="0" required></div>
                 <div><label for="policy-high">Maximum High</label><input type="number" id="policy-high" min="0" value="0" required></div>
                 <div><label for="policy-medium">Maximum Medium</label><input type="number" id="policy-medium" min="0" value="999999" required></div>
-                <div><label for="policy-low">Maximum Low</label><input type="number" id="policy-low" min="0" value="999999" required></div>
+                <input type="hidden" id="policy-low" value="999999">
+                <div><label for="policy-unknown">Maximum Unknown (manual triage)</label><input type="number" id="policy-unknown" min="0" value="0" required></div>
               </div>
               <p class="hint">Evaluated after the second scan only. Results are Recommended / Not recommended; human approval decides publication.</p>
               <button type="submit" class="primary">Save policy</button>

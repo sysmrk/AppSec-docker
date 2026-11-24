@@ -696,6 +696,31 @@ def create_security_job(
     return {"job_id": job_id, "kind": request.kind, "target": request.target, "status": "queued"}
 
 
+
+@app.get("/api/tool-updates")
+def tool_update_status(user: dict[str, Any] = Depends(require_role("admin"))) -> list[dict[str, Any]]:
+    from . import tool_updates
+    with db.connect() as conn:
+        return tool_updates.status_rows(conn)
+
+@app.post("/api/tool-updates/check", status_code=202)
+def check_tool_updates(user: dict[str, Any] = Depends(require_role("admin"))):
+    with db.connect() as conn:
+        conn.execute("UPDATE tool_updates SET checked_at=NULL WHERE status NOT IN ('queued','applying')")
+        db.insert_audit(conn, str(user["id"]), "tool.update.check", "tool", None, {})
+    return {"status": "queued"}
+
+@app.post("/api/tool-updates/{tool}/apply", status_code=202)
+def apply_tool_update(tool: str, user: dict[str, Any] = Depends(require_role("admin"))):
+    from . import tool_updates
+    with db.connect() as conn:
+        try:
+            v = tool_updates.enqueue(conn, tool)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+        db.insert_audit(conn, str(user["id"]), "tool.update.requested", "tool", None, {"tool":tool,"version":v})
+    return {"status": "queued", "tool":tool,"version":v}
+
 @app.get("/api/teams")
 def teams(user: dict[str, Any] = Depends(require_role("admin"))) -> list[dict[str, Any]]:
     with db.connect() as conn:
@@ -902,6 +927,16 @@ def download_report(report_id: str, request: Request):
             require_resource(conn, user, report["resource_type"], report["resource_id"])
     if not report:
         raise HTTPException(status_code=404, detail="report not found")
+    if report["resource_type"] == "pipeline" and report["format"] == "html":
+        from .reports import pipeline_report_html, ensure_report_ready
+        with db.connect() as conn:
+            payload = db.pipeline_summary(conn, str(report["resource_id"]))
+        try:
+            ensure_report_ready("pipeline", payload)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+        return Response(content=pipeline_report_html(str(report["resource_id"]), payload), media_type="application/octet-stream",
+                        headers={"Content-Disposition": 'attachment; filename="appsec-pipeline.html"', "Cache-Control":"no-store"})
     return download_path(str(report["path"]))
 
 

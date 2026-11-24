@@ -148,9 +148,11 @@ def execute_security_job(job_id: str) -> str:
             repo_path = prepare_repo(target, job_id, credentials, full_history)
             del credentials
             from . import image_sources
+            from . import tool_updates
             with db.connect() as conn:
                 configured = image_sources.configured_sources(conn)
-            scanner = image_sources.runtime_image(env("GITLEAKS_IMAGE", "zricethezav/gitleaks:latest"))
+                requested_scanner = tool_updates.scanner_reference(conn, "gitleaks")
+            scanner = image_sources.runtime_image(requested_scanner)
             scan_exit_code = run_command(
                 [
                     "docker",

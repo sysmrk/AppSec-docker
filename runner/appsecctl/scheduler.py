@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import time
 
-from . import db
+from . import db, tool_updates
 
 
 def enqueue_due() -> int:
@@ -27,6 +27,11 @@ def main() -> int:
         count = enqueue_due()
         if count:
             print(f"enqueued {count} scheduled image(s)", flush=True)
+        try:
+            tool_updates.apply_one()
+            tool_updates.check_due()
+        except Exception as exc:
+            print("Tool update scheduler error: " + type(exc).__name__, flush=True)
         time.sleep(interval)
 
 

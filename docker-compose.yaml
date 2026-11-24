@@ -54,6 +54,7 @@ x-runner-env: &runner-env
   POLICY_MAX_HIGH: ${POLICY_MAX_HIGH:-0}
   POLICY_MAX_MEDIUM: ${POLICY_MAX_MEDIUM:-999999}
   POLICY_MAX_LOW: ${POLICY_MAX_LOW:-999999}
+  POLICY_MAX_UNKNOWN: ${POLICY_MAX_UNKNOWN:-0}
   APPSEC_API_EXTERNAL_PREFIX: ${APPSEC_API_EXTERNAL_PREFIX:-/appsec-api}
   DOWNLOADS_REQUIRE_AUTH: ${DOWNLOADS_REQUIRE_AUTH:-true}
   APPSEC_SESSION_COOKIE_SECURE: ${APPSEC_SESSION_COOKIE_SECURE:-true}
@@ -67,6 +68,7 @@ x-runner-volumes: &runner-volumes
   - /usr/bin/docker:/usr/local/bin/docker:ro
   - appsec_reports:/reports
   - appsec_workspaces:/workspaces
+  - tool-updates:/tool-updates:ro
   - ./db:/db:ro
 
 x-api-volumes: &api-volumes
@@ -374,7 +376,13 @@ services:
     environment:
       <<: *runner-env
       SCHEDULER_POLL_SECONDS: ${SCHEDULER_POLL_SECONDS:-60}
-    volumes: *runner-volumes
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /usr/bin/docker:/usr/local/bin/docker:ro
+      - appsec_reports:/reports
+      - appsec_workspaces:/workspaces
+      - tool-updates:/tool-updates
+      - ./db:/db:ro
     healthcheck:
       test: ["CMD-SHELL", "python -c 'from appsecctl import db; c=db.connect(); c.execute(\"select 1\").fetchone(); c.close()'"]
       interval: 30s
@@ -415,6 +423,7 @@ services:
 volumes:
   postgres-data:
   buildkit-data:
+  tool-updates:
   minio-data:
   appsec_reports:
     name: ${REPORTS_VOLUME:-appsec_reports}

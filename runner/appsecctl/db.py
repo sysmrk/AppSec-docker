@@ -1336,7 +1336,7 @@ def pipeline_summary(conn: psycopg.Connection, pipeline_id: str) -> dict[str, An
     patches = conn.execute(
         """
         SELECT id, source_image_ref, patched_image_ref, local_image_ref, local_image_id,
-               publication_status, published_at, published_digest, status, copa_report_path, started_at, finished_at, error_message
+               publication_status, published_at, published_digest, status, copa_report_path, started_at, finished_at, error_message, execution_evidence
         FROM patch_runs
         WHERE pipeline_id = %s
         ORDER BY started_at

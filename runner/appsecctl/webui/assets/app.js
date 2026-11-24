@@ -289,9 +289,9 @@
       const card = node("article", "scan-phase-card " + (i ? "phase-after" : "phase-before"));
       card.appendChild(node("span", "phase-label", name));
       card.appendChild(node("strong", "phase-count",
-        scan ? ["critical_count", "high_count", "medium_count", "low_count", "unknown_count"].reduce((n,k)=>n+Number(scan[k]||0),0) : "—"));
+        scan ? ["critical_count", "high_count", "medium_count", "unknown_count"].reduce((n,k)=>n+Number(scan[k]||0),0) : "—"));
       const record=i?finalRecord:originalRecord;
-      card.appendChild(node("small", "", scan ? (scan.evidence?.verified ? "OS + application CVEs · all fix statuses" : "Legacy scan · scope/identity not verified") :
+      card.appendChild(node("small", "", scan ? (scan.evidence?.verified ? "OS + application CVEs · LOW excluded" : "Legacy scan · scope/identity not verified") :
         record?.status === "failed" ? "Scan failed · results unavailable" :
         record?.status === "running" ? "Scan running · results pending" : "Not scanned yet · no result available"));
       if (scan) {
@@ -307,7 +307,7 @@
     const rows = node("div", "severity-graph"), palette = {
       CRITICAL: "#d74466", HIGH: "#ec8c43", MEDIUM: "#d6aa38", LOW: "#2aa88a", UNKNOWN: "#8894a8"
     };
-    const sev = [["CRITICAL","critical_count"],["HIGH","high_count"],["MEDIUM","medium_count"],["LOW","low_count"],["UNKNOWN","unknown_count"]];
+    const sev = [["CRITICAL","critical_count"],["HIGH","high_count"],["MEDIUM","medium_count"],["UNKNOWN","unknown_count"]];
     const scale = Math.max(1, ...sev.flatMap(([,key])=>[Number(old?.[key]||0),Number(after?.[key]||0)]));
     for (const [name, key] of sev) {
       const wrap = node("div", "severity-graph-row"), values = node("div", "severity-values");
@@ -329,7 +329,7 @@
     block.appendChild(rows);
     if (diff) {
       const changes=node("div","change-metrics");
-      for (const [label,count,kind] of [["No longer detected",diff.fixed_count,"fixed"],["Remaining",diff.remaining_count,"remaining"],["Introduced",diff.introduced_count,"introduced"]]) {
+      for (const [label,count,kind] of [["No longer detected (all severities)",diff.fixed_count,"fixed"],["Remaining (all severities)",diff.remaining_count,"remaining"],["Introduced (all severities)",diff.introduced_count,"introduced"]]) {
         const item=node("article","change-metric "+kind);
         item.appendChild(node("strong","",count));item.appendChild(node("span","",label));changes.appendChild(item);
       }
@@ -759,6 +759,31 @@
     if ([...control.options].some(o => o.value === previous)) control.value = previous;
   }
 
+  async function loadToolUpdates() {
+    if (state.user?.role !== "admin") return;
+    const items = await request("/api/tool-updates");
+    const holder = $("tool-updates-body"); clear(holder);
+    for (const item of items) {
+      const row = node("tr");
+      cell(row, item.tool); cell(row, item.current_version || "Not detected"); cell(row, item.latest_version || "Not checked");
+      const status = cell(row, item.status); if(item.last_error) status.appendChild(node("p","small-text",item.last_error));
+      cell(row, date(item.checked_at));
+      const action=cell(row,"");
+      if(item.update_available && !["queued","applying"].includes(item.status)) {
+        action.appendChild(button("Apply update", async () => {
+          if(!window.confirm("Apply "+item.tool+" "+item.latest_version+" to future jobs?"))return;
+          try { await request("/api/tool-updates/"+encodeURIComponent(item.tool)+"/apply",{method:"POST"});
+            await loadToolUpdates();notification("Update queued; watch the state here.");
+          } catch(error){notification(error.message,true);}
+        }));
+      } else { action.textContent = "—"; }
+      holder.appendChild(row);
+    }
+  }
+  $("tool-check").addEventListener("click", async () => {
+    try { await request("/api/tool-updates/check",{method:"POST"});notification("Release check queued.");await loadToolUpdates(); }
+    catch(error){notification(error.message,true);}
+  });
   async function loadAdminData() {
     if (state.user?.role !== "admin") return;
     const [teams, projects, users] = await Promise.all([
@@ -769,6 +794,7 @@
     replaceOptions("member-user", users, "Select user", "username");
     replaceOptions("policy-project", projects, "Global default (admin)");
     await loadPolicyRules();
+    await loadToolUpdates();
   }
 
   async function loadPolicyRules() {
@@ -777,8 +803,8 @@
     const rules = await request("/api/policies/effective" + query);
     if ($("policy-project").value !== project) return;
     // All policy decisions are now advisory after the second scan.
-    for (const severity of ["critical", "high", "medium", "low"]) {
-      $("policy-" + severity).value = rules["max_" + severity];
+    for (const severity of ["critical", "high", "medium", "low", "unknown"]) {
+      $("policy-" + severity).value = rules["max_" + severity] ?? (severity === "unknown" ? 0 : 999999);
     }
   }
 
@@ -835,7 +861,8 @@
       max_critical: Number($("policy-critical").value),
       max_high: Number($("policy-high").value),
       max_medium: Number($("policy-medium").value),
-      max_low: Number($("policy-low").value)
+      max_low: Number($("policy-low").value),
+      max_unknown: Number($("policy-unknown").value)
     }
   }), "/api/policies", "Policy saved.");
   $("login-form").addEventListener("submit", async (event) => {
@@ -912,6 +939,7 @@
   initialize();
   window.setInterval(() => {
     if (!state.user || document.hidden || state.user.must_change_password) return;
+    if (state.view === "settings" && state.user.role === "admin") loadToolUpdates().catch(() => {});
     if (state.view === "overview") {
       refreshOverview().catch(() => {});
       refreshHealth();

@@ -13,7 +13,7 @@ from uuid import uuid4
 from alembic import command as alembic_command
 from alembic.config import Config as AlembicConfig
 
-from . import db, policy, image_sources, patch_sources, scan_evidence
+from . import db, policy, image_sources, patch_sources, scan_evidence, tool_updates
 from .errors import safe_message, safe_detail
 from .reports import write_html_report, write_security_sarif
 from .security import enqueue_security_job, run_security_job
@@ -113,7 +113,7 @@ def prepare_trivy_database(trivy_image: str, repositories: str, *, java: bool = 
 def trivy_runtime() -> tuple[str, list[str], list[str]]:
     with db.connect() as conn:
         sources = image_sources.configured_sources(conn)
-    trivy_image = env("TRIVY_IMAGE", "aquasec/trivy:latest")
+        trivy_image = tool_updates.scanner_reference(conn, "trivy")
     if sources is None:
         return trivy_image, [], trivy_database_options()
     resolved = image_sources.pull_ordered(image_sources.ordered_candidates(sources, [trivy_image]))
@@ -177,6 +177,10 @@ def scan_image(image_ref: str, phase: str, pipeline_id: str | None = None) -> st
                              "verified": True,
                              "os_package_count": sum(len(t.get("Packages") or []) for t in report["Results"] if t.get("Class") == "os-pkgs"),
                              "application_package_count": sum(len(t.get("Packages") or []) for t in report["Results"] if t.get("Class") == "lang-pkgs")}
+        scanner_version, scanner_info = tool_updates.scanner_version(trivy_image, cache=True)
+        report["_appsec"].update({"trivy_version": scanner_version, "trivy_info": scanner_info,
+                                  "scanner_image": trivy_image,
+                                  "registry_digests": (report.get("Metadata") or {}).get("RepoDigests") or []})
         counts, vulnerabilities = parse_trivy_report(report)
         print(f"SCAN_VERIFIED phase={phase} scan_id={scan_id} image_id={expected_id} findings={len(vulnerabilities)}", flush=True)
         with db.connect() as conn:
@@ -271,12 +275,13 @@ def patch_from_scan(scan_id: str) -> tuple[str, str]:
         report_path = Path(scan["report_path"])
         patched_ref = patched_image_ref(source_image_ref, patch_id)
         db.insert_patch_started(conn, patch_id, pipeline_id, scan_id, source_image_ref, patched_ref)
+        copa_executable = tool_updates.copa_binary(conn)
 
     patch_tag = f"patched-{patch_id[:12]}"
     local_patched_ref = f"{source_repository(source_image_ref)}:{patch_tag}"
 
     command = [
-        "copa",
+        copa_executable,
         "patch",
         "-i",
         source_image_ref,
@@ -303,6 +308,13 @@ def patch_from_scan(scan_id: str) -> tuple[str, str]:
         command[command.index("-r") + 1] = str(copa_path)
         # Capture Copa stderr so a failed patch has a concrete diagnostic in
         # the persisted patch/job error instead of only an exit status.
+        copa_version, _ = tool_updates.command_version([copa_executable, "--version"])
+        _, buildkit_info = tool_updates.command_version(["docker", "exec", env("BUILDKIT_CONTAINER", "appsec-buildkit"), "buildkitd", "--version"])
+        from psycopg.types.json import Jsonb
+        with db.connect() as conn:
+            conn.execute("UPDATE patch_runs SET execution_evidence=%s WHERE id=%s",
+                         (Jsonb({"copa_version": copa_version, "buildkit_version": buildkit_info,
+                                 "source_image": source_image_ref}), patch_id))
         with patch_sources.policy_environment(source_image_ref, copa_path) as environment:
             run_command(command, capture_errors=True, environment=environment)
         patched_id = scan_evidence.local_image_id(local_patched_ref)
@@ -521,9 +533,14 @@ def publish_prepared_patch(pipeline_id: str, publish_job_id: str) -> str:
         digest = scan_evidence.push_digest(pushed.stdout)
         if scan_evidence.local_image_id(dest) != row["local_image_id"]:
             raise RuntimeError("SCAN_EVIDENCE_INVALID: Destination tag changed during publication")
+        remote_ref = source_repository(dest) + "@" + digest
+        run_command(["docker", "pull", remote_ref], capture_errors=True)
+        if scan_evidence.local_image_id(remote_ref) != row["local_image_id"]:
+            raise RuntimeError("SCAN_EVIDENCE_INVALID: Published manifest does not match the verified rescan")
         with db.connect() as conn:
             conn.execute("""
-                UPDATE patch_runs SET publication_status='published', published_at=now(), published_digest=%s
+                UPDATE patch_runs SET publication_status='published', published_at=now(), published_digest=%s,
+                    execution_evidence=COALESCE(execution_evidence,'{}'::jsonb) || '{"remote_identity_verified":true}'::jsonb
                 WHERE id=%s AND publication_status='publishing'
             """, (digest, patch_id))
     except BaseException:

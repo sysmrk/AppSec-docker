@@ -9,6 +9,7 @@ SEVERITY_FIELDS = {
     "high": "high_count",
     "medium": "medium_count",
     "low": "low_count",
+    "unknown": "unknown_count",
 }
 
 
@@ -25,6 +26,7 @@ def rules_from_env() -> dict[str, int]:
         "max_high": _limit("POLICY_MAX_HIGH", 0),
         "max_medium": _limit("POLICY_MAX_MEDIUM", 999999),
         "max_low": _limit("POLICY_MAX_LOW", 999999),
+        "max_unknown": _limit("POLICY_MAX_UNKNOWN", 0),
     }
 
 
@@ -38,6 +40,7 @@ def normalize_rules(rules: dict[str, Any]) -> dict[str, int | bool]:
         "max_high": int(rules.get("max_high", 0)),
         "max_medium": int(rules.get("max_medium", 999999)),
         "max_low": int(rules.get("max_low", 999999)),
+        "max_unknown": int(rules.get("max_unknown", 0)),
     }
     if any(normalized[f"max_{severity}"] < 0 for severity in SEVERITY_FIELDS):
         raise ValueError("policy thresholds must be nonnegative")

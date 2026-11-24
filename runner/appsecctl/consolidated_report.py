@@ -203,6 +203,10 @@ def render(resource_id: str, payload: dict[str, Any]) -> str:
     value = lambda x: str(x) if x is not None else "—"
     metric = lambda label,count,note: '<div class="metric"><span>' + e(label) + '</span><strong>' + e(value(count)) + '</strong><small>' + e(note) + "</small></div>"
     rows = compare_findings(original, patched, verified_pair)
+    if verified_pair and (a.get("trivy_version") != b.get("trivy_version") or a.get("trivy_info") != b.get("trivy_info")):
+        comparison_warning = '<p class="muted">Scanner or database evidence changed between scans; finding differences may include feed changes.</p>'
+    else:
+        comparison_warning = ""
     states = Counter(row[2] for row in rows)
     initial_rows = [old for old, new, state in rows if old and old["severity"] != "LOW"]
     final_rows = [v for v in findings(patched) if v["severity"] != "LOW"] if verified_pair else []
@@ -243,10 +247,12 @@ def render(resource_id: str, payload: dict[str, Any]) -> str:
     publication = '<section><h2>Image identity and publication</h2>'
     for label, scan in (("Original scan", original), ("Patched rescan", patched)):
         evidence = (scan.get("raw_report") or {}).get("_appsec") or {} if scan else {}
-        publication += '<p><strong>' + e(label) + '</strong>: ' + e(scan.get("image_ref") if scan else None) + '<br>Scan ID: ' + e(scan.get("id") if scan else None) + '<br>Image ID: ' + e(evidence.get("image_id")) + '<br>Registry references: ' + e(", ".join((scan.get("raw_report") or {}).get("Metadata", {}).get("RepoDigests") or []) if scan else None) + '<br>OS packages inspected: ' + e(evidence.get("os_package_count")) + '<br>Application packages inspected: ' + e(evidence.get("application_package_count")) + '<br>Finished: ' + e(scan.get("finished_at") if scan else None) + '</p>'
+        publication += '<p><strong>' + e(label) + '</strong>: ' + e(scan.get("image_ref") if scan else None) + '<br>Scan ID: ' + e(scan.get("id") if scan else None) + '<br>Image ID: ' + e(evidence.get("image_id")) + '<br>Scanner version: ' + e(evidence.get("trivy_version")) + '<br>Scanner / DB evidence: ' + e(evidence.get("trivy_info")) + '<br>Scanner source: ' + e(evidence.get("scanner_image")) + '<br>Registry references: ' + e(", ".join((scan.get("raw_report") or {}).get("Metadata", {}).get("RepoDigests") or []) if scan else None) + '<br>OS packages inspected: ' + e(evidence.get("os_package_count")) + '<br>Application packages inspected: ' + e(evidence.get("application_package_count")) + '<br>Finished: ' + e(scan.get("finished_at") if scan else None) + '</p>'
     approval = payload.get("approval") or {}
     publication += '<p>Patch approval: ' + e(approval.get("patch_approver")) + ' · ' + e(approval.get("approved_at")) + '<br>Publish approval: ' + e(approval.get("publish_approver")) + ' · ' + e(approval.get("publish_approved_at")) + '<br>Risk acceptance reason: ' + e(approval.get("risk_reason") or "Not recorded") + '</p>'
     publication += '<p>Patch execution: ' + e(patch.get("status")) + ' · ' + e(patch.get("started_at")) + ' → ' + e(patch.get("finished_at")) + '<br>Rescan: ' + e(patched.get("status") if patched else None) + '<br>Security recommendation: ' + e(recommended) + '</p>'
+    exec_evidence = patch.get("execution_evidence") or {}
+    publication += '<p>Copa: ' + e(exec_evidence.get("copa_version")) + '<br>BuildKit: ' + e(exec_evidence.get("buildkit_version")) + '<br>Published image identity verified by pull-by-digest: ' + e(exec_evidence.get("remote_identity_verified") if exec_evidence.get("remote_identity_verified") else "Not recorded / not verified") + '</p>'
     publication += '<p>Local patched image: ' + e(patch.get("local_image_ref")) + '</p>'
     publication += '<p>Publication status: ' + e(patch.get("publication_status") or "not published") + '</p>'
     if patch.get("publication_status") == "published":
@@ -256,7 +262,7 @@ def render(resource_id: str, payload: dict[str, Any]) -> str:
         banner + publication +
         '<div class="summary">' + cards + "</div>" +
         '<section><div class="section-title"><h2>What changed?</h2><p>Same image pipeline · initial scan vs patched rescan</p></div>'
-        + bars(scans, original, patched) + changes + "</section>" +
+        + bars(scans, original, patched) + changes + comparison_warning + "</section>" +
         '<section><div class="section-title"><h2>Post-fix recommendation</h2><p>Advisory only — never a pass/fail gate</p></div>'
         + recommendation + "</section>" +
         ('<section><h2>Execution diagnostics</h2>' + "".join(errors) + "</section>" if errors else "") +
