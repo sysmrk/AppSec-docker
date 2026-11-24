@@ -308,6 +308,8 @@
         card.appendChild(node("p","small-text wide-text", "Image: "+scan.image_ref));
         card.appendChild(node("p","small-text wide-text", "Image ID: "+(scan.evidence?.image_id||"not recorded")));
         card.appendChild(node("p","small-text", "Scan: "+scan.id+" · "+date(scan.finished_at)));
+        if (scan.evidence?.verified) card.appendChild(node("p","small-text",
+          "Packages inspected: OS "+text(scan.evidence.os_package_count)+" · Application "+text(scan.evidence.application_package_count)));
       }
       phases.appendChild(card);
     });

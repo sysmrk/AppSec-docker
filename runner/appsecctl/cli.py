@@ -159,6 +159,8 @@ def scan_image(image_ref: str, phase: str, pipeline_id: str | None = None) -> st
         "vuln",
         "--pkg-types",
         "os,library",
+        "--list-all-pkgs",
+        "--ignore-unfixed=false",
         "--format",
         "json",
         "--output",
@@ -172,7 +174,9 @@ def scan_image(image_ref: str, phase: str, pipeline_id: str | None = None) -> st
         if scan_evidence.local_image_id(image_ref) != expected_id:
             raise RuntimeError("SCAN_EVIDENCE_INVALID: Image reference changed during scan")
         report["_appsec"] = {"scope": "os,library; all fix statuses", "image_id": expected_id,
-                             "verified": True}
+                             "verified": True,
+                             "os_package_count": sum(len(t.get("Packages") or []) for t in report["Results"] if t.get("Class") == "os-pkgs"),
+                             "application_package_count": sum(len(t.get("Packages") or []) for t in report["Results"] if t.get("Class") == "lang-pkgs")}
         counts, vulnerabilities = parse_trivy_report(report)
         print(f"SCAN_VERIFIED phase={phase} scan_id={scan_id} image_id={expected_id} findings={len(vulnerabilities)}", flush=True)
         with db.connect() as conn:

@@ -109,9 +109,12 @@ def render(resource_id: str, payload: dict[str, Any]) -> str:
                          if patched and str(x.get("scan_id")) == str(patched.get("id"))), None)
     if not patched or patched.get("status") != "success":
         final_policy = None
-    verified_pair = bool(original and patched and
-                         (original.get("raw_report") or {}).get("_appsec", {}).get("verified") and
-                         (patched.get("raw_report") or {}).get("_appsec", {}).get("verified"))
+    a = (original.get("raw_report") or {}).get("_appsec") or {} if original else {}
+    b = (patched.get("raw_report") or {}).get("_appsec") or {} if patched else {}
+    verified_pair = bool(original and patched and original.get("status") == "success" and
+                         patched.get("status") == "success" and a.get("verified") and b.get("verified") and
+                         a.get("image_id") and b.get("image_id") and a["image_id"] != b["image_id"] and
+                         a.get("scope") == b.get("scope"))
     if not verified_pair:
         final_policy = None
         latest_diff = None
@@ -163,7 +166,7 @@ def render(resource_id: str, payload: dict[str, Any]) -> str:
     publication = '<section><h2>Image identity and publication</h2>'
     for label, scan in (("Original scan", original), ("Patched rescan", patched)):
         evidence = (scan.get("raw_report") or {}).get("_appsec") or {} if scan else {}
-        publication += '<p><strong>' + e(label) + '</strong>: ' + e(scan.get("image_ref") if scan else None) + '<br>Scan ID: ' + e(scan.get("id") if scan else None) + '<br>Image ID: ' + e(evidence.get("image_id")) + '<br>Finished: ' + e(scan.get("finished_at") if scan else None) + '</p>'
+        publication += '<p><strong>' + e(label) + '</strong>: ' + e(scan.get("image_ref") if scan else None) + '<br>Scan ID: ' + e(scan.get("id") if scan else None) + '<br>Image ID: ' + e(evidence.get("image_id")) + '<br>OS packages inspected: ' + e(evidence.get("os_package_count")) + '<br>Application packages inspected: ' + e(evidence.get("application_package_count")) + '<br>Finished: ' + e(scan.get("finished_at") if scan else None) + '</p>'
     publication += '<p>Local patched image: ' + e(patch.get("local_image_ref")) + '</p>'
     publication += '<p>Publication status: ' + e(patch.get("publication_status") or "not published") + '</p>'
     if patch.get("publication_status") == "published":

@@ -5,7 +5,7 @@ from appsecctl import scan_evidence as evidence
 class EvidenceTests(unittest.TestCase):
     def report(self):
         return {"ArtifactType": "container_image", "Metadata": {"ImageID": "sha256:test"},
-                "Results": [{"Target": "nginx:1 (debian 13.1)", "Class": "os-pkgs", "Vulnerabilities": [
+                "Results": [{"Target": "nginx:1 (debian 13.1)", "Class": "os-pkgs", "Packages": [{"Name": "openssl", "Version": "1"}], "Vulnerabilities": [
                     {"VulnerabilityID": "CVE-1", "PkgName": "openssl", "FixedVersion": "2"},
                     {"VulnerabilityID": "CVE-2", "PkgName": "libc"}]},
                     {"Target": "app/package-lock.json", "Class": "lang-pkgs",
@@ -21,7 +21,7 @@ class EvidenceTests(unittest.TestCase):
 
     def test_clean_os_target_is_valid(self):
         report = self.report()
-        report["Results"] = [{"Target": "image (alpine 3.22)", "Class": "os-pkgs"}]
+        report["Results"] = [{"Target": "image (alpine 3.22)", "Class": "os-pkgs", "Packages": [{"Name": "busybox", "Version": "1"}]}]
         evidence.validate_report(report, "sha256:test")
 
     def test_copa_input_does_not_remove_full_scan_findings(self):
@@ -41,3 +41,9 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual(evidence.push_digest("tag: digest: "+digest+" size: 123"), digest)
         with self.assertRaises(RuntimeError):
             evidence.push_digest("unknown result")
+
+    def test_os_target_without_inventory_is_not_a_clean_scan(self):
+        report = self.report()
+        report["Results"][0]["Packages"] = []
+        with self.assertRaisesRegex(RuntimeError, "inventory missing"):
+            evidence.validate_report(report, "sha256:test")

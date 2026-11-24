@@ -24,8 +24,9 @@ def validate_report(report: dict, expected_id: str) -> None:
     results = report.get("Results")
     if not isinstance(results, list) or not results:
         raise RuntimeError("SCAN_EVIDENCE_INVALID: Trivy returned no scan targets; zero CVEs cannot be verified")
-    if not any(r.get("Class") == "os-pkgs" for r in results if isinstance(r, dict)):
-        raise RuntimeError("SCAN_EVIDENCE_INVALID: OS package analysis missing; review unsupported or unrecognized OS")
+    if not any(r.get("Class") == "os-pkgs" and isinstance(r.get("Packages"), list) and r["Packages"]
+               for r in results if isinstance(r, dict)):
+        raise RuntimeError("SCAN_EVIDENCE_INVALID: OS package inventory missing or empty; zero CVEs cannot be verified")
     for result in results:
         if not isinstance(result, dict) or not result.get("Target") or not result.get("Class"):
             raise RuntimeError("SCAN_EVIDENCE_INVALID: Malformed scan target")
