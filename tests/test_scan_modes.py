@@ -89,9 +89,13 @@ class ScanModeTests(unittest.TestCase):
 
     def test_direct_patch_prepares_local_image_without_registry_commands(self):
         scan = {"status": "success", "image_ref": "example.org/team/image:1",
-                "pipeline_id": "pipeline", "report_path": "/reports/scan.json"}
+                "pipeline_id": "pipeline", "report_path": "/reports/scan.json",
+                "raw_report": {"_appsec": {"image_id": "sha256:original"}}}
         with patch.object(cli, "db") as database, patch.object(cli, "run_command") as command, \
-             patch.object(cli.patch_sources, "policy_environment") as source_policy:
+             patch.object(cli.patch_sources, "policy_environment") as source_policy, \
+             patch.object(cli.scan_evidence, "local_image_id", side_effect=["sha256:original", "sha256:patched"]), \
+             patch.object(cli.scan_evidence, "copa_report", return_value={}), \
+             patch("pathlib.Path.write_text"):
             source_policy.return_value.__enter__.return_value = None
             database.get_scan.return_value = scan
             _, image_ref = cli.patch_from_scan("scan")
@@ -102,12 +106,16 @@ class ScanModeTests(unittest.TestCase):
 
     def test_copa_failure_persists_concrete_diagnostic(self):
         scan = {"status": "success", "image_ref": "example.org/team/image:1",
-                "pipeline_id": "pipeline", "report_path": "/reports/scan.json"}
+                "pipeline_id": "pipeline", "report_path": "/reports/scan.json",
+                "raw_report": {"_appsec": {"image_id": "sha256:original"}}}
         failure = subprocess.CalledProcessError(
             1, ["copa", "patch"], stderr="failed to solve: registry returned 403 Forbidden")
         with patch.object(cli, "db") as database, \
              patch.object(cli, "run_command", side_effect=failure) as command, \
-             patch.object(cli.patch_sources, "policy_environment") as source_policy:
+             patch.object(cli.patch_sources, "policy_environment") as source_policy, \
+             patch.object(cli.scan_evidence, "local_image_id", side_effect=["sha256:original", "sha256:patched"]), \
+             patch.object(cli.scan_evidence, "copa_report", return_value={}), \
+             patch("pathlib.Path.write_text"):
             source_policy.return_value.__enter__.return_value = None
             database.get_scan.return_value = scan
             with self.assertRaises(subprocess.CalledProcessError):

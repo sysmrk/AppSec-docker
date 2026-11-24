@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -12,7 +13,7 @@ from uuid import uuid4
 from alembic import command as alembic_command
 from alembic.config import Config as AlembicConfig
 
-from . import db, policy, image_sources, patch_sources
+from . import db, policy, image_sources, patch_sources, scan_evidence
 from .errors import safe_message, safe_detail
 from .reports import write_html_report, write_security_sarif
 from .security import enqueue_security_job, run_security_job
@@ -67,7 +68,7 @@ def vuln_key(item: dict) -> tuple[str, str, str]:
     return (
         str(item.get("vulnerability_id") or ""),
         str(item.get("pkg_name") or ""),
-        str(item.get("target") or ""),
+        scan_evidence.stable_target(str(item.get("target") or "")),
     )
 
 
@@ -142,6 +143,7 @@ def scan_image(image_ref: str, phase: str, pipeline_id: str | None = None) -> st
         db.insert_scan_started(conn, scan_id, pipeline_id, image_id, image_ref, phase)
 
     try:
+        expected_id = scan_evidence.local_image_id(image_ref)
         trivy_image, pull_options, database_options = trivy_runtime()
         command = docker_base() + pull_options + database_options + [
         "-v",
@@ -156,8 +158,7 @@ def scan_image(image_ref: str, phase: str, pipeline_id: str | None = None) -> st
         "--scanners",
         "vuln",
         "--pkg-types",
-        "os",
-        "--ignore-unfixed",
+        "os,library",
         "--format",
         "json",
         "--output",
@@ -167,7 +168,13 @@ def scan_image(image_ref: str, phase: str, pipeline_id: str | None = None) -> st
 
         run_command(command, capture_errors=True)
         report = json.loads(report_path.read_text(encoding="utf-8"))
+        scan_evidence.validate_report(report, expected_id)
+        if scan_evidence.local_image_id(image_ref) != expected_id:
+            raise RuntimeError("SCAN_EVIDENCE_INVALID: Image reference changed during scan")
+        report["_appsec"] = {"scope": "os,library; all fix statuses", "image_id": expected_id,
+                             "verified": True}
         counts, vulnerabilities = parse_trivy_report(report)
+        print(f"SCAN_VERIFIED phase={phase} scan_id={scan_id} image_id={expected_id} findings={len(vulnerabilities)}", flush=True)
         with db.connect() as conn:
             db.update_scan_success(conn, scan_id, str(report_path), report, counts)
             db.insert_vulnerabilities(conn, scan_id, vulnerabilities)
@@ -208,8 +215,17 @@ def generate_sbom(image_ref: str, phase: str, scan_id: str, pipeline_id: str | N
         image_ref,
     ]
 
+    expected_id = scan_evidence.local_image_id(image_ref)
     run_command(command, capture_errors=True)
+    document = json.loads(sbom_path.read_text(encoding="utf-8"))
+    if document.get("bomFormat") != "CycloneDX" or not isinstance(document.get("metadata"), dict):
+        raise RuntimeError("SCAN_EVIDENCE_INVALID: SBOM is missing valid CycloneDX metadata")
+    if scan_evidence.local_image_id(image_ref) != expected_id:
+        raise RuntimeError("SCAN_EVIDENCE_INVALID: Image reference changed during SBOM generation")
     with db.connect() as conn:
+        scan = db.get_scan(conn, scan_id)
+        if (scan.get("raw_report") or {}).get("_appsec", {}).get("image_id") != expected_id:
+            raise RuntimeError("SCAN_EVIDENCE_INVALID: SBOM image differs from verified scan")
         db.insert_artifact(conn, pipeline_id, scan_id, image_ref, "sbom", "cyclonedx-json", str(sbom_path))
     return str(sbom_path)
 
@@ -271,12 +287,26 @@ def patch_from_scan(scan_id: str) -> tuple[str, str]:
     ]
 
     try:
+        original_report = scan.get("raw_report") or {}
+        expected_id = (original_report.get("_appsec") or {}).get("image_id")
+        if not expected_id or scan_evidence.local_image_id(source_image_ref) != expected_id:
+            raise RuntimeError("SCAN_EVIDENCE_INVALID: Original image is not verified or its tag changed; create a new scan")
+        # Keep the full report intact. Copa receives only fixable OS findings.
+        copa_path = report_path.parent / f"copa-input-{patch_id}.json"
+        copa_path.write_text(json.dumps(scan_evidence.copa_report(original_report)), encoding="utf-8")
+        with db.connect() as conn:
+            db.insert_artifact(conn, pipeline_id, scan_id, source_image_ref, "copa-input", "json", str(copa_path))
+        command[command.index("-r") + 1] = str(copa_path)
         # Capture Copa stderr so a failed patch has a concrete diagnostic in
         # the persisted patch/job error instead of only an exit status.
         with patch_sources.policy_environment(source_image_ref, report_path) as environment:
             run_command(command, capture_errors=True, environment=environment)
+        patched_id = scan_evidence.local_image_id(local_patched_ref)
+        if patched_id == expected_id:
+            raise RuntimeError("SCAN_EVIDENCE_INVALID: Copa output is identical to the original image; no verified patch")
         with db.connect() as conn:
-            db.update_patch_success(conn, patch_id, None)
+            db.update_patch_success(conn, patch_id, str(copa_path))
+            conn.execute("UPDATE patch_runs SET local_image_id=%s WHERE id=%s", (patched_id, patch_id))
             conn.execute("""
                 UPDATE patch_runs SET local_image_ref=%s, publication_status='prepared'
                 WHERE id=%s
@@ -295,6 +325,13 @@ def patch_from_scan(scan_id: str) -> tuple[str, str]:
 
 def create_diff(pipeline_id: str, original_scan_id: str, patched_scan_id: str) -> str:
     with db.connect() as conn:
+        original_record = db.get_scan(conn, original_scan_id)
+        patched_record = db.get_scan(conn, patched_scan_id)
+        scan_evidence.validate_pair(original_record, patched_record)
+        expected = conn.execute("SELECT local_image_id FROM patch_runs WHERE pipeline_id=%s AND local_image_ref=%s AND status='success' ORDER BY started_at DESC LIMIT 1",
+                                (pipeline_id, patched_record["image_ref"])).fetchone()
+        if not expected or expected["local_image_id"] != patched_record["raw_report"]["_appsec"]["image_id"]:
+            raise RuntimeError("SCAN_EVIDENCE_INVALID: Rescan does not match the prepared patch")
         original = db.vulnerabilities_for_scan(conn, original_scan_id)
         patched = db.vulnerabilities_for_scan(conn, patched_scan_id)
 
@@ -432,10 +469,11 @@ def publish_prepared_patch(pipeline_id: str, publish_job_id: str) -> str:
     with db.connect() as conn:
         row = conn.execute("""
             SELECT p.id, p.local_image_ref, p.patched_image_ref,
-                   p.publication_status, pol.status AS policy_status
+                   p.publication_status, p.local_image_id, pol.status AS policy_status,
+                   pol.scanned_image_id
             FROM patch_runs p
             JOIN LATERAL (
-                SELECT pol.status FROM policy_results pol
+                SELECT pol.status, sr.raw_report->'_appsec'->>'image_id' AS scanned_image_id FROM policy_results pol
                 JOIN scan_runs sr ON sr.id=pol.scan_id
                 WHERE pol.pipeline_id=p.pipeline_id AND sr.phase='patched' AND sr.status='success'
                   AND sr.image_ref=p.local_image_ref
@@ -468,17 +506,22 @@ def publish_prepared_patch(pipeline_id: str, publish_job_id: str) -> str:
         if not authorized:
             raise RuntimeError("REGISTRY_PUSH_DENIED: destination permission revoked before execution")
         local_ref = str(row["local_image_ref"])
+        if not row["local_image_id"] or row["local_image_id"] != row["scanned_image_id"] or scan_evidence.local_image_id(local_ref) != row["local_image_id"]:
+            raise RuntimeError("SCAN_EVIDENCE_INVALID: Publication image does not match verified rescan")
         dest = str(row["patched_image_ref"])
         patch_id = str(row["id"])
         conn.execute("UPDATE patch_runs SET publication_status='publishing' WHERE id=%s", (patch_id,))
     try:
-        run_command(["docker", "tag", local_ref, dest])
-        run_command(["docker", "push", dest])
+        run_command(["docker", "tag", str(row["local_image_id"]), dest], capture_errors=True)
+        pushed = subprocess.run(["docker", "push", dest], check=True, capture_output=True, text=True)
+        digest = scan_evidence.push_digest(pushed.stdout)
+        if scan_evidence.local_image_id(dest) != row["local_image_id"]:
+            raise RuntimeError("SCAN_EVIDENCE_INVALID: Destination tag changed during publication")
         with db.connect() as conn:
             conn.execute("""
-                UPDATE patch_runs SET publication_status='published', published_at=now()
+                UPDATE patch_runs SET publication_status='published', published_at=now(), published_digest=%s
                 WHERE id=%s AND publication_status='publishing'
-            """, (patch_id,))
+            """, (digest, patch_id))
     except BaseException:
         with db.connect() as conn:
             conn.execute("""
@@ -486,6 +529,12 @@ def publish_prepared_patch(pipeline_id: str, publish_job_id: str) -> str:
                 WHERE id=%s AND publication_status='publishing'
             """, (patch_id,))
         raise
+    # Publication is a completed registry side effect. Report refresh must not
+    # turn a confirmed push into a retryable publication failure.
+    try:
+        write_pipeline_report_if_ready(pipeline_id)
+    except Exception as exc:
+        print("Publication report refresh failed: " + safe_detail(exc), file=sys.stderr, flush=True)
     return str(pipeline_id)
 
 

@@ -88,24 +88,25 @@ def pipeline_details(conn, pipeline_id: str) -> dict[str, Any]:
         return {"error": "pipeline not found"}
     scans = _rows(conn,
         """SELECT id, phase, image_ref, status, critical_count, high_count,
-                  medium_count, low_count, unknown_count, started_at, finished_at, error_message
+                  medium_count, low_count, unknown_count, started_at, finished_at, error_message,
+                  raw_report->'_appsec' AS evidence
            FROM scan_runs WHERE pipeline_id = %s ORDER BY started_at ASC""", (pid,))
     patches = _rows(conn,
-        """SELECT id, local_image_ref, patched_image_ref, publication_status, published_at, status, started_at, finished_at, error_message
+        """SELECT id, local_image_ref, local_image_id, patched_image_ref, publication_status, published_at, published_digest, status, started_at, finished_at, error_message
            FROM patch_runs WHERE pipeline_id = %s ORDER BY started_at DESC LIMIT 10""", (pid,))
     diffs = _rows(conn,
-        """SELECT fixed_count, remaining_count, introduced_count, created_at
+        """SELECT original_scan_id, patched_scan_id, fixed_count, remaining_count, introduced_count, created_at
            FROM scan_diffs WHERE pipeline_id = %s ORDER BY created_at DESC LIMIT 1""", (pid,))
     policies = _rows(conn,
-        """SELECT status, violations, created_at FROM policy_results
+        """SELECT scan_id, status, violations, created_at FROM policy_results
            WHERE pipeline_id = %s ORDER BY created_at DESC LIMIT 3""", (pid,))
     reports = _rows(conn,
         """SELECT id, format, created_at FROM generated_reports
            WHERE resource_type = 'pipeline' AND resource_id = %s
            ORDER BY created_at DESC LIMIT 20""", (str(pid),))
     artifacts = _rows(conn,
-        """SELECT id, kind, format, created_at FROM artifacts
-           WHERE pipeline_id = %s ORDER BY created_at DESC LIMIT 20""", (pid,))
+        """SELECT id, scan_id, image_ref, kind, format, created_at FROM artifacts
+           WHERE pipeline_id = %s ORDER BY created_at DESC""", (pid,))
     for item in pipelines + scans + patches:
         if item.get("error_message"):
             item["error"] = ui_error(item["error_message"], "scan")

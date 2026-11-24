@@ -1333,7 +1333,8 @@ def pipeline_summary(conn: psycopg.Connection, pipeline_id: str) -> dict[str, An
     ).fetchall()
     patches = conn.execute(
         """
-        SELECT id, source_image_ref, patched_image_ref, status, copa_report_path, started_at, finished_at, error_message
+        SELECT id, source_image_ref, patched_image_ref, local_image_ref, local_image_id,
+               publication_status, published_at, published_digest, status, copa_report_path, started_at, finished_at, error_message
         FROM patch_runs
         WHERE pipeline_id = %s
         ORDER BY started_at
@@ -1342,7 +1343,7 @@ def pipeline_summary(conn: psycopg.Connection, pipeline_id: str) -> dict[str, An
     ).fetchall()
     diffs = conn.execute(
         """
-        SELECT id, fixed_count, remaining_count, introduced_count,
+        SELECT id, original_scan_id, patched_scan_id, fixed_count, remaining_count, introduced_count,
                fixed_vulnerabilities, remaining_vulnerabilities, introduced_vulnerabilities,
                created_at
         FROM scan_diffs

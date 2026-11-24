@@ -210,11 +210,14 @@
   /* One data-driven panel for both Results and My Workflows. No fabricated scan totals. */
   function renderUnifiedSummary(root, d) {
     const scans = d?.scans || [];
-    const originalRecord = scans.find(s => s.phase === "original");
-    const finalRecord = scans.find(s => s.phase === "patched");
+    const originalRecord = [...scans].reverse().find(s => s.phase === "original");
+    const finalRecord = [...scans].reverse().find(s => s.phase === "patched");
     const old = originalRecord?.status === "success" ? originalRecord : null;
     const after = finalRecord?.status === "success" ? finalRecord : null;
-    const diff = d?.diffs?.[0], recommendation = d?.policies?.find(p => after && p.status && ["recommended", "not_recommended"].includes(p.status));
+    const verified = Boolean(old?.evidence?.verified && after?.evidence?.verified &&
+      old.evidence.image_id !== after.evidence.image_id && old.evidence.scope === after.evidence.scope);
+    const diff = verified ? d?.diffs?.find(x=>String(x.original_scan_id)===String(old.id)&&String(x.patched_scan_id)===String(after.id)) : null;
+    const recommendation = verified && diff ? d?.policies?.find(p=>String(p.scan_id)===String(after.id)&&["recommended","not_recommended"].includes(p.status)) : null;
     const block = section(root, "Initial scan vs post-fix scan");
     block.classList.add("unified-summary");
     const phases = node("div", "scan-phases");
@@ -222,18 +225,23 @@
       const card = node("article", "scan-phase-card " + (i ? "phase-after" : "phase-before"));
       card.appendChild(node("span", "phase-label", name));
       card.appendChild(node("strong", "phase-count",
-        scan ? ["critical_count", "high_count", "medium_count", "low_count"].reduce((n,k)=>n+Number(scan[k]||0),0) : "—"));
+        scan ? ["critical_count", "high_count", "medium_count", "low_count", "unknown_count"].reduce((n,k)=>n+Number(scan[k]||0),0) : "—"));
       const record=i?finalRecord:originalRecord;
-      card.appendChild(node("small", "", scan ? "Detected OS vulnerabilities · verified scan" :
+      card.appendChild(node("small", "", scan ? (scan.evidence?.verified ? "OS + application CVEs · all fix statuses" : "Legacy scan · scope/identity not verified") :
         record?.status === "failed" ? "Scan failed · results unavailable" :
         record?.status === "running" ? "Scan running · results pending" : "Not scanned yet · no result available"));
+      if (scan) {
+        card.appendChild(node("p","small-text wide-text", "Image: "+scan.image_ref));
+        card.appendChild(node("p","small-text wide-text", "Image ID: "+(scan.evidence?.image_id||"not recorded")));
+        card.appendChild(node("p","small-text", "Scan: "+scan.id+" · "+date(scan.finished_at)));
+      }
       phases.appendChild(card);
     });
     block.appendChild(phases);
     const rows = node("div", "severity-graph"), palette = {
-      CRITICAL: "#d74466", HIGH: "#ec8c43", MEDIUM: "#d6aa38", LOW: "#2aa88a"
+      CRITICAL: "#d74466", HIGH: "#ec8c43", MEDIUM: "#d6aa38", LOW: "#2aa88a", UNKNOWN: "#8894a8"
     };
-    const sev = [["CRITICAL","critical_count"],["HIGH","high_count"],["MEDIUM","medium_count"],["LOW","low_count"]];
+    const sev = [["CRITICAL","critical_count"],["HIGH","high_count"],["MEDIUM","medium_count"],["LOW","low_count"],["UNKNOWN","unknown_count"]];
     const scale = Math.max(1, ...sev.flatMap(([,key])=>[Number(old?.[key]||0),Number(after?.[key]||0)]));
     for (const [name, key] of sev) {
       const wrap = node("div", "severity-graph-row"), values = node("div", "severity-values");
@@ -255,7 +263,7 @@
     block.appendChild(rows);
     if (diff) {
       const changes=node("div","change-metrics");
-      for (const [label,count,kind] of [["Fixed",diff.fixed_count,"fixed"],["Remaining",diff.remaining_count,"remaining"],["Introduced",diff.introduced_count,"introduced"]]) {
+      for (const [label,count,kind] of [["No longer detected",diff.fixed_count,"fixed"],["Remaining",diff.remaining_count,"remaining"],["Introduced",diff.introduced_count,"introduced"]]) {
         const item=node("article","change-metric "+kind);
         item.appendChild(node("strong","",count));item.appendChild(node("span","",label));changes.appendChild(item);
       }
@@ -278,6 +286,19 @@
       advisory.appendChild(reasons);
     }
     block.appendChild(advisory);
+    const publication = d?.patches?.[0];
+    if (publication) {
+      const section = node("div","detail-section");
+      section.appendChild(node("h2","","Image publication"));
+      section.appendChild(node("p","wide-text","Local image: "+text(publication.local_image_ref)));
+      section.appendChild(node("p","","Status: "+text(publication.publication_status)));
+      if (publication.publication_status==="published") {
+        section.appendChild(node("p","wide-text","Published image: "+text(publication.patched_image_ref)));
+        section.appendChild(node("p","wide-text","Registry digest: "+text(publication.published_digest)));
+        section.appendChild(node("p","","Published at: "+date(publication.published_at)));
+      }
+      block.appendChild(section);
+    }
     const html = d?.reports?.find(x=>x.format==="html");
     if (html) {
       const a=node("a","primary report-main-link","Open single visual report ↗");
@@ -494,12 +515,12 @@
       const ol = node("ol", "manual-timeline");
       const scanFailed = w.scan_job_status === "failed";
       stepItem(ol, "1. Queue and scan image", "Trivy inspects the actual image and saves vulnerability findings.", scanFailed ? "failed" : w.scan_job_status === "success" ? "done" : w.scan_job_status === "running" ? "running" : "waiting");
-      stepItem(ol, "2. Generate SBOM", "Save original vulnerability evidence; no policy verdict in the initial scan.", sbomReady ? "done" : scanFailed ? "failed" : w.scan_job_status === "running" ? "running" : "waiting");
+      stepItem(ol, "2. Generate SBOM", "Generate a CycloneDX inventory of the original image's packages and dependencies.", sbomReady ? "done" : scanFailed ? "failed" : w.scan_job_status === "running" ? "running" : "waiting");
       stepItem(ol, "3. Review original findings", "Human approval is needed before local patching.", w.decision ? "done" : w.state === "awaiting_approval" ? "running" : "waiting");
       stepItem(ol, "4. Prepare local patched image", "Copa uses BuildKit but does not push to the registry.", w.decision === "finish" ? "skipped" : w.patch_job_status === "success" ? "done" : w.patch_job_status === "failed" ? "failed" : w.decision === "approve_patch" ? "running" : "waiting");
       stepItem(ol, "5. Rescan & compare", "Trivy rescans the local patch and provides an advisory recommendation.", w.decision === "finish" ? "skipped" : diffs.length > 0 && patched ? "done" : w.decision === "approve_patch" ? "running" : "waiting");
       stepItem(ol, "6. Separate publication approval", "Review the new findings and explicitly approve registry Push, or finish without publishing.", w.publish_decision ? "done" : ["awaiting_publication","publication_blocked"].includes(w.state) ? "running" : w.decision === "finish" ? "skipped" : "waiting");
-      stepItem(ol, "7. Publish & final report", "Only a validated, policy-passed image can be published.", ["published","completed","completed_without_publish"].includes(w.state) ? "done" : w.state === "publishing" ? "running" : "waiting");
+      stepItem(ol, "7. Publish & final report", "Only the verified rescanned image can be published after explicit approval; policy is advisory.", ["published","completed","completed_without_publish"].includes(w.state) ? "done" : w.state === "publishing" ? "running" : "waiting");
       sec.appendChild(ol);
       if (pipeline?.pipeline) {
         renderUnifiedSummary(root, pipeline);

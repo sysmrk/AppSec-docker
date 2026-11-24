@@ -12,7 +12,8 @@ from typing import Any
 SEVERITIES = (("CRITICAL", "critical_count", "#d94362"),
               ("HIGH", "high_count", "#ef923c"),
               ("MEDIUM", "medium_count", "#e5bd56"),
-              ("LOW", "low_count", "#35a58a"))
+              ("LOW", "low_count", "#35a58a"),
+              ("UNKNOWN", "unknown_count", "#8894a8"))
 
 
 def e(value: Any) -> str:
@@ -106,10 +107,17 @@ def render(resource_id: str, payload: dict[str, Any]) -> str:
     policies = (payload.get("policies") or [])
     final_policy = next((dict(x) for x in reversed(policies)
                          if patched and str(x.get("scan_id")) == str(patched.get("id"))), None)
-    if final_policy is None and patched and patched.get("status") == "success" and policies:
-        final_policy = dict(policies[-1])
     if not patched or patched.get("status") != "success":
         final_policy = None
+    verified_pair = bool(original and patched and
+                         (original.get("raw_report") or {}).get("_appsec", {}).get("verified") and
+                         (patched.get("raw_report") or {}).get("_appsec", {}).get("verified"))
+    if not verified_pair:
+        final_policy = None
+        latest_diff = None
+    elif latest_diff and (str(latest_diff.get("original_scan_id")) != str(original.get("id")) or
+                          str(latest_diff.get("patched_scan_id")) != str(patched.get("id"))):
+        latest_diff = None
     recommended = str(final_policy.get("status")) if final_policy else "pending"
     advisory = {
         "recommended": ("Recommended for publication", "good", "Post-patch findings meet the configured recommendation thresholds."),
@@ -122,7 +130,7 @@ def render(resource_id: str, payload: dict[str, Any]) -> str:
     metric = lambda label,count,note: '<div class="metric"><span>' + e(label) + '</span><strong>' + e(value(count)) + '</strong><small>' + e(note) + "</small></div>"
     cards = (metric("Initial scan", original_total, "Vulnerabilities before patch")
              + metric("After patch", patched_total, "Only real completed rescans")
-             + metric("Fixed", number(latest_diff.get("fixed_count")) if latest_diff else None, "No longer detected")
+             + metric("Fixed", number(latest_diff.get("fixed_count")) if latest_diff else None, "No longer detected (not proof of remediation)")
              + metric("Introduced", number(latest_diff.get("introduced_count")) if latest_diff else None, "Newly detected"))
     changes = ""
     if latest_diff:
@@ -151,8 +159,18 @@ def render(resource_id: str, payload: dict[str, Any]) -> str:
               "<h1>" + e(p.get("requested_image")) + "</h1><p>Pipeline " + e(resource_id) +
               " · " + e(p.get("started_at")) + "</p></div>" +
               badge(p.get("status") or "queued", "neutral") + "</div>")
+    patch = (payload.get("patches") or [{}])[-1]
+    publication = '<section><h2>Image identity and publication</h2>'
+    for label, scan in (("Original scan", original), ("Patched rescan", patched)):
+        evidence = (scan.get("raw_report") or {}).get("_appsec") or {} if scan else {}
+        publication += '<p><strong>' + e(label) + '</strong>: ' + e(scan.get("image_ref") if scan else None) + '<br>Scan ID: ' + e(scan.get("id") if scan else None) + '<br>Image ID: ' + e(evidence.get("image_id")) + '<br>Finished: ' + e(scan.get("finished_at") if scan else None) + '</p>'
+    publication += '<p>Local patched image: ' + e(patch.get("local_image_ref")) + '</p>'
+    publication += '<p>Publication status: ' + e(patch.get("publication_status") or "not published") + '</p>'
+    if patch.get("publication_status") == "published":
+        publication += '<p>Published image: <strong>' + e(patch.get("patched_image_ref")) + '</strong><br>Registry manifest digest: ' + e(patch.get("published_digest") or "not recorded (legacy)") + '<br>Published at: ' + e(patch.get("published_at")) + ' UTC</p>'
+    publication += '<p class="muted">' + ("Scope: OS and application dependencies, all fix statuses. Absence of a finding is not proof of remediation or security." if verified_pair else "Legacy or incomplete scan evidence: comparison and recommendation are not verified. Run a new scan.") + '</p></section>'
     report = (
-        banner +
+        banner + publication +
         '<div class="summary">' + cards + "</div>" +
         '<section><div class="section-title"><h2>What changed?</h2><p>Same image pipeline · initial scan vs patched rescan</p></div>'
         + bars(scans, original, patched) + changes + "</section>" +

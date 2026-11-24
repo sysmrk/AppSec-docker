@@ -20,10 +20,10 @@ class ConsolidatedReportTests(unittest.TestCase):
         payload = {
             "pipeline": {"requested_image": "<script>alert(1)</script>", "status": "success"},
             "scans": [
-                {"id": "s1", "phase": "original", "status": "success", "critical_count": 4, "high_count": 0},
-                {"id": "s2", "phase": "patched", "status": "success", "critical_count": 1, "high_count": 0},
+                {"id": "s1", "phase": "original", "status": "success", "critical_count": 4, "high_count": 0, "raw_report": {"_appsec": {"verified": True, "image_id": "original", "scope": "full"}}},
+                {"id": "s2", "phase": "patched", "status": "success", "critical_count": 1, "high_count": 0, "raw_report": {"_appsec": {"verified": True, "image_id": "patched", "scope": "full"}}},
             ],
-            "diffs": [{"fixed_count": 3, "remaining_count": 1, "introduced_count": 0}],
+            "diffs": [{"original_scan_id": "s1", "patched_scan_id": "s2", "fixed_count": 3, "remaining_count": 1, "introduced_count": 0}],
             "policies": [{"scan_id": "s2", "status": "not_recommended",
                           "violations": [{"severity": "CRITICAL", "count": 1, "limit": 0}]}],
         }

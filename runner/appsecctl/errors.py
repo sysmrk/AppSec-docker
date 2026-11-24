@@ -10,6 +10,7 @@ import subprocess
 from typing import Any
 
 _CATALOG = [
+    ("SCAN_EVIDENCE_INVALID", r"^SCAN_EVIDENCE_INVALID:", "Scan or image evidence could not be verified", "Review image identity, scanner results and supported OS. Create a fresh scan if required; do not publish unverified output.", False),
     ("PATCH_SOURCE_POLICY", r"^PATCH_SOURCE_POLICY:|source denied by policy", "Image source is not approved for this patch", "Review the enabled registry endpoints and supported Copa helper mapping. Start a new scan if the original source changed.", False),
     ("SOURCE_PULL_FAILED", r"^SOURCE_PULL_FAILED:", "Image unavailable from approved sources", "Check each source's HTTP code, image path, permissions and TLS; no Docker Hub fallback was attempted.", True),
     ("REGISTRY_PUSH_DENIED", r"^REGISTRY_PUSH_DENIED:", "Registry push permission revoked", "Have an admin review the destination registry authorization.", False),
