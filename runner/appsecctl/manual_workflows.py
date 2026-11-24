@@ -8,7 +8,7 @@ from __future__ import annotations
 from uuid import UUID, uuid4
 from typing import Any
 
-from . import db
+from . import db, scan_evidence
 
 
 def _uuid(value: str) -> UUID:
@@ -253,6 +253,10 @@ def decide(
             (user["id"], _uuid(workflow_id)),
         )
         return {"id": workflow_id, "state": "completed"}
+
+    eligibility = scan_evidence.original_patch_eligibility(conn, locked["pipeline_id"])
+    if not eligibility["eligible"]:
+        raise RuntimeError(eligibility["code"] + ": " + eligibility["message"])
 
     # This approval authorizes local patch preparation and rescan only.
     # Publication always requires another explicit decision later.

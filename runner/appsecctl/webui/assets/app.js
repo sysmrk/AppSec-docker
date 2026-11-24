@@ -603,7 +603,15 @@
         const finish = node("button", "outline", "✓ Finish without patching");
         finish.type = "button"; finish.addEventListener("click", () => decideGuided(w.id, "finish"));
         actionRow.appendChild(finish);
-        if (data.patch_enabled) {
+        const eligibility = data.patch_eligibility;
+        if (eligibility && eligibility.os_fixable != null) {
+          showMetrics(controls, [["OS with known fix", eligibility.os_fixable],
+            ["OS without known fix", eligibility.os_no_known_fix],
+            ["Application with known fix", eligibility.application_fixable],
+            ["Application without known fix", eligibility.application_no_known_fix]]);
+          controls.appendChild(node("p", "info-note", "Eligibility uses all severities, including LOW retained in raw evidence. Application fixes require dependency updates/rebuilds."));
+        }
+        if (data.patch_enabled && eligibility?.eligible) {
           const warning = node("div", "warning",
             "Registry destination: " + (data.registry_destination || "not configured") +
             ". This step creates a LOCAL patched image only. Registry publication requires a separate approval after the rescan.");
@@ -618,7 +626,9 @@
           approve.type = "button"; approve.addEventListener("click", () => decideGuided(w.id, "approve_patch"));
           actionRow.appendChild(approve);
         } else {
-          controls.appendChild(node("p", "info-note", "Patching is disabled in this deployment. You can safely finish now; an administrator can enable patching later."));
+          controls.appendChild(node("p", "info-note", !data.patch_enabled ?
+            "Patching is disabled in this deployment. You can finish without patching." :
+            (eligibility?.message || "Verified original scan required before patching.")));
         }
         controls.appendChild(actionRow);
       }
@@ -695,7 +705,9 @@
         const failure = w.publish_error || w.patch_error || w.scan_error;
         root.appendChild(node("p", "warning", "Operation failed: " +
           (failure || "See job diagnostics and ask an administrator for the correlation ID.")));
-        if (w.state === "failed" && w.scan_job_status === "failed" &&
+        if (((w.state === "failed" && w.scan_job_status === "failed") ||
+             (w.state === "patch_failed" && data.patch_eligibility?.code === "NO_FIXABLE_OS" &&
+              data.diagnostics?.some(x => x.code === "NO_FIXABLE_OS"))) &&
             ["admin", "operator"].includes(state.user?.role)) {
           root.appendChild(button("Start a NEW scan-only attempt", async () => {
             if (!window.confirm("This starts a NEW scan-only workflow. No patch or push will be retried. Continue?")) return;

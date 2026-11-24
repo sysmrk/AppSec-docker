@@ -32,3 +32,6 @@ Administration → Tool updates checks official stable GitHub releases every six
 
 ### Verify a deployment after Git updates
 `./appsec start` stamps the checkout commit at image build, verifies the actual source fingerprints of API, worker and scheduler, restarts Nginx to refresh its upstream address, and verifies the HTTP UI build identity. `./appsec doctor` now fails on source or revision mismatch even if containers are healthy. The browser top bar displays the running build; assets are versioned by source fingerprint and served with no-store. Use `curl -fsS http://127.0.0.1:8080/appsec-api/ui/build-info` for the live identity. Local source modifications affect the fingerprint even if the Git commit is unchanged. Do not deploy during an active scan or publish.
+
+### Patch eligibility
+The full original Trivy evidence determines whether Copa has any OS findings with a known fix (all severities). Application dependencies are counted separately. Invalid evidence blocks approval; a valid zero-candidate scan offers Finish without patching and does not create a patch job. Direct patch mode skips Copa and records an audit event in this case. Older failed runs are retained as historical evidence; start a new scan-only workflow, never blindly retry a patch or publication. A skipped patch is not proof of a secure image.

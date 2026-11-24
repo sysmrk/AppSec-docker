@@ -222,6 +222,14 @@ def render(resource_id: str, payload: dict[str, Any]) -> str:
     initial_rows = [old for old, new, state in rows if old and old["severity"] != "LOW"]
     final_rows = [v for v in findings(patched) if v["severity"] != "LOW"] if verified_pair else []
     initial_fixable = sum(bool(v["fixed"]) for v in initial_rows)
+    from .scan_evidence import patch_eligibility
+    eligibility = patch_eligibility(original)
+    eligibility_html = ('<p>OS findings with known fix: ' + e(eligibility["os_fixable"]) +
+                        ' · OS without known fix: ' + e(eligibility["os_no_known_fix"]) +
+                        ' · Application findings with known fix: ' + e(eligibility["application_fixable"]) +
+                        ' · Application without known fix: ' + e(eligibility["application_no_known_fix"]) +
+                        '</p><p class="muted">' + e(eligibility["message"]) +
+                        ' Eligibility counts include all severities.</p>')
     removed_fixable = sum(bool(old["fixed"]) for old, new, state in rows if old and old["severity"] != "LOW" and state == "Fixed")
     cards = (metric("Initial scan", original_total, "CRITICAL, HIGH, MEDIUM and UNKNOWN; LOW excluded")
              + metric("After patch", patched_total, "Only real completed rescans")
@@ -234,7 +242,11 @@ def render(resource_id: str, payload: dict[str, Any]) -> str:
                    metric("Net reduction", (original_total - patched_total) if original_total is not None and patched_total is not None else None,
                           "Initial minus final, LOW excluded") + "</div>")
     elif not patched:
-        changes = '<p class="muted">No patched scan yet. Comparison will appear here after you approve local patch preparation and the rescan finishes.</p>'
+        from .scan_evidence import patch_eligibility
+        eligibility = patch_eligibility(original)
+        changes = ('<p class="muted">Patch not applicable: no known OS fixes. Original findings remain; no patched image or rescan exists.</p>'
+                   if eligibility["code"] == "NO_FIXABLE_OS" else
+                   '<p class="muted">No patched scan. No finding is marked fixed without a verified rescan.</p>')
     violations = list(final_policy.get("violations") or []) if final_policy else []
     reasons = "".join("<li>" + e(v.get("severity")) + ": " + e(v.get("count")) +
                       " found; recommended maximum " + e(v.get("limit")) + "</li>" for v in violations)
@@ -279,7 +291,7 @@ def render(resource_id: str, payload: dict[str, Any]) -> str:
         ('<section><h2>Execution diagnostics</h2>' + "".join(errors) + "</section>" if errors else "") +
         '<section><div class="section-title"><h2>Evidence, without the clutter</h2>'
         '<p>Full unified finding table. Raw Trivy JSON and SBOM retain LOW.</p></div>' +
-        '<p>Known fix before: ' + e(initial_fixable) + ' · No known fix before: ' + e(len(initial_rows)-initial_fixable) +
+        eligibility_html + '<p>Known fix before: ' + e(initial_fixable) + ' · No known fix before: ' + e(len(initial_rows)-initial_fixable) +
         ' · Known-fix findings no longer detected: ' + e(removed_fixable if verified_pair else None) +
         ' · Remaining with a known fix: ' + e(sum(bool(v["fixed"]) for v in final_rows) if verified_pair else None) +
         ' · Known-fix disappearance rate: ' + e(round(removed_fixable/initial_fixable*100, 2) if verified_pair and initial_fixable else None) + '%</p>' +

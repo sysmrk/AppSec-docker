@@ -105,6 +105,25 @@ jobs:
               db.finish_pipeline(conn, pipeline_id, 'success')
               conn.execute("UPDATE pipeline_jobs SET status='success', pipeline_id=%s WHERE id=%s", (pipeline_id, session['scan_job_id']))
               assert mw.get_workflow(conn, session['id'], user)['state'] == 'awaiting_approval'
+              try:
+                  mw.decide(conn, session['id'], user, 'approve_patch', True)
+                  raise AssertionError('unverified original scan was approved')
+              except RuntimeError as exc:
+                  assert 'SCAN_EVIDENCE_INVALID' in str(exc)
+              from psycopg.types.json import Jsonb
+              original_image_id = 'sha256:' + 'a'*64
+              raw = {'ArtifactType':'container_image','Metadata':{'ImageID':original_image_id},
+                     '_appsec':{'verified':True,'image_id':original_image_id},
+                     'Results':[{'Target':'nginx (debian 13)','Class':'os-pkgs',
+                                 'Packages':[{'Name':'libc6','Version':'1'}],'Vulnerabilities':[]}]}
+              conn.execute("UPDATE scan_runs SET raw_report=%s WHERE pipeline_id=%s AND phase='original'", (Jsonb(raw),pipeline_id))
+              try:
+                  mw.decide(conn, session['id'], user, 'approve_patch', True)
+                  raise AssertionError('no-fix scan was approved')
+              except RuntimeError as exc:
+                  assert 'NO_FIXABLE_OS' in str(exc)
+              raw['Results'][0]['Vulnerabilities'] = [{'VulnerabilityID':'CVE-test','PkgName':'libc6','FixedVersion':'2'}]
+              conn.execute("UPDATE scan_runs SET raw_report=%s WHERE pipeline_id=%s AND phase='original'", (Jsonb(raw),pipeline_id))
               result = mw.decide(conn, session['id'], user, 'approve_patch', True)
               assert result['state'] == 'patch_queued'
               history = ui_queries.image_workflow_history(conn, user)

@@ -1227,6 +1227,8 @@ def get_manual_workflow(
         if not record:
             raise HTTPException(status_code=404, detail="workflow not found")
         pipeline = pipeline_details(conn, str(record["pipeline_id"])) if record.get("pipeline_id") else None
+        from .scan_evidence import original_patch_eligibility
+        eligibility = original_patch_eligibility(conn, record.get("pipeline_id"))
         from .errors import ui_error
         diagnostics = []
         for attr, stage in (("scan_error", "initial_scan"),
@@ -1251,6 +1253,7 @@ def get_manual_workflow(
     return {
         "workflow": record,
         "pipeline": pipeline,
+        "patch_eligibility": eligibility,
         "diagnostics": diagnostics,
         "patch_enabled": os.environ.get("APPSEC_PATCH_ENABLED", "false").lower() in ("1", "true", "yes"),
         "publication_ready": publication_ready,

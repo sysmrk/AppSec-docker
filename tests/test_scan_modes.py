@@ -94,6 +94,7 @@ class ScanModeTests(unittest.TestCase):
         with patch.object(cli, "db") as database, patch.object(cli, "run_command") as command, \
              patch.object(cli.patch_sources, "policy_environment") as source_policy, \
              patch.object(cli.scan_evidence, "local_image_id", side_effect=["sha256:original", "sha256:patched"]), \
+             patch.object(cli.scan_evidence, "patch_eligibility", return_value={"code":"PATCH_CANDIDATES_AVAILABLE","eligible":True}), \
              patch.object(cli.scan_evidence, "copa_report", return_value={}), \
              patch("pathlib.Path.write_text"):
             source_policy.return_value.__enter__.return_value = None
@@ -114,6 +115,7 @@ class ScanModeTests(unittest.TestCase):
              patch.object(cli, "run_command", side_effect=failure) as command, \
              patch.object(cli.patch_sources, "policy_environment") as source_policy, \
              patch.object(cli.scan_evidence, "local_image_id", side_effect=["sha256:original", "sha256:patched"]), \
+             patch.object(cli.scan_evidence, "patch_eligibility", return_value={"code":"PATCH_CANDIDATES_AVAILABLE","eligible":True}), \
              patch.object(cli.scan_evidence, "copa_report", return_value={}), \
              patch("pathlib.Path.write_text"):
             source_policy.return_value.__enter__.return_value = None
@@ -122,6 +124,21 @@ class ScanModeTests(unittest.TestCase):
                 cli.patch_from_scan("scan")
             self.assertTrue(command.call_args.kwargs["capture_errors"])
             self.assertIn("403 Forbidden", database.update_patch_failed.call_args.args[2])
+
+    def test_no_fixable_os_does_not_create_patch_or_run_copa(self):
+        image_id = "sha256:" + "a"*64
+        scan = {"status":"success", "image_ref":"nginx:stable",
+                "raw_report":{"ArtifactType":"container_image", "Metadata":{"ImageID":image_id},
+                              "_appsec":{"verified":True,"image_id":image_id},
+                              "Results":[{"Target":"nginx (debian 13)", "Class":"os-pkgs",
+                                          "Packages":[{"Name":"libc6","Version":"1"}],
+                                          "Vulnerabilities":[{"VulnerabilityID":"CVE-test","PkgName":"libc6"}]}]}}
+        with patch.object(cli, "db") as database, patch.object(cli.scan_evidence, "local_image_id", return_value=image_id), patch.object(cli, "run_command") as command:
+            database.get_scan.return_value = scan
+            with self.assertRaises(cli.scan_evidence.NoFixableOS):
+                cli.patch_from_scan("scan")
+            database.insert_patch_started.assert_not_called()
+            command.assert_not_called()
 
     def test_publication_without_approved_job_is_blocked(self):
         with patch.object(cli, "db") as database, patch.object(cli, "run_command") as command:

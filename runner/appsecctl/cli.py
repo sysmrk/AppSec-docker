@@ -268,6 +268,15 @@ def patch_from_scan(scan_id: str) -> tuple[str, str]:
         if scan["status"] != "success":
             raise RuntimeError(f"scan {scan_id} is not successful")
         source_image_ref = scan["image_ref"]
+        original_report = scan.get("raw_report") or {}
+        expected_id = (original_report.get("_appsec") or {}).get("image_id")
+        if not expected_id or scan_evidence.local_image_id(source_image_ref) != expected_id:
+            raise RuntimeError("SCAN_EVIDENCE_INVALID: Original image is not verified or its tag changed; create a new scan")
+        eligibility = scan_evidence.patch_eligibility(scan)
+        if eligibility["code"] == "SCAN_EVIDENCE_INVALID":
+            raise RuntimeError("SCAN_EVIDENCE_INVALID: Original scan evidence is incomplete")
+        # Preflight before creating a patch run, touching BuildKit or preparing any image.
+        filtered_report = scan_evidence.copa_report(original_report)
         pipeline_id = scan["pipeline_id"]
         if pipeline_id is None:
             pipeline_id = db.create_pipeline(conn, str(scan["image_id"]), source_image_ref)
@@ -297,13 +306,9 @@ def patch_from_scan(scan_id: str) -> tuple[str, str]:
     ]
 
     try:
-        original_report = scan.get("raw_report") or {}
-        expected_id = (original_report.get("_appsec") or {}).get("image_id")
-        if not expected_id or scan_evidence.local_image_id(source_image_ref) != expected_id:
-            raise RuntimeError("SCAN_EVIDENCE_INVALID: Original image is not verified or its tag changed; create a new scan")
         # Keep the full report intact. Copa receives only fixable OS findings.
         copa_path = report_path.parent / f"copa-input-{patch_id}.json"
-        copa_path.write_text(json.dumps(scan_evidence.copa_report(original_report)), encoding="utf-8")
+        copa_path.write_text(json.dumps(filtered_report), encoding="utf-8")
         with db.connect() as conn:
             db.insert_artifact(conn, pipeline_id, scan_id, source_image_ref, "copa-input", "json", str(copa_path))
         command[command.index("-r") + 1] = str(copa_path)
@@ -419,14 +424,18 @@ def run_pipeline(image_ref: str, project_id: str | None = None, mode: str = "sca
         generate_sbom(resolved_image, "original", original_scan_id, pipeline_id)
         policy_scan_id = original_scan_id
         if mode == "patch":
-            _, patched_ref = patch_from_scan(original_scan_id)
-            patched_scan_id = scan_image(patched_ref, "patched", pipeline_id)
-            generate_sbom(patched_ref, "patched", patched_scan_id, pipeline_id)
-            create_diff(pipeline_id, original_scan_id, patched_scan_id)
-            policy_scan_id = patched_scan_id
-        # Initial scan reports findings only. Post-patch policy is advisory.
-        if mode == "patch":
-            evaluate_policy(pipeline_id, policy_scan_id, project_id, advisory=True)
+            try:
+                _, patched_ref = patch_from_scan(original_scan_id)
+            except scan_evidence.NoFixableOS:
+                print("NO_FIXABLE_OS: Patch skipped; original findings retained.", flush=True)
+                with db.connect() as conn:
+                    db.insert_audit(conn, None, "patch.skipped.no_fixable_os", "pipeline", pipeline_id, {})
+            else:
+                patched_scan_id = scan_image(patched_ref, "patched", pipeline_id)
+                generate_sbom(patched_ref, "patched", patched_scan_id, pipeline_id)
+                create_diff(pipeline_id, original_scan_id, patched_scan_id)
+                policy_scan_id = patched_scan_id
+                evaluate_policy(pipeline_id, policy_scan_id, project_id, advisory=True)
         with db.connect() as conn:
             db.finish_pipeline(conn, pipeline_id, "success")
     except BaseException as exc:
@@ -477,6 +486,22 @@ def continue_pipeline_patch(pipeline_id: str) -> str:
         evaluate_policy(pipeline_id, patched_scan_id, project_id, advisory=True)
         with db.connect() as conn:
             db.finish_pipeline(conn, pipeline_id, "success")
+    except scan_evidence.NoFixableOS:
+        # A continuation queued before the eligibility guard was introduced.
+        # Preserve the previous approval in the audit trail, then close without a patch.
+        with db.connect() as conn:
+            rows = conn.execute("""
+                UPDATE manual_workflows w SET decision='finish', updated_at=now()
+                FROM pipeline_jobs j WHERE j.id=w.patch_job_id
+                  AND j.pipeline_id=%s AND j.mode='continue_patch' AND j.status='running'
+                  AND w.decision='approve_patch' AND w.publish_decision IS NULL
+                RETURNING w.id
+            """, (pipeline_id,)).fetchall()
+            for row in rows:
+                db.insert_audit(conn, None, "patch.skipped.no_fixable_os", "manual_workflow", str(row["id"]),
+                                {"previous_decision": "approve_patch", "pipeline_id": pipeline_id})
+            db.finish_pipeline(conn, pipeline_id, "success")
+        print("NO_FIXABLE_OS: Patch skipped; original findings retained.", flush=True)
     except BaseException as exc:
         with db.connect() as conn:
             db.finish_pipeline(conn, pipeline_id, "failed", safe_message(exc, 'pipeline'))

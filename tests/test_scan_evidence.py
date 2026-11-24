@@ -31,6 +31,22 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual(len(filtered["Results"][0]["Vulnerabilities"]), 1)
         self.assertEqual(len(report["Results"][0]["Vulnerabilities"]), 2)
 
+    def test_eligibility_distinguishes_application_and_os(self):
+        report = self.report()
+        report["_appsec"] = {"verified": True, "image_id": "sha256:test"}
+        scan = {"status": "success", "raw_report": report}
+        result = evidence.patch_eligibility(scan)
+        self.assertTrue(result["eligible"])
+        self.assertEqual((result["os_fixable"], result["os_no_known_fix"], result["application_fixable"]), (1, 1, 1))
+        report["Results"][0]["Vulnerabilities"][0]["FixedVersion"] = "  "
+        result = evidence.patch_eligibility(scan)
+        self.assertEqual(result["code"], "NO_FIXABLE_OS")
+        self.assertEqual(result["application_fixable"], 1)
+        with self.assertRaises(evidence.NoFixableOS):
+            evidence.copa_report(report)
+        report["Results"][0]["Packages"] = []
+        self.assertEqual(evidence.patch_eligibility(scan)["code"], "SCAN_EVIDENCE_INVALID")
+
     def test_os_target_tag_does_not_fake_fix(self):
         self.assertEqual(evidence.stable_target("nginx:1 (debian 13.1)"),
                          evidence.stable_target("nginx:patched (debian 13.2)"))

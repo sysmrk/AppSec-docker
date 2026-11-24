@@ -46,6 +46,52 @@ def stable_target(target: str) -> str:
     return "os:" + match.group(1).lower() if match else target
 
 
+class NoFixableOS(RuntimeError):
+    """Valid scan, but no OS finding has a known fix."""
+
+
+def has_fix(v: dict) -> bool:
+    return isinstance(v.get("FixedVersion"), str) and bool(v["FixedVersion"].strip())
+
+
+def patch_eligibility(scan: dict | None) -> dict:
+    """Derive eligibility from the full saved report, not the display severity filter."""
+    result = {"eligible": False, "code": "SCAN_EVIDENCE_INVALID",
+              "message": "A verified original image scan is required.",
+              "os_fixable": None, "os_no_known_fix": None,
+              "application_fixable": None, "application_no_known_fix": None}
+    if not scan or scan.get("status") != "success":
+        return result
+    report = scan.get("raw_report") or {}
+    evidence = report.get("_appsec") or {}
+    if not evidence.get("verified") or not evidence.get("image_id"):
+        return result
+    try:
+        validate_report(report, evidence["image_id"])
+    except (RuntimeError, TypeError, AttributeError):
+        return result
+    counts = dict(os_fixable=0, os_no_known_fix=0, application_fixable=0, application_no_known_fix=0)
+    for target in report["Results"]:
+        prefix = {"os-pkgs": "os", "lang-pkgs": "application"}.get(target.get("Class"))
+        if prefix:
+            for v in target.get("Vulnerabilities") or []:
+                counts[prefix + ("_fixable" if has_fix(v) else "_no_known_fix")] += 1
+    eligible = counts["os_fixable"] > 0
+    return {**result, **counts, "eligible": eligible,
+            "code": "PATCH_CANDIDATES_AVAILABLE" if eligible else "NO_FIXABLE_OS",
+            "message": ("Known OS fixes available; Copa compatibility and image identity are checked during execution."
+                        if eligible else "No OS findings have a known fix. Finish without patching; remaining risks are not fixed.")}
+
+
+def original_patch_eligibility(conn, pipeline_id) -> dict:
+    scan = conn.execute("""
+        SELECT status, raw_report FROM scan_runs
+        WHERE pipeline_id=%s AND phase='original'
+        ORDER BY started_at DESC LIMIT 1
+    """, (pipeline_id,)).fetchone() if pipeline_id else None
+    return patch_eligibility(scan)
+
+
 def copa_report(report: dict) -> dict:
     output = copy.deepcopy(report)
     output.pop("_appsec", None)
@@ -53,10 +99,10 @@ def copa_report(report: dict) -> dict:
     for target in report.get("Results", []):
         if target.get("Class") == "os-pkgs":
             item = copy.deepcopy(target)
-            item["Vulnerabilities"] = [v for v in item.get("Vulnerabilities") or [] if v.get("FixedVersion")]
+            item["Vulnerabilities"] = [v for v in item.get("Vulnerabilities") or [] if has_fix(v)]
             output["Results"].append(item)
     if not any(t["Vulnerabilities"] for t in output["Results"]):
-        raise RuntimeError("SCAN_EVIDENCE_INVALID: No fixable OS vulnerabilities for Copa; finish without patching")
+        raise NoFixableOS("NO_FIXABLE_OS: No fixable OS vulnerabilities for Copa; finish without patching")
     return output
 
 
