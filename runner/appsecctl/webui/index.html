@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="color-scheme" content="light">
   <title>AppSec Control Center</title>
-  <link rel="stylesheet" href="./assets/styles.css">
-  <script src="./assets/app.js" defer></script>
-  <script src="./assets/workspace.js" defer></script>
+  <link rel="stylesheet" href="./assets/styles.css?v=__APPSEC_ASSET_KEY__">
+  <script src="./assets/app.js?v=__APPSEC_ASSET_KEY__" defer></script>
+  <script src="./assets/workspace.js?v=__APPSEC_ASSET_KEY__" defer></script>
 </head>
 <body>
   <div id="login-screen" class="login-screen" hidden>
@@ -59,6 +59,7 @@
         <div id="breadcrumb">Overview</div>
         <div class="topbar-right">
           <span id="health-indicator" class="health unknown">Checking connection</span>
+          <span id="deployment-build" title="Actual API container build">Build __APPSEC_BUILD_REVISION__</span>
           <span id="current-user"></span>
           <button id="logout-button" class="outline small">Log out</button>
         </div>

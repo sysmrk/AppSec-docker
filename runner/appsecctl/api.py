@@ -18,6 +18,7 @@ from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_
 from pydantic import BaseModel, Field
 
 from . import db
+from .build_info import runtime_info
 from .errors import classify
 from .artifacts import presigned_download_url
 from .logging_utils import log_event
@@ -27,6 +28,8 @@ from .sanitization import validate_repo_target
 
 
 app = FastAPI(title="AppSec Pipeline API", version="0.1.0")
+BUILD_INFO = runtime_info()
+BUILD_ASSET_KEY = BUILD_INFO["source_sha256"][:16]
 
 HTTP_REQUESTS = Counter("appsec_http_requests_total", "HTTP requests", ["method", "path", "status"])
 HTTP_LATENCY = Histogram("appsec_http_request_duration_seconds", "HTTP request latency", ["method", "path"])
@@ -54,6 +57,10 @@ async def request_logging(request: Request, call_next):
     with HTTP_LATENCY.labels(method=method, path=path).time():
         response = await call_next(request)
     response.headers["X-Request-ID"] = request_id
+    if path == "/ui" or path.startswith("/ui/"):
+        response.headers["Cache-Control"] = "no-store, max-age=0"
+        response.headers["X-AppSec-Build"] = BUILD_INFO["revision"]
+        response.headers["X-AppSec-Source"] = BUILD_INFO["source_sha256"]
     HTTP_REQUESTS.labels(method=method, path=path, status=str(response.status_code)).inc()
     log_event("api.request", request_id=request_id, method=method, path=path, status=response.status_code)
     return response
@@ -1028,8 +1035,17 @@ app.mount("/ui/assets", StaticFiles(directory=str(WEB_ROOT / "assets")), name="u
 
 
 @app.get("/ui/", include_in_schema=False)
-def appsec_control_center() -> FileResponse:
-    return FileResponse(WEB_ROOT / "index.html", media_type="text/html")
+def appsec_control_center() -> Response:
+    revision = BUILD_INFO["revision"]
+    document = (WEB_ROOT / "index.html").read_text(encoding="utf-8")
+    document = document.replace("__APPSEC_ASSET_KEY__", BUILD_ASSET_KEY)
+    document = document.replace("__APPSEC_BUILD_REVISION__", revision[:12] if revision != "unknown" else "unversioned")
+    return Response(document, media_type="text/html")
+
+
+@app.get("/ui/build-info", include_in_schema=False)
+def appsec_build_info() -> dict[str, str]:
+    return BUILD_INFO
 
 
 @app.get("/ui", include_in_schema=False)

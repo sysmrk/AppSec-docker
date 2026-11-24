@@ -49,6 +49,8 @@ class OnboardingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder, \
              patch.object(cli, "ENV_FILE", Path(folder) / ".env"), \
              patch.object(cli, "check_prerequisites"), \
+             patch.object(cli, "checkout_build_info", return_value={"revision":"a"*40,"source_sha256":"b"*64}), \
+             patch.object(cli, "verify_deployment") as verify, \
              patch.object(cli, "compose") as compose_calls, \
              patch.object(cli, "run") as run_command, \
              patch.object(cli.os, "environ", dict(os.environ)):
@@ -66,12 +68,16 @@ class OnboardingTests(unittest.TestCase):
             self.assertLess(calls.index(runner_build), calls.index(migrate))
             platform_start = next(i for i, args in enumerate(calls) if "--build" in args and "worker" in args)
             self.assertLess(calls.index(migrate), platform_start)
+            verify.assert_called_once()
+            self.assertEqual(cli.os.environ["APPSEC_BUILD_REVISION"], "a"*40)
 
     def test_migration_failure_prevents_platform_start(self):
         cli = self.cli
         with tempfile.TemporaryDirectory() as folder, \
              patch.object(cli, "ENV_FILE", Path(folder) / ".env"), \
              patch.object(cli, "check_prerequisites"), \
+             patch.object(cli, "checkout_build_info", return_value={"revision":"a"*40,"source_sha256":"b"*64}), \
+             patch.object(cli, "verify_deployment") as verify, \
              patch.object(cli, "compose") as compose_calls, \
              patch.object(cli, "run") as run_command:
             cli.ENV_FILE.write_text("POSTGRES_PASSWORD=xyz\n")
@@ -86,6 +92,14 @@ class OnboardingTests(unittest.TestCase):
             self.assertFalse(any("--build" in call.args and "worker" in call.args
                                  for call in compose_calls.call_args_list))
             run_command.assert_not_called()
+            verify.assert_not_called()
+
+    def test_build_mismatch_is_not_healthy(self):
+        expected = {"revision":"a"*40,"source_sha256":"b"*64}
+        self.assertTrue(self.cli.build_matches(expected, dict(expected)))
+        self.assertFalse(self.cli.build_matches(expected, {"revision":"a"*40,"source_sha256":"c"*64}))
+        self.assertFalse(self.cli.build_matches(expected, {"revision":"c"*40,"source_sha256":"b"*64}))
+        self.assertFalse(self.cli.build_matches(expected, {}))
 
 
 if __name__ == "__main__":

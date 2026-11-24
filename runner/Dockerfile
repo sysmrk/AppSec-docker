@@ -40,4 +40,9 @@ COPY alembic.ini ./alembic.ini
 COPY migrations ./migrations
 COPY db ./db
 
+# Stamp late so revision changes do not invalidate dependency installation.
+ARG APPSEC_BUILD_REVISION=unknown
+RUN printf '%s\n' "$APPSEC_BUILD_REVISION" > /app/.appsec-build-revision
+LABEL org.opencontainers.image.revision=$APPSEC_BUILD_REVISION
+
 ENTRYPOINT ["python", "-m", "appsecctl.cli"]

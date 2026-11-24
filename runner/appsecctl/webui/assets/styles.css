@@ -101,3 +101,6 @@
 .history-danger button{color:#b52e4f;border-color:#e5aebc}.diagnostic-detail{white-space:pre-wrap;overflow-wrap:anywhere;color:#7d2644;background:#fff0f3;padding:12px;border-radius:8px;font:12px/1.6 ui-monospace,monospace}
 .priority-input{width:85px;padding:8px;border:1px solid #cbd6df;border-radius:8px}
 @media(max-width:700px){.scan-phases{grid-template-columns:1fr}.severity-graph-row{grid-template-columns:73px minmax(100px,1fr) 70px}.change-metrics{grid-template-columns:1fr 1fr 1fr}.change-metric{padding:9px}.change-metric strong{font-size:24px}}
+
+#deployment-build{font-size:11px;white-space:nowrap;color:var(--muted);font-family:ui-monospace,monospace}
+#tool-update-count:not([hidden]){width:auto;font-size:11px;color:#f8d586;white-space:nowrap}
