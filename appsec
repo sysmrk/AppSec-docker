@@ -140,7 +140,10 @@ def start(args) -> None:
     compose("--profile", "platform", "up", "-d", "postgres", "minio", "minio-init")
     if args.patching:
         compose("--profile", "patch", "up", "-d", "buildkit")
-    print("\n[2/3] Applying database migrations", flush=True)
+    print("\n[2/3] Building migration runner and applying database migrations", flush=True)
+    # A cached runner may contain older Alembic revisions than the checkout.
+    # Always build from the current source before executing database migrations.
+    compose("--profile", "tools", "build", "appsec-runner")
     compose("--profile", "tools", "run", "--rm", "appsec-runner", "migrate")
     print("\n[3/3] Starting Control Center, workers and Metabase", flush=True)
     os.environ["APPSEC_PATCH_ENABLED"] = "true" if args.patching else "false"
@@ -236,7 +239,10 @@ def doctor(_args) -> None:
                     status = str(entry.get("State", "")) if entry else ""
                     health = str(entry.get("Health", "")) if entry else ""
                     healthy = status == "running" and health not in ("unhealthy", "starting")
-                    show("Container " + name, "OK" if healthy else "WARN",
+                    # A restarting/stopped required worker is an operational failure,
+                    # even when the API and database are responding.
+                    result = "OK" if healthy else ("WARN" if status == "running" and health == "starting" else "FAIL")
+                    show("Container " + name, result,
                          (status + (" / " + health if health else "")) if entry else "not started")
     except (OSError, ValueError, subprocess.TimeoutExpired):
         show("Container diagnostics", "WARN", "Could not parse Compose status")

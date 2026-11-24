@@ -78,3 +78,8 @@ Built-in MFA is not a replacement for enterprise OIDC/SSO. Metabase accounts and
 ## Trusted mirrors, operator reports and erasure
 
 Open Registries to add approved mirror hostnames in numeric priority order. Test from the Docker daemon and from the separate Copa BuildKit execution context. A successful Docker pull is not proof that BuildKit can fetch the same reference. Use the consolidated Before/After report for actual scan comparison and post-fix recommendation. The initial scan never blocks on policy. For a local output choose Keep patched image locally; to export a tar on the same Docker host, run docker save -o patched.tar IMAGE_REF with the exact local tag shown in UI. For registry output enter the full registry/repository:tag and approve publication separately. Admin history deletion is irreversible for live DB and evidence but intentionally preserves audit logs, remote published images and backups.
+
+
+## Upgrade: build the migration runner before applying Alembic revisions
+
+The start command rebuilds appsec-runner from the current checkout before invoking migrate, then starts the API and workers. This prevents an existing cached runner from using stale migration files. Stop the previous platform and back up the database and evidence before upgrading. If a worker reports UndefinedTable for pending_image_removals, check the PostgreSQL alembic_version: revision 0015_history_purge must be present for this release. Rebuild the runner and run migrate before restarting the worker. Keep all data volumes. A restarting or stopped required worker is a doctor failure, not a healthy deployment.
