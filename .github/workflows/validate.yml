@@ -31,8 +31,12 @@ jobs:
         run: |
           node --check runner/appsecctl/webui/assets/app.js
           node --check runner/appsecctl/webui/assets/workspace.js
-      - name: Validate CLI syntax
-        run: python -m py_compile appsec
+      - name: Validate CLI syntax and executable mode
+        run: |
+          test -x appsec
+          test "$(git ls-files -s appsec | cut -d ' ' -f 1)" = 100755
+          python -m py_compile appsec
+          ./appsec --help >/dev/null
 
   database-migration:
     runs-on: ubuntu-latest
