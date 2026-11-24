@@ -69,7 +69,11 @@ def source_policy(source: str, mappings: dict[str, str]) -> dict:
         permitted.add(selected)
         # A helper alias cannot override the explicitly approved target.
         if original != selected and original != canonical_source:
-            rules.append({"action": "CONVERT", "selector": {"identifier": "docker-image://" + original, "match_type": "EXACT"},
+            # BuildKit v0.29.0 selectorCache.Format returns the original
+            # selector for EXACT, making CONVERT a no-op. Anchored, escaped
+            # REGEX matches exactly one source and expands the destination.
+            pattern = "^" + re.escape("docker-image://" + original) + "$"
+            rules.append({"action": "CONVERT", "selector": {"identifier": pattern, "match_type": "REGEX"},
                           "updates": {"identifier": "docker-image://" + selected}})
     for reference in sorted(permitted):
         rules.append({"action": "ALLOW", "selector": {"identifier": "docker-image://" + reference, "match_type": "EXACT"}})

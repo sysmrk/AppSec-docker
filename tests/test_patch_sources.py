@@ -1,4 +1,5 @@
 import json
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -33,7 +34,23 @@ class PatchSourceTests(unittest.TestCase):
             original: selected, "docker.io/library/debian:stable-slim": selected})["rules"]
         self.assertEqual(rules[0]["action"], "DENY")
         self.assertEqual(rules[0]["selector"]["match_type"], "REGEX")
-        self.assertEqual(len([r for r in rules if r["action"] == "CONVERT"]), 2)
+        conversions = [r for r in rules if r["action"] == "CONVERT"]
+        self.assertEqual(len(conversions), 2)
+        for rule in conversions:
+            selector = rule["selector"]
+            self.assertEqual(selector["match_type"], "REGEX")
+            self.assertTrue(selector["identifier"].startswith("^"))
+            self.assertTrue(selector["identifier"].endswith("$"))
+            self.assertEqual(rule["updates"]["identifier"], "docker-image://" + selected)
+        hub = next(r for r in conversions if "docker" in r["selector"]["identifier"] and "library/debian" in r["selector"]["identifier"])
+        pattern = hub["selector"]["identifier"]
+        self.assertEqual(re.sub(pattern, hub["updates"]["identifier"],
+                                "docker-image://docker.io/library/debian:stable-slim"),
+                         "docker-image://" + selected)
+        for invalid in ("docker-image://dockerXio/library/debian:stable-slim",
+                        "docker-image://docker.io/library/debian:stable-slim-extra",
+                        "docker-image://evil.example/library/debian:stable-slim"):
+            self.assertIsNone(re.search(pattern, invalid))
         self.assertEqual({r["selector"]["identifier"] for r in rules if r["action"] == "ALLOW"},
                          {"docker-image://mirror.example/library/nginx:1", "docker-image://" + selected})
 
@@ -50,7 +67,7 @@ class PatchSourceTests(unittest.TestCase):
                     policy_path = Path(env["EXPERIMENTAL_BUILDKIT_SOURCE_POLICY"])
                     self.assertTrue(policy_path.exists())
                     rules = json.loads(policy_path.read_text())["rules"]
-                    self.assertIn({"action": "CONVERT", "selector": {"identifier": "docker-image://docker.io/library/debian:stable-slim", "match_type": "EXACT"},
+                    self.assertIn({"action": "CONVERT", "selector": {"identifier": "^" + re.escape("docker-image://docker.io/library/debian:stable-slim") + "$", "match_type": "REGEX"},
                                    "updates": {"identifier": "docker-image://mirror.example/library/debian:13-slim"}}, rules)
                     self.assertNotIn("docker-image://docker.io/library/debian:stable-slim",
                                      {r["selector"]["identifier"] for r in rules if r["action"] == "ALLOW"})

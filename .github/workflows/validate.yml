@@ -21,6 +21,8 @@ jobs:
       - name: Unit tests for security and MCP contracts
         run: |
           PYTHONPATH=runner:integrations/mcp python -m unittest discover -s tests -p 'test_*.py' -v
+      - name: Real BuildKit source policy regression (v0.29.0)
+        run: bash tests/integration_buildkit_policy.sh
       - name: Compile optional MCP module
         run: python -m py_compile integrations/mcp/appsec_mcp.py
       - name: Check first-party UI JavaScript syntax

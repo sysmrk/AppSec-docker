@@ -17,3 +17,5 @@ Select individual completed/failed image workflows or the header checkbox. Expor
 ### Patch tooling resolution
 
 Copa v0.14.1 may request Debian `stable-slim` even for a versioned target. AppSec resolves the tooling image for the detected Debian major release through the configured pull-source priority, then maps both Copa's cached and Docker Hub stable aliases to that approved reference. Unapproved sources remain denied. Worker logs record `COPA_HELPER_MAPPING`; this does not change package-manager egress or authorize a publication retry.
+
+BuildKit v0.29.0 has a source-policy formatting issue: EXACT conversions can leave the original identifier unchanged. AppSec uses anchored, escaped REGEX selectors for CONVERT only; ALLOW stays exact and the default DENY remains. CI exercises actual BuildKit conversions and rejects unrelated/near-match references. This does not permit direct access to the original helper registry.
