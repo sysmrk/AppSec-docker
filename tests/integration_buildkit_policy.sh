@@ -25,7 +25,11 @@ printf "%s\n" "FROM source.invalid/library/debian:stable-slim" "RUN busybox true
 buildctl build --frontend dockerfile.v0 --local context=/tmp/policy-test --local dockerfile=/tmp/policy-test --source-policy-file /tmp/policy.json --progress plain
 printf "%s\n" "FROM docker.io/library/debian:stable-slim" "RUN busybox true" >/tmp/policy-test/Dockerfile
 buildctl build --frontend dockerfile.v0 --local context=/tmp/policy-test --local dockerfile=/tmp/policy-test --source-policy-file /tmp/policy.json --progress plain
-for ref in source.invalid/library/debian:stable-slim-extra sourceXinvalid/library/debian:stable-slim docker.io/library/alpine:latest; do
+# The successful builds above include frontend tag-to-digest resolution.
+# Also deny a different tag, repository, source alias with a digest and
+# the untagged digest form: none belongs to the approved tag allowlist.
+digest="sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+for ref in source.invalid/library/debian:stable-slim-extra sourceXinvalid/library/debian:stable-slim docker.io/library/alpine:latest docker.io/library/busybox:1.35@$digest docker.io/library/busybox@$digest source.invalid/library/debian:stable-slim@$digest; do
   printf "FROM %s\n" "$ref" >/tmp/policy-test/Dockerfile
   if buildctl build --frontend dockerfile.v0 --local context=/tmp/policy-test --local dockerfile=/tmp/policy-test --source-policy-file /tmp/policy.json --progress plain >/tmp/denied.log 2>&1; then
     echo "ERROR: unexpected source accepted: $ref" >&2

@@ -59,7 +59,7 @@ def source_policy(source: str, mappings: dict[str, str]) -> dict:
     canonical_source = image_sources.canonical_ref(source)
     # Copa v0.14.1 expects the first rule to have an updates object.
     # Retain the default-deny rule first; BuildKit re-evaluates a converted
-    # source against the entire policy and the final exact allowlist.
+    # source against the entire policy and the final repository/tag-scoped allowlist.
     rules = [{"action": "DENY", "selector": {"identifier": "^docker-image://.*$", "match_type": "REGEX"},
               "updates": {"identifier": ""}}]
     permitted = {canonical_source}
@@ -76,7 +76,16 @@ def source_policy(source: str, mappings: dict[str, str]) -> dict:
             rules.append({"action": "CONVERT", "selector": {"identifier": pattern, "match_type": "REGEX"},
                           "updates": {"identifier": "docker-image://" + selected}})
     for reference in sorted(permitted):
-        rules.append({"action": "ALLOW", "selector": {"identifier": "docker-image://" + reference, "match_type": "EXACT"}})
+        identifier = "docker-image://" + reference
+        rules.append({"action": "ALLOW", "selector": {"identifier": identifier, "match_type": "EXACT"}})
+        # The Dockerfile frontend resolves a tag into tag@sha256:digest
+        # before loading the LLB. Permit that form only for the very same
+        # approved registry, repository and tag. An already pinned input
+        # stays exact; never append a second digest or allow another tag.
+        # This is a source allowlist, not a cryptographic digest pin.
+        if "@" not in reference:
+            resolved = "^" + re.escape(identifier) + "@sha256:[0-9a-f]{64}$"
+            rules.append({"action": "ALLOW", "selector": {"identifier": resolved, "match_type": "REGEX"}})
     return {"version": 1, "rules": rules}
 
 

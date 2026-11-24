@@ -51,8 +51,42 @@ class PatchSourceTests(unittest.TestCase):
                         "docker-image://docker.io/library/debian:stable-slim-extra",
                         "docker-image://evil.example/library/debian:stable-slim"):
             self.assertIsNone(re.search(pattern, invalid))
-        self.assertEqual({r["selector"]["identifier"] for r in rules if r["action"] == "ALLOW"},
+        self.assertEqual({r["selector"]["identifier"] for r in rules
+                          if r["action"] == "ALLOW" and r["selector"]["match_type"] == "EXACT"},
                          {"docker-image://mirror.example/library/nginx:1", "docker-image://" + selected})
+
+    def test_resolved_allowlist_is_scoped_to_approved_tags(self):
+        target = "mirror.example/library/nginx:1"
+        helper = "mirror.example/library/debian:13-slim"
+        digest = "@sha256:" + "a" * 64
+        rules = patch_sources.source_policy(target, {
+            "docker.io/library/debian:stable-slim": helper})["rules"]
+
+        def allowed(ref):
+            identifier = "docker-image://" + ref
+            matches = [r["action"] for r in rules if r["action"] != "CONVERT"
+                       and (identifier == r["selector"]["identifier"]
+                            if r["selector"]["match_type"] == "EXACT"
+                            else re.fullmatch(r["selector"]["identifier"], identifier))]
+            return bool(matches and matches[-1] == "ALLOW")
+
+        for approved in (target, helper):
+            self.assertTrue(allowed(approved))
+            self.assertTrue(allowed(approved + digest))
+        for denied in ("mirror.example/library/debian:12-slim" + digest,
+                       "mirrorXexample/library/debian:13-slim" + digest,
+                       "mirror.example/library/alpine:13-slim" + digest,
+                       "docker.io/library/debian:stable-slim" + digest,
+                       "mirror.example/library/debian" + digest,
+                       helper + "@sha256:abc", helper + digest + digest,
+                       helper + "@sha512:" + "a" * 128):
+            self.assertFalse(allowed(denied), denied)
+
+    def test_pinned_source_remains_exact(self):
+        source = "mirror.example/library/nginx:1@sha256:" + "a" * 64
+        rules = patch_sources.source_policy(source, {})["rules"]
+        self.assertEqual([r["selector"] for r in rules if r["action"] == "ALLOW"],
+                         [{"identifier": "docker-image://" + source, "match_type": "EXACT"}])
 
     def test_policy_file_is_per_job_and_removed(self):
         report = {"Metadata": {"OS": {"Family": "debian", "Name": "13"}}}
