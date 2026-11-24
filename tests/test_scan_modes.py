@@ -72,7 +72,9 @@ class ScanModeTests(unittest.TestCase):
     def test_direct_patch_prepares_local_image_without_registry_commands(self):
         scan = {"status": "success", "image_ref": "example.org/team/image:1",
                 "pipeline_id": "pipeline", "report_path": "/reports/scan.json"}
-        with patch.object(cli, "db") as database, patch.object(cli, "run_command") as command:
+        with patch.object(cli, "db") as database, patch.object(cli, "run_command") as command, \
+             patch.object(cli.patch_sources, "policy_environment") as source_policy:
+            source_policy.return_value.__enter__.return_value = None
             database.get_scan.return_value = scan
             _, image_ref = cli.patch_from_scan("scan")
         command.assert_called_once()
@@ -86,7 +88,9 @@ class ScanModeTests(unittest.TestCase):
         failure = subprocess.CalledProcessError(
             1, ["copa", "patch"], stderr="failed to solve: registry returned 403 Forbidden")
         with patch.object(cli, "db") as database, \
-             patch.object(cli, "run_command", side_effect=failure) as command:
+             patch.object(cli, "run_command", side_effect=failure) as command, \
+             patch.object(cli.patch_sources, "policy_environment") as source_policy:
+            source_policy.return_value.__enter__.return_value = None
             database.get_scan.return_value = scan
             with self.assertRaises(subprocess.CalledProcessError):
                 cli.patch_from_scan("scan")

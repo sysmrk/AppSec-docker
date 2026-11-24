@@ -127,6 +127,8 @@ def execute_security_job(job_id: str) -> str:
     try:
         if kind == "secrets":
             repo_path = prepare_repo(target, job_id)
+            from . import image_sources
+            scanner = image_sources.runtime_image(env("GITLEAKS_IMAGE", "zricethezav/gitleaks:latest"))
             scan_exit_code = run_command(
                 [
                     "docker",
@@ -136,7 +138,7 @@ def execute_security_job(job_id: str) -> str:
                     f"{workspaces_volume}:/{workspaces_volume}",
                     "-v",
                     f"{reports_volume}:/reports",
-                    env("GITLEAKS_IMAGE", "zricethezav/gitleaks:latest"),
+                    scanner,
                     "detect",
                     "--source",
                     f"/{workspaces_volume}/{repo_path.name}",

@@ -1,0 +1,59 @@
+import json
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+from appsecctl import patch_sources
+
+
+class PatchSourceTests(unittest.TestCase):
+    def test_debian_helper_matches_copa(self):
+        report = {"Metadata": {"OS": {"Family": "debian", "Name": "13.1"}}}
+        self.assertEqual(patch_sources.helper_groups(report), [[
+            "ghcr.io/project-copacetic/copacetic/debian:stable-slim",
+            "docker.io/library/debian:stable-slim"]])
+
+    def test_alpine_needs_no_helper(self):
+        self.assertEqual(patch_sources.helper_groups({"Metadata": {"OS": {"Family": "alpine"}}}), [])
+
+    def test_policy_denies_unknown_and_converts_both_helper_refs(self):
+        original = "ghcr.io/project-copacetic/copacetic/debian:stable-slim"
+        selected = "mirror.example/library/debian:stable-slim"
+        rules = patch_sources.source_policy("mirror.example/library/nginx:1", {
+            original: selected, "docker.io/library/debian:stable-slim": selected})["rules"]
+        self.assertEqual(rules[0]["action"], "DENY")
+        self.assertEqual(len([r for r in rules if r["action"] == "CONVERT"]), 2)
+        self.assertEqual({r["selector"]["identifier"] for r in rules if r["action"] == "ALLOW"},
+                         {"docker-image://mirror.example/library/nginx:1", "docker-image://" + selected})
+
+    def test_policy_file_is_per_job_and_removed(self):
+        report = {"Metadata": {"OS": {"Family": "debian", "Name": "13"}}}
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "report.json"
+            path.write_text(json.dumps(report))
+            rows = [{"name": "mirror", "host": "mirror.example", "priority": 1}]
+            with patch.object(patch_sources.db, "connect"), \
+                 patch.object(patch_sources.image_sources, "configured_sources", return_value=rows), \
+                 patch.object(patch_sources.image_sources, "pull_ordered", return_value="mirror.example/library/debian:stable-slim"):
+                with patch_sources.policy_environment("mirror.example/library/nginx:1", path) as env:
+                    policy_path = Path(env["EXPERIMENTAL_BUILDKIT_SOURCE_POLICY"])
+                    self.assertTrue(policy_path.exists())
+                    self.assertIn("CONVERT", policy_path.read_text())
+                self.assertFalse(policy_path.exists())
+
+    def test_no_policy_for_legacy_configuration(self):
+        with patch.object(patch_sources.db, "connect"), \
+             patch.object(patch_sources.image_sources, "configured_sources", return_value=None):
+            with patch_sources.policy_environment("nginx:1", Path("/nonexistent")) as env:
+                self.assertIsNone(env)
+
+    def test_unapproved_target_fails_before_helper_pull(self):
+        rows = [{"name": "mirror", "host": "mirror.example", "priority": 1}]
+        with patch.object(patch_sources.db, "connect"), \
+             patch.object(patch_sources.image_sources, "configured_sources", return_value=rows), \
+             patch.object(patch_sources.image_sources, "pull_ordered") as pull:
+            with self.assertRaisesRegex(RuntimeError, "no longer approved"):
+                with patch_sources.policy_environment("other.example/nginx:1", Path("/nonexistent")):
+                    pass
+            pull.assert_not_called()

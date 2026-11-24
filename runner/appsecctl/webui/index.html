@@ -167,12 +167,12 @@
             <button type="submit" class="primary">Register HTTPS registry</button>
           </form>
           <div class="section-heading"><h2>Trusted image pull sources (strict priority)</h2></div>
-          <p class="hint">Configure mirror endpoints for Docker Hub images. For nginx:1.27-alpine, a source hub.hamdocker.ir is tried as hub.hamdocker.ir/library/nginx:1.27-alpine. Lower numbers are tried first. Once any source is configured, AppSec NEVER falls back to Docker Hub.</p>
+          <p class="hint">Configure approved registry endpoints and optional repository prefixes. Lower numbers are tried first for target images, runtime scanners and supported Copa helper images. Trivy database endpoints use the same ordered list; native Trivy fallback behavior applies. Explicit upstream endpoints such as ghcr.io are used only for their own upstream images. Enforce network egress separately.</p>
           <form id="pull-source-form" class="panel form-panel">
             <label for="pull-source-name">Source alias</label>
             <input id="pull-source-name" placeholder="iran-mirror-1" minlength="2" maxlength="50" required>
-            <label for="pull-source-host">Mirror host (no https:// or path)</label>
-            <input id="pull-source-host" placeholder="hub.hamdocker.ir" maxlength="255" required>
+            <label for="pull-source-host">Registry host / optional repository prefix</label>
+            <input id="pull-source-host" placeholder="harbor.example.org/dockerhub" maxlength="255" required>
             <label for="pull-source-priority">Priority (1 is highest)</label>
             <input id="pull-source-priority" type="number" min="1" max="10000" value="1" required>
             <button type="submit" class="primary">Add trusted source</button>

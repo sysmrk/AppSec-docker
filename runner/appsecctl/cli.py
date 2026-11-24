@@ -12,7 +12,7 @@ from uuid import uuid4
 from alembic import command as alembic_command
 from alembic.config import Config as AlembicConfig
 
-from . import db, policy, image_sources
+from . import db, policy, image_sources, patch_sources
 from .errors import safe_message
 from .reports import write_html_report, write_security_sarif
 from .security import enqueue_security_job, run_security_job
@@ -25,9 +25,10 @@ def env(name: str, default: str) -> str:
     return os.environ.get(name, default)
 
 
-def run_command(command: list[str], *, capture_errors: bool = False) -> None:
+def run_command(command: list[str], *, capture_errors: bool = False, environment: dict[str, str] | None = None) -> None:
     print("+ " + " ".join(command), flush=True)
-    subprocess.run(command, check=True, stderr=subprocess.PIPE if capture_errors else None, text=capture_errors)
+    subprocess.run(command, check=True, stderr=subprocess.PIPE if capture_errors else None,
+                   text=capture_errors, env=environment)
 
 
 def report_name(prefix: str, identifier: str) -> str:
@@ -74,11 +75,20 @@ def docker_base() -> list[str]:
     return ["docker", "run", "--rm", "--network", env("TOOL_NETWORK", "appsec-net")]
 
 
-def trivy_database_options() -> list[str]:
-    return [
-        "-e", f"TRIVY_DB_REPOSITORY={env('TRIVY_DB_REPOSITORY', 'ghcr.io/aquasecurity/trivy-db:2')}",
-        "-e", f"TRIVY_JAVA_DB_REPOSITORY={env('TRIVY_JAVA_DB_REPOSITORY', 'ghcr.io/aquasecurity/trivy-java-db:1')}",
-    ]
+def trivy_database_options(sources=None) -> list[str]:
+    db_refs = image_sources.artifact_repositories(sources, env("TRIVY_DB_REPOSITORY", "ghcr.io/aquasecurity/trivy-db:2"))
+    java_refs = image_sources.artifact_repositories(sources, env("TRIVY_JAVA_DB_REPOSITORY", "ghcr.io/aquasecurity/trivy-java-db:1"))
+    return ["-e", f"TRIVY_DB_REPOSITORY={db_refs}", "-e", f"TRIVY_JAVA_DB_REPOSITORY={java_refs}"]
+
+
+def trivy_runtime() -> tuple[str, list[str], list[str]]:
+    with db.connect() as conn:
+        sources = image_sources.configured_sources(conn)
+    trivy_image = env("TRIVY_IMAGE", "aquasec/trivy:latest")
+    if sources is None:
+        return trivy_image, [], trivy_database_options()
+    resolved = image_sources.pull_ordered(image_sources.ordered_candidates(sources, [trivy_image]))
+    return resolved, ["--pull=never"], trivy_database_options(sources)
 
 
 def scan_image(image_ref: str, phase: str, pipeline_id: str | None = None) -> str:
@@ -86,7 +96,6 @@ def scan_image(image_ref: str, phase: str, pipeline_id: str | None = None) -> st
     reports_dir = Path(env("REPORTS_DIR", "/reports"))
     reports_volume = env("REPORTS_VOLUME", "appsec_reports")
     trivy_cache_volume = env("TRIVY_CACHE_VOLUME", "appsec_trivy_cache")
-    trivy_image = env("TRIVY_IMAGE", "aquasec/trivy:latest")
     report_file = report_name(f"trivy-{phase}", scan_id)
     report_path = reports_dir / report_file
     container_report_path = f"/reports/{report_file}"
@@ -95,7 +104,9 @@ def scan_image(image_ref: str, phase: str, pipeline_id: str | None = None) -> st
         image_id = db.get_or_create_image(conn, image_ref)
         db.insert_scan_started(conn, scan_id, pipeline_id, image_id, image_ref, phase)
 
-    command = docker_base() + trivy_database_options() + [
+    try:
+        trivy_image, pull_options, database_options = trivy_runtime()
+        command = docker_base() + pull_options + database_options + [
         "-v",
         "/var/run/docker.sock:/var/run/docker.sock",
         "-v",
@@ -104,6 +115,7 @@ def scan_image(image_ref: str, phase: str, pipeline_id: str | None = None) -> st
         f"{trivy_cache_volume}:/root/.cache/trivy",
         trivy_image,
         "image",
+        "--image-src", "docker",
         "--scanners",
         "vuln",
         "--pkg-types",
@@ -114,9 +126,8 @@ def scan_image(image_ref: str, phase: str, pipeline_id: str | None = None) -> st
         "--output",
         container_report_path,
         image_ref,
-    ]
+        ]
 
-    try:
         run_command(command, capture_errors=True)
         report = json.loads(report_path.read_text(encoding="utf-8"))
         counts, vulnerabilities = parse_trivy_report(report)
@@ -138,12 +149,12 @@ def generate_sbom(image_ref: str, phase: str, scan_id: str, pipeline_id: str | N
     reports_dir = Path(env("REPORTS_DIR", "/reports"))
     reports_volume = env("REPORTS_VOLUME", "appsec_reports")
     trivy_cache_volume = env("TRIVY_CACHE_VOLUME", "appsec_trivy_cache")
-    trivy_image = env("TRIVY_IMAGE", "aquasec/trivy:latest")
+    trivy_image, pull_options, database_options = trivy_runtime()
     sbom_file = report_name(f"sbom-{phase}", artifact_id).replace(".json", ".cdx.json")
     sbom_path = reports_dir / sbom_file
     container_sbom_path = f"/reports/{sbom_file}"
 
-    command = docker_base() + trivy_database_options() + [
+    command = docker_base() + pull_options + database_options + [
         "-v",
         "/var/run/docker.sock:/var/run/docker.sock",
         "-v",
@@ -152,6 +163,7 @@ def generate_sbom(image_ref: str, phase: str, scan_id: str, pipeline_id: str | N
         f"{trivy_cache_volume}:/root/.cache/trivy",
         trivy_image,
         "image",
+        "--image-src", "docker",
         "--format",
         "cyclonedx",
         "--output",
@@ -224,7 +236,8 @@ def patch_from_scan(scan_id: str) -> tuple[str, str]:
     try:
         # Capture Copa stderr so a failed patch has a concrete diagnostic in
         # the persisted patch/job error instead of only an exit status.
-        run_command(command, capture_errors=True)
+        with patch_sources.policy_environment(source_image_ref, report_path) as environment:
+            run_command(command, capture_errors=True, environment=environment)
         with db.connect() as conn:
             db.update_patch_success(conn, patch_id, None)
             conn.execute("""

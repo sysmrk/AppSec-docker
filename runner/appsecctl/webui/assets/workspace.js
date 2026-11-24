@@ -374,7 +374,7 @@
         priority:Number($("pull-source-priority").value),
         enabled:true
       });
-      notice("Trusted source added. Future image pulls follow strictly sorted priorities; no Docker Hub fallback.");
+      notice("Trusted source added. Runtime image pulls follow source priority. Unconfigured direct pulls are not added to the candidate list.");
       await refreshPullSources();
     }catch(error){notice(error.message,true);}
   });
