@@ -78,6 +78,85 @@ def overview_data(conn, user: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def image_workflow_history(conn, user: dict[str, Any], page: int = 1, limit: int = 20) -> dict[str, Any]:
+    """One row per image workflow, including legacy/standalone image jobs."""
+    from .manual_workflows import _WORKFLOW_QUERY, _permission_clause, _state
+
+    admin, uid = _access(user)
+    limit = max(1, min(int(limit), 20))
+    page = max(1, int(page))
+    # Manual workflows retain their stricter creator/team access rules. Exclude
+    # their underlying jobs/pipelines from the legacy branches, even for users
+    # who cannot see the corresponding manual workflow.
+    cte = """
+    WITH manual_rows AS (
+    """ + _WORKFLOW_QUERY + " WHERE " + _permission_clause() + """
+    ), history AS (
+      SELECT 'manual'::text AS kind, m.id, m.requested_image, m.created_at,
+             m.pipeline_id, m.pipeline_status, m.policy_status, m.decision,
+             m.publish_decision, m.scan_job_status, m.patch_job_status, m.publish_job_status,
+             NULL::text AS legacy_state
+      FROM manual_rows m
+      UNION ALL
+      SELECT 'pipeline', p.id, p.requested_image, p.started_at,
+             p.id, p.status, pol.status, NULL, NULL, NULL, NULL, NULL,
+             COALESCE(j.status, p.status)::text
+      FROM pipeline_runs p
+      LEFT JOIN LATERAL (
+        SELECT status FROM pipeline_jobs WHERE pipeline_id=p.id AND status IN ('queued','running')
+        ORDER BY created_at DESC, id DESC LIMIT 1
+      ) j ON true
+      LEFT JOIN LATERAL (
+        SELECT status FROM policy_results WHERE pipeline_id=p.id
+        ORDER BY created_at DESC LIMIT 1
+      ) pol ON true
+      WHERE (%s OR p.project_id IS NULL OR EXISTS (
+        SELECT 1 FROM projects pr JOIN team_members tm ON tm.team_id=pr.team_id
+        WHERE pr.id=p.project_id AND tm.user_id=%s))
+        AND NOT EXISTS (
+          SELECT 1 FROM pipeline_jobs pj JOIN manual_workflows w
+          ON pj.id IN (w.scan_job_id, w.patch_job_id, w.publish_job_id)
+          WHERE pj.pipeline_id=p.id)
+      UNION ALL
+      SELECT 'job', j.id, j.requested_image, j.created_at,
+             NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, j.status::text
+      FROM pipeline_jobs j
+      WHERE j.pipeline_id IS NULL
+        AND (%s OR j.project_id IS NULL OR EXISTS (
+          SELECT 1 FROM projects pr JOIN team_members tm ON tm.team_id=pr.team_id
+          WHERE pr.id=j.project_id AND tm.user_id=%s))
+        AND NOT EXISTS (
+          SELECT 1 FROM manual_workflows w
+          WHERE j.id IN (w.scan_job_id, w.patch_job_id, w.publish_job_id))
+    )
+    """
+    params = (admin, uid, uid, admin, uid, admin, uid)
+    total = int(conn.execute(cte + " SELECT count(*) AS total FROM history", params).fetchone()["total"])
+    total_pages = max(1, (total + limit - 1) // limit)
+    page = min(page, total_pages)
+    rows = _rows(conn, cte + """
+      SELECT h.*, s.critical_count, s.high_count,
+             EXISTS (SELECT 1 FROM pipeline_jobs j WHERE j.pipeline_id=h.pipeline_id
+                       AND j.status IN ('queued','running')) AS active
+      FROM history h
+      LEFT JOIN LATERAL (
+        SELECT critical_count, high_count FROM scan_runs WHERE pipeline_id=h.pipeline_id
+        ORDER BY started_at DESC, id DESC LIMIT 1
+      ) s ON true
+      ORDER BY h.created_at DESC, h.kind, h.id DESC LIMIT %s OFFSET %s
+    """, params + (limit, (page - 1) * limit))
+    terminal = {"completed", "completed_without_publish", "published", "failed",
+                "patch_failed", "publish_failed", "canceled"}
+    items = []
+    for row in rows:
+        state = _state(row) if row["kind"] == "manual" else row["legacy_state"]
+        eligible = bool(row["pipeline_id"] and not row["active"]
+                        and row["pipeline_status"] in ("success", "failed", "policy_failed")
+                        and (row["kind"] != "manual" or state in terminal))
+        items.append({**row, "state": state, "bulk_eligible": eligible})
+    return {"items": items, "total": total, "page": page, "total_pages": total_pages, "limit": limit}
+
+
 def pipeline_details(conn, pipeline_id: str) -> dict[str, Any]:
     pid = UUID(pipeline_id)
     pipelines = _rows(conn,

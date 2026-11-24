@@ -48,11 +48,32 @@ if __name__ == "__main__":
 
 
 class BulkUIContractTests(unittest.TestCase):
-    def test_overview_bulk_actions_present(self):
+    def test_bulk_actions_only_in_workflow_history(self):
         root = Path(__file__).resolve().parents[1] / "runner/appsecctl/webui"
         html = (root / "index.html").read_text()
         script = (root / "assets/app.js").read_text()
+        overview = html.split('id="view-overview"', 1)[1].split('</section>', 1)[0]
+        guided = html.split('id="view-guided"', 1)[1].split('</section>', 1)[0]
         for identifier in ("pipeline-select-all", "pipeline-export", "pipeline-delete"):
-            self.assertIn('id="'+identifier+'"', html)
+            self.assertNotIn('id="'+identifier+'"', overview)
+            self.assertIn('id="'+identifier+'"', guided)
+        self.assertNotIn("Queued and recent jobs", overview)
+        self.assertIn("Recent image workflows", overview)
+        self.assertIn('id="guided-pagination"', guided)
+        self.assertIn("/api/ui/image-workflows?limit=10&page=1", script)
+        self.assertIn("/api/ui/image-workflows?limit=20&page=", script)
         self.assertIn("/api/ui/pipelines/export", script)
         self.assertIn("selectedPipelines", script)
+
+
+class HistoryPaginationTests(unittest.TestCase):
+    def test_page_is_bounded_and_clamped(self):
+        class HistoryDB(FakeDB):
+            def fetchone(self):
+                return {"total": 43}
+        conn = HistoryDB()
+        result = ui_queries.image_workflow_history(conn, {"id": "user", "role": "viewer"}, page=99)
+        self.assertEqual((result["page"], result["total_pages"], result["limit"]), (3, 3, 20))
+        self.assertEqual(conn.calls[-1][1][-2:], (20, 40))
+        self.assertIn("w.created_by", conn.calls[0][0])
+        self.assertIn("NOT EXISTS", conn.calls[0][0])

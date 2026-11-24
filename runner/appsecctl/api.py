@@ -994,6 +994,14 @@ def ui_overview(user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
         return overview_data(conn, user)
 
 
+@app.get("/api/ui/image-workflows")
+def ui_image_workflows(page: int = 1, limit: int = 20,
+                       user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    from .ui_queries import image_workflow_history
+    with db.connect() as conn:
+        return image_workflow_history(conn, user, page, limit)
+
+
 class PipelineExportRequest(BaseModel):
     pipeline_ids: list[str] = Field(min_length=1, max_length=30)
 

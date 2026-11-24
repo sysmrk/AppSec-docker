@@ -1,5 +1,7 @@
 # Delete pipeline history and associated evidence
 
+The Overview shows ten latest image workflows, deduplicated from manual workflows, pipeline runs and standalone queued jobs. Repository security jobs remain separate. My workflows is the full image history with server-side pagination (20 per page); select eligible completed/failed workflows on the current page for export or administrator-only permanent deletion. Active or unfinished approval workflows cannot be bulk-selected. Changing pages clears selections.
+
 Admins may open a finished pipeline in Results or My workflows, select Delete this pipeline history, and type DELETE. The server requires an exact pipeline-ID confirmation and rejects deletion while related jobs are queued or running.
 
 This removes the selected pipeline's workflow, jobs, scan/CVE, policy, patch, diff, report/artifact and orphan image-inventory rows from PostgreSQL. Recorded evidence under /reports and the configured S3/MinIO bucket is also deleted. When evidence cleanup fails, the database deletion is rolled back and the error remains visible; previous partial file deletion may still have occurred.
@@ -11,3 +13,7 @@ Security audit logs are retained. Published images in remote registries are not 
 ## Overview selection
 
 Select individual completed/failed image workflows or the header checkbox. Export downloads HTML for one workflow or a ZIP for multiple workflows, using current DB data and per-resource authorization. Delete selected is admin-only and requires typed DELETE confirmation. It invokes the existing per-pipeline purge sequentially and reports partial failures. Active pipelines cannot be removed. The purge removes workflow/job rows, findings, comparisons, policies, artifacts and reports from live application storage, and queues local patched tag removal. Shared images, remote published registry images, audit logs, backup copies, storage versions/retention and externally exported reports are not erased. Versioned object storage requires an independent approved retention/lifecycle policy. External storage operations and DB transactions are not globally atomic.
+
+### Patch tooling resolution
+
+Copa v0.14.1 may request Debian `stable-slim` even for a versioned target. AppSec resolves the tooling image for the detected Debian major release through the configured pull-source priority, then maps both Copa's cached and Docker Hub stable aliases to that approved reference. Unapproved sources remain denied. Worker logs record `COPA_HELPER_MAPPING`; this does not change package-manager egress or authorize a publication retry.

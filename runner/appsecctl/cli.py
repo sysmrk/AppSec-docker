@@ -303,7 +303,7 @@ def patch_from_scan(scan_id: str) -> tuple[str, str]:
         command[command.index("-r") + 1] = str(copa_path)
         # Capture Copa stderr so a failed patch has a concrete diagnostic in
         # the persisted patch/job error instead of only an exit status.
-        with patch_sources.policy_environment(source_image_ref, report_path) as environment:
+        with patch_sources.policy_environment(source_image_ref, copa_path) as environment:
             run_command(command, capture_errors=True, environment=environment)
         patched_id = scan_evidence.local_image_id(local_patched_ref)
         if patched_id == expected_id:

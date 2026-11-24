@@ -7,6 +7,7 @@
   const state = { user: null, overview: null, view: "overview", result: null, selectedWorkflow: null, workflowState: null, patchEnabled: false };
   const selectedPipelines = new Set();
   let bulkBusy = false;
+  let guidedPage = 1, guidedRows = [], guidedRequest = 0;
   const date = (value) => value ? new Date(value).toLocaleString() : "—";
   const text = (value) => value == null || value === "" ? "—" : String(value);
   const node = (tag, css, value) => {
@@ -51,6 +52,7 @@
   function showLogin() {
     state.user = null;
     selectedPipelines.clear();
+    guidedPage = 1; guidedRows = []; guidedRequest++;
     loginScreen.hidden = false; app.hidden = true;
   }
   function showApp(user) {
@@ -118,13 +120,13 @@
     });
   }
   function eligiblePipeline(p) {
-    return ["success","failed","policy_failed"].includes(p.status) &&
-      !(state.overview?.pipeline_jobs || []).some(j=>String(j.pipeline_id)===String(p.id) && ["queued","running"].includes(j.status));
+    return Boolean(p.pipeline_id && p.bulk_eligible);
   }
   function updateBulkControls() {
-    const eligible = (state.overview?.pipelines || []).filter(eligiblePipeline).map(p=>String(p.id));
+    const eligible = guidedRows.filter(eligiblePipeline).map(p=>String(p.pipeline_id));
     for (const id of [...selectedPipelines]) if (!eligible.includes(id)) selectedPipelines.delete(id);
     $("pipeline-selection-count").textContent = selectedPipelines.size + " selected";
+    $("guided-pagination").querySelectorAll("button").forEach(b => { if (bulkBusy) b.disabled = true; });
     $("pipeline-export").disabled = bulkBusy || !selectedPipelines.size;
     $("pipeline-delete").hidden = state.user?.role !== "admin";
     $("pipeline-delete").disabled = bulkBusy || !selectedPipelines.size || state.user?.role !== "admin";
@@ -139,7 +141,7 @@
   }
   $("pipeline-select-all").addEventListener("change",event=>{
     selectedPipelines.clear();
-    if (event.target.checked) (state.overview?.pipelines || []).filter(eligiblePipeline).forEach(p=>selectedPipelines.add(String(p.id)));
+    if (event.target.checked) guidedRows.filter(eligiblePipeline).forEach(p=>selectedPipelines.add(String(p.pipeline_id)));
     updateBulkControls();
   });
   $("pipeline-export").addEventListener("click",async()=>{
@@ -162,7 +164,7 @@
       setTimeout(()=>URL.revokeObjectURL(url),30000);
       notification(ids.length+" report(s) exported.");
     } catch(error){notification(error.message,true);}
-    finally {bulkBusy=false;updateBulkControls();}
+    finally {bulkBusy=false;updateBulkControls(); await refreshGuided().catch(error=>notification(error.message,true));}
   });
   $("pipeline-delete").addEventListener("click",async()=>{
     const ids=[...selectedPipelines];
@@ -177,45 +179,33 @@
           selectedPipelines.delete(id);deleted++;queued+=Number(result.local_tags_queued_for_removal||0);
         }catch(error){failed.push(id+": "+error.message);}
       }
+      state.selectedWorkflow = null; state.workflowState = null;
+      $("guided-detail").textContent = "Select a workflow to see progress, results and approval controls.";
+      await refreshGuided();
       await refreshOverview();
       notification(deleted+" deleted; "+queued+" local patched tags queued for cleanup."+
         (failed.length?" Failed: "+failed.join("; "):""),failed.length>0);
     }catch(error){notification("Deleted "+deleted+"; refresh failed: "+error.message,true);}
-    finally{bulkBusy=false;updateBulkControls();}
+    finally{bulkBusy=false;updateBulkControls(); await refreshGuided().catch(error=>notification(error.message,true));}
   });
   async function refreshOverview() {
-    const data = await request("/api/ui/overview");
+    const [data, history] = await Promise.all([
+      request("/api/ui/overview"), request("/api/ui/image-workflows?limit=10&page=1")
+    ]);
     state.overview = data;
     for (const [id, key] of [["stat-total", "total"], ["stat-passed", "passed"], ["stat-policy", "policy_failed"], ["stat-failed", "failed"]]) {
       $(id).textContent = text(data.summary[key] ?? 0);
     }
     const pipelines = $("pipelines-body"); clear(pipelines);
-    if (!data.pipelines.length) empty(pipelines, "No image scans have run yet. Start your first real scan.", 7);
-    data.pipelines.forEach(p => {
+    if (!history.items.length) empty(pipelines, "No image workflows yet. Start your first real scan.", 6);
+    history.items.forEach(w => {
       const r = node("tr");
-      const choose=cell(r,""), checkbox=node("input","pipeline-checkbox");
-      checkbox.type="checkbox";checkbox.value=String(p.id);checkbox.setAttribute("aria-label","Select "+p.requested_image);
-      checkbox.addEventListener("change",()=>{if(checkbox.checked)selectedPipelines.add(checkbox.value);else selectedPipelines.delete(checkbox.value);updateBulkControls();});
-      choose.appendChild(checkbox);
-      cell(r, p.requested_image, "wide-text");
-      const s = cell(r, ""); s.appendChild(statusPill(p.status));
-      cell(r, p.critical_count); cell(r, p.high_count);
-      cell(r, date(p.started_at));
-      const actions = cell(r, ""); actions.appendChild(button("Details →", () => openPipeline(p.id)));
+      cell(r, w.requested_image, "wide-text");
+      cell(r, "").appendChild(statusPill(w.state));
+      cell(r, w.critical_count); cell(r, w.high_count);
+      cell(r, date(w.created_at));
+      appendWorkflowAction(cell(r, ""), w);
       pipelines.appendChild(r);
-    });
-    updateBulkControls();
-    const jobs = $("jobs-body"); clear(jobs);
-    if (!data.pipeline_jobs.length) empty(jobs, "No image jobs recorded.", 5);
-    data.pipeline_jobs.forEach(j => {
-      const r = node("tr");
-      cell(r, j.requested_image, "wide-text");
-      const mode = cell(r, ""); mode.appendChild(statusPill(j.mode || "scan"));
-      const s = cell(r, ""); s.appendChild(statusPill(j.status));
-      cell(r, date(j.created_at));
-      const actions = cell(r, "");
-      if (j.pipeline_id) actions.appendChild(button("Results →", () => openPipeline(j.pipeline_id)));
-      jobs.appendChild(r);
     });
     const security = $("security-body"); clear(security);
     if (!data.security_jobs.length) empty(security, "No repository security scans recorded.", 5);
@@ -484,22 +474,68 @@
     container.appendChild(li);
   }
 
-  async function refreshGuided() {
-    const workflows = await request("/api/manual-workflows?limit=80");
-    const body = $("guided-list");
-    clear(body);
-    if (!workflows.length) empty(body, "No manual workflows. Create one from New manual scan.", 5);
-    workflows.forEach(w => {
-      const row = node("tr");
-      cell(row, w.requested_image, "wide-text");
-      const c = cell(row, ""); c.appendChild(statusPill(w.state));
-      cell(row, w.policy_status || "Pending post-patch");
-      cell(row, date(w.created_at));
-      const act = cell(row, "");
+  function appendWorkflowAction(act, w) {
+    if (w.kind === "manual") {
       const label = w.state === "awaiting_approval" ? "Review & decide →" : "Open workflow →";
       act.appendChild(button(label, () => openGuided(w.id)));
+    } else if (w.pipeline_id) {
+      act.appendChild(button("Results →", () => openPipeline(w.pipeline_id)));
+    }
+  }
+
+  async function refreshGuided(page = guidedPage) {
+    const token = ++guidedRequest;
+    const history = await request("/api/ui/image-workflows?limit=20&page=" + encodeURIComponent(page));
+    if (token !== guidedRequest) return;
+    if (guidedPage !== history.page) selectedPipelines.clear();
+    guidedPage = history.page;
+    guidedRows = history.items;
+    const body = $("guided-list");
+    clear(body);
+    if (!guidedRows.length) empty(body, "No image workflows. Create one from New manual scan.", 6);
+    guidedRows.forEach(w => {
+      const row = node("tr");
+      const choose = cell(row, "");
+      const checkbox = node("input", "pipeline-checkbox");
+      checkbox.type = "checkbox";
+      checkbox.value = String(w.pipeline_id || "");
+      checkbox.setAttribute("aria-label", "Select " + w.requested_image);
+      checkbox.addEventListener("change", () => {
+        if (checkbox.checked) selectedPipelines.add(checkbox.value);
+        else selectedPipelines.delete(checkbox.value);
+        updateBulkControls();
+      });
+      choose.appendChild(checkbox);
+      cell(row, w.requested_image, "wide-text");
+      cell(row, "").appendChild(statusPill(w.state));
+      cell(row, w.policy_status || "Pending post-patch");
+      cell(row, date(w.created_at));
+      appendWorkflowAction(cell(row, ""), w);
       body.appendChild(row);
     });
+    const pager = $("guided-pagination"); clear(pager);
+    if (history.total_pages > 1) {
+      const go = n => refreshGuided(n).catch(error => notification(error.message, true));
+      const addPage = (label, number, disabled = false) => {
+        const b = button(label, () => go(number));
+        b.className = "outline small";
+        b.disabled = disabled || bulkBusy;
+        if (number === guidedPage && label === String(number)) b.setAttribute("aria-current", "page");
+        pager.appendChild(b);
+      };
+      addPage("Previous", guidedPage - 1, guidedPage === 1);
+      const pages = [...new Set([1, ...Array.from({length: 5}, (_, i) => guidedPage + i - 2), history.total_pages])]
+        .filter(n => n >= 1 && n <= history.total_pages).sort((a,b)=>a-b);
+      let last = 0;
+      for (const number of pages) {
+        if (last && number > last + 1) pager.appendChild(node("span", "muted", "…"));
+        addPage(String(number), number, number === guidedPage);
+        last = number;
+      }
+      addPage("Next", guidedPage + 1, guidedPage === history.total_pages);
+    }
+    pager.appendChild(node("span", "muted", history.total + " workflow(s) · Page " + guidedPage + " of " + history.total_pages));
+    updateBulkControls();
   }
 
   async function decideGuided(workflowId, action) {
@@ -844,6 +880,7 @@
     const payload = { image: $("image-reference").value.trim(), project_id: $("image-project").value || null };
     try {
       const result = await request("/api/manual-workflows", { method: "POST", body: JSON.stringify(payload) });
+      guidedPage = 1; selectedPipelines.clear();
       await openGuided(result.id);
       notification("Your scan is queued. AppSec will wait for your decision before any patch or registry push.");
     } catch (error) { notification(error.message, true); }
@@ -881,7 +918,7 @@
       "completed", "completed_without_publish", "published",
       "failed", "patch_failed", "publish_failed", "canceled"].includes(state.workflowState)) {
       openGuided(state.selectedWorkflow, true).catch(() => {});
-      refreshGuided().catch(() => {});
     }
+    if (state.view === "guided" && !bulkBusy) refreshGuided().catch(() => {});
   }, 20000);
 })();

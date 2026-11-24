@@ -29,8 +29,10 @@ def helper_groups(report: dict) -> list[list[str]]:
         raise RuntimeError("PATCH_SOURCE_POLICY: Cannot determine a supported OS version from the Trivy report")
     major = version.split(".")[0]
     if family == "debian":
-        # Match Copa v0.14.1's version selection for Debian.
-        tag = "stable-slim" if version > "12" else major + "-slim"
+        # Copa v0.14.1 compares the full version lexically and can request
+        # stable-slim even for Debian 12.x. Never pull a moving stable tag
+        # for a known Debian release; resolve the same major tooling image.
+        tag = major + "-slim"
         return [[COPA + "debian:" + tag, "docker.io/library/debian:" + tag]]
     if family == "ubuntu":
         return [[COPA + "ubuntu:" + version, "docker.io/library/ubuntu:" + version]]
@@ -45,22 +47,32 @@ def helper_groups(report: dict) -> list[list[str]]:
     raise RuntimeError("PATCH_SOURCE_POLICY: No approved automatic helper mapping for OS family " + family[:40])
 
 
+def helper_aliases(report: dict, group: list[str]) -> list[str]:
+    """Cover Copa's original and fallback Debian identifiers for this OS."""
+    os_info = (report.get("Metadata") or {}).get("OS") or {}
+    if str(os_info.get("Family") or "").lower() == "debian":
+        return list(dict.fromkeys(group + [COPA + "debian:stable-slim", "docker.io/library/debian:stable-slim"]))
+    return group
+
+
 def source_policy(source: str, mappings: dict[str, str]) -> dict:
     canonical_source = image_sources.canonical_ref(source)
-    # Copa v0.14.1 inspects the first rule's updates.identifier even for DENY.
-    # Provide an empty update object for compatibility; it has no DENY effect.
-    rules = [{"action": "DENY", "selector": {"identifier": "^docker-image://.*$", "match_type": 2},
+    # Copa v0.14.1 expects the first rule to have an updates object.
+    # Retain the default-deny rule first; BuildKit re-evaluates a converted
+    # source against the entire policy and the final exact allowlist.
+    rules = [{"action": "DENY", "selector": {"identifier": "^docker-image://.*$", "match_type": "REGEX"},
               "updates": {"identifier": ""}}]
     permitted = {canonical_source}
     for original, selected in mappings.items():
         original = image_sources.canonical_ref(original)
         selected = image_sources.canonical_ref(selected)
         permitted.add(selected)
-        if original != selected:
-            rules.append({"action": "CONVERT", "selector": {"identifier": "docker-image://" + original, "match_type": 1},
+        # A helper alias cannot override the explicitly approved target.
+        if original != selected and original != canonical_source:
+            rules.append({"action": "CONVERT", "selector": {"identifier": "docker-image://" + original, "match_type": "EXACT"},
                           "updates": {"identifier": "docker-image://" + selected}})
     for reference in sorted(permitted):
-        rules.append({"action": "ALLOW", "selector": {"identifier": "docker-image://" + reference, "match_type": 1}})
+        rules.append({"action": "ALLOW", "selector": {"identifier": "docker-image://" + reference, "match_type": "EXACT"}})
     return {"version": 1, "rules": rules}
 
 
@@ -80,8 +92,9 @@ def policy_environment(source: str, report_path: Path):
     mappings = {}
     for group in helper_groups(report):
         chosen = image_sources.pull_ordered(image_sources.ordered_candidates(sources, group))
-        for reference in group:
+        for reference in helper_aliases(report, group):
             mappings[reference] = chosen
+            print("COPA_HELPER_MAPPING " + reference + " -> " + chosen, flush=True)
     policy = source_policy(source, mappings)
     with tempfile.TemporaryDirectory(prefix="appsec-copa-policy-") as folder:
         path = Path(folder) / "policy.json"

@@ -84,6 +84,13 @@ jobs:
               user = dict(admin)
               session = mw.create(conn, 'nginx:stable', None, str(user['id']))
               assert mw.get_workflow(conn, session['id'], user)['state'] == 'queued'
+              history = ui_queries.image_workflow_history(conn, user, page=1, limit=1)
+              assert history['total'] >= 3 and len(history['items']) == 1
+              next_page = ui_queries.image_workflow_history(conn, user, page=2, limit=1)
+              assert next_page['items'][0]['id'] != history['items'][0]['id']
+              all_history = ui_queries.image_workflow_history(conn, user)
+              assert any(str(w['id']) == session['id'] and w['state'] == 'queued' for w in all_history['items'])
+              assert len(all_history['items']) == history['total']
               # Simulate the real completed scan records; no external scanner needed for DB transitions.
               db.insert_scan_started(conn, '00000000-0000-0000-0000-000000000011', pipeline_id, image_id, 'nginx:stable', 'original')
               db.update_scan_success(conn, '00000000-0000-0000-0000-000000000011', '/reports/ci.json', {'Results': []}, {'CRITICAL': 0, 'HIGH': 0})
@@ -92,6 +99,10 @@ jobs:
               assert mw.get_workflow(conn, session['id'], user)['state'] == 'awaiting_approval'
               result = mw.decide(conn, session['id'], user, 'approve_patch', True)
               assert result['state'] == 'patch_queued'
+              history = ui_queries.image_workflow_history(conn, user)
+              workflow = next(w for w in history['items'] if str(w['id']) == session['id'])
+              assert workflow['state'] == 'patch_queued' and not workflow['bulk_eligible']
+              assert sum(str(w['pipeline_id']) == pipeline_id for w in history['items']) == 1
               patch = conn.execute("SELECT mode, max_attempts, pipeline_id FROM pipeline_jobs WHERE id=%s", (result['patch_job_id'],)).fetchone()
               assert patch['mode'] == 'continue_patch' and patch['max_attempts'] == 1
               assert str(patch['pipeline_id']) == pipeline_id

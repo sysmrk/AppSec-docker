@@ -73,16 +73,8 @@
             <article class="stat"><span>Legacy policy failures</span><strong id="stat-policy">—</strong></article>
             <article class="stat"><span>Execution failed</span><strong id="stat-failed">—</strong></article>
           </div>
-          <div class="section-heading"><h2>Recent image scans</h2><button class="text-button" data-view="scan">+ New scan</button></div>
-          <div class="approval-actions" aria-label="Selected image scans">
-            <span id="pipeline-selection-count" class="muted" aria-live="polite">0 selected</span>
-            <button id="pipeline-export" class="outline small" type="button" disabled>Export selected</button>
-            <button id="pipeline-delete" class="danger-button small" type="button" disabled>Delete selected</button>
-          </div>
-          <p class="hint">Select finished or failed image workflows. Export downloads one HTML report or a ZIP of selected reports. Delete permanently removes workflow evidence and history; remote registry images and audit records are preserved.</p>
-          <div class="table-wrap"><table><thead><tr><th><input type="checkbox" id="pipeline-select-all" aria-label="Select all eligible image scans"></th><th>Image</th><th>Status</th><th>Critical</th><th>High</th><th>Started</th><th></th></tr></thead><tbody id="pipelines-body"></tbody></table></div>
-          <div class="section-heading"><h2>Queued and recent jobs</h2></div>
-          <div class="table-wrap"><table><thead><tr><th>Image</th><th>Mode</th><th>Status</th><th>Submitted</th><th></th></tr></thead><tbody id="jobs-body"></tbody></table></div>
+          <div class="section-heading"><h2>Recent image workflows</h2><button class="text-button" data-view="guided">View all workflows →</button></div>
+          <div class="table-wrap"><table><thead><tr><th>Image</th><th>Status</th><th>Critical</th><th>High</th><th>Created</th><th></th></tr></thead><tbody id="pipelines-body"></tbody></table></div>
           <div class="section-heading"><h2>Repository security jobs</h2></div>
           <div class="table-wrap"><table><thead><tr><th>Repository</th><th>Status</th><th>Findings</th><th>Started</th><th></th></tr></thead><tbody id="security-body"></tbody></table></div>
         </section>
@@ -112,7 +104,14 @@
         </section>
         <section id="view-guided" class="view" hidden>
           <div class="page-heading"><div><p class="eyebrow">MANUAL OPERATIONS</p><h1>My workflows</h1><p class="muted">Continue existing scans and provide approvals in the browser.</p></div><button id="guided-refresh" class="outline">↻ Refresh</button></div>
-          <div class="table-wrap"><table><thead><tr><th>Image</th><th>Current step</th><th>Policy</th><th>Created</th><th></th></tr></thead><tbody id="guided-list"></tbody></table></div>
+          <div class="approval-actions" aria-label="Selected image scans">
+            <span id="pipeline-selection-count" class="muted" aria-live="polite">0 selected</span>
+            <button id="pipeline-export" class="outline small" type="button" disabled>Export selected</button>
+            <button id="pipeline-delete" class="danger-button small" type="button" disabled>Delete selected</button>
+          </div>
+          <p class="hint">Select finished or failed image workflows on this page. Export downloads one HTML report or a ZIP of selected reports. Delete permanently removes workflow evidence and history; remote registry images and audit records are preserved.</p>
+          <div class="table-wrap"><table><thead><tr><th><input type="checkbox" id="pipeline-select-all" aria-label="Select all eligible workflows on this page"></th><th>Image</th><th>Current step</th><th>Policy</th><th>Created</th><th></th></tr></thead><tbody id="guided-list"></tbody></table></div>
+          <div class="row-controls" id="guided-pagination" aria-label="Workflow history pages"></div>
           <div id="guided-detail" class="panel result-panel"><div class="empty-state">Select a workflow to see progress, results and approval controls.</div></div>
         </section>
         <section id="view-inventory" class="view" hidden>
@@ -144,7 +143,7 @@
         </section>
         <section id="view-results" class="view" hidden>
           <div class="page-heading"><div><p class="eyebrow">FINDINGS & REPORTS</p><h1>One clear report</h1><p class="muted">Initial scan, post-fix scan, changes and recommendation — all in one view with optional raw evidence.</p></div></div>
-          <div id="result-detail" class="panel"><div class="empty-state">No result selected yet. Open a scan from Overview.</div></div>
+          <div id="result-detail" class="panel"><div class="empty-state">No result selected yet. Open a scan from Overview or My workflows.</div></div>
         </section>
         <section id="view-health" class="view" hidden>
           <div class="page-heading"><div><p class="eyebrow">OPERATIONS</p><h1>System health</h1><p class="muted">Real database heartbeats and queue status. Administrator view only.</p></div><button id="health-refresh-button" class="outline">↻ Refresh</button></div>

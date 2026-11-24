@@ -11,8 +11,17 @@ class PatchSourceTests(unittest.TestCase):
     def test_debian_helper_matches_copa(self):
         report = {"Metadata": {"OS": {"Family": "debian", "Name": "13.1"}}}
         self.assertEqual(patch_sources.helper_groups(report), [[
-            "ghcr.io/project-copacetic/copacetic/debian:stable-slim",
-            "docker.io/library/debian:stable-slim"]])
+            "ghcr.io/project-copacetic/copacetic/debian:13-slim",
+            "docker.io/library/debian:13-slim"]])
+        self.assertIn("docker.io/library/debian:stable-slim",
+                      patch_sources.helper_aliases(report, patch_sources.helper_groups(report)[0]))
+
+    def test_debian_minor_uses_same_major_even_when_copa_requests_stable(self):
+        report = {"Metadata": {"OS": {"Family": "debian", "Name": "12.9"}}}
+        group = patch_sources.helper_groups(report)[0]
+        self.assertIn("docker.io/library/debian:12-slim", group)
+        self.assertNotIn("docker.io/library/debian:stable-slim", group)
+        self.assertIn("docker.io/library/debian:stable-slim", patch_sources.helper_aliases(report, group))
 
     def test_alpine_needs_no_helper(self):
         self.assertEqual(patch_sources.helper_groups({"Metadata": {"OS": {"Family": "alpine"}}}), [])
@@ -23,6 +32,7 @@ class PatchSourceTests(unittest.TestCase):
         rules = patch_sources.source_policy("mirror.example/library/nginx:1", {
             original: selected, "docker.io/library/debian:stable-slim": selected})["rules"]
         self.assertEqual(rules[0]["action"], "DENY")
+        self.assertEqual(rules[0]["selector"]["match_type"], "REGEX")
         self.assertEqual(len([r for r in rules if r["action"] == "CONVERT"]), 2)
         self.assertEqual({r["selector"]["identifier"] for r in rules if r["action"] == "ALLOW"},
                          {"docker-image://mirror.example/library/nginx:1", "docker-image://" + selected})
@@ -35,11 +45,15 @@ class PatchSourceTests(unittest.TestCase):
             rows = [{"name": "mirror", "host": "mirror.example", "priority": 1}]
             with patch.object(patch_sources.db, "connect"), \
                  patch.object(patch_sources.image_sources, "configured_sources", return_value=rows), \
-                 patch.object(patch_sources.image_sources, "pull_ordered", return_value="mirror.example/library/debian:stable-slim"):
+                 patch.object(patch_sources.image_sources, "pull_ordered", return_value="mirror.example/library/debian:13-slim"):
                 with patch_sources.policy_environment("mirror.example/library/nginx:1", path) as env:
                     policy_path = Path(env["EXPERIMENTAL_BUILDKIT_SOURCE_POLICY"])
                     self.assertTrue(policy_path.exists())
-                    self.assertIn("CONVERT", policy_path.read_text())
+                    rules = json.loads(policy_path.read_text())["rules"]
+                    self.assertIn({"action": "CONVERT", "selector": {"identifier": "docker-image://docker.io/library/debian:stable-slim", "match_type": "EXACT"},
+                                   "updates": {"identifier": "docker-image://mirror.example/library/debian:13-slim"}}, rules)
+                    self.assertNotIn("docker-image://docker.io/library/debian:stable-slim",
+                                     {r["selector"]["identifier"] for r in rules if r["action"] == "ALLOW"})
                 self.assertFalse(policy_path.exists())
 
     def test_no_policy_for_legacy_configuration(self):
