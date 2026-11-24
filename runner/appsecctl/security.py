@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
@@ -30,7 +31,7 @@ def report_name(kind: str, identifier: str, suffix: str = ".json") -> str:
     return f"{kind}-{timestamp}-{identifier}{suffix}"
 
 
-def prepare_repo(target: str, job_id: str) -> Path:
+def prepare_repo(target: str, job_id: str, credentials=None, full_history=False) -> Path:
     try:
         target = validate_repo_target(target)
     except ValueError:
@@ -42,11 +43,25 @@ def prepare_repo(target: str, job_id: str) -> Path:
         shutil.rmtree(dest)
     exit_code = None
     try:
-        exit_code = run_command(
-            ["git", "-c", "http.followRedirects=false", "-c", "protocol.file.allow=never",
-             "clone", "--depth", "1", target, str(dest)],
-            timeout=120, env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
-        )
+        with tempfile.TemporaryDirectory(prefix="appsec-git-") as directory:
+            helper = Path(directory) / "askpass"
+            helper.write_text('#!/bin/sh\ncase "$1" in *sername*) printf "%s\\n" "$APPSEC_GIT_USER";; *) printf "%s\\n" "$APPSEC_GIT_SECRET";; esac\n')
+            helper.chmod(0o700)
+            environment = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GIT_CONFIG_NOSYSTEM": "1",
+                           "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_ASKPASS": str(helper),
+                           "LC_ALL": "C", "APPSEC_GIT_USER": credentials[0] if credentials else "",
+                           "APPSEC_GIT_SECRET": credentials[1] if credentials else ""}
+            for key in list(environment):
+                if key.startswith(("GIT_TRACE", "GIT_CONFIG_")) and key not in ("GIT_CONFIG_NOSYSTEM", "GIT_CONFIG_GLOBAL"):
+                    environment.pop(key)
+            environment.pop("GIT_CURL_VERBOSE", None)
+            environment.pop("GIT_SSL_NO_VERIFY", None)
+            exit_code = run_command(
+                ["git", "-c", "http.followRedirects=false", "-c", "http.sslVerify=true",
+                 "-c", "credential.helper=", "-c", "protocol.file.allow=never",
+                 "clone"] + ([] if full_history else ["--depth", "1"]) + ["--", target, str(dest)],
+                timeout=300 if full_history else 120, env=environment,
+            )
         if exit_code:
             raise RuntimeError("GIT_CLONE_FAILED: git clone returned an error")
     except subprocess.TimeoutExpired:
@@ -126,27 +141,34 @@ def execute_security_job(job_id: str) -> str:
     repo_path = None
     try:
         if kind == "secrets":
-            repo_path = prepare_repo(target, job_id)
+            from . import repo_credentials
+            with db.connect() as conn:
+                credentials = repo_credentials.consume(conn, job_id)
+            full_history = profile in ("strict", "release")
+            repo_path = prepare_repo(target, job_id, credentials, full_history)
+            del credentials
             from . import image_sources
+            with db.connect() as conn:
+                configured = image_sources.configured_sources(conn)
             scanner = image_sources.runtime_image(env("GITLEAKS_IMAGE", "zricethezav/gitleaks:latest"))
             scan_exit_code = run_command(
                 [
                     "docker",
                     "run",
                     "--rm",
+                    "--pull=never" if configured is not None else "--pull=missing",
+                    "--network", "none",
                     "-v",
-                    f"{workspaces_volume}:/{workspaces_volume}",
+                    f"{workspaces_volume}:/scan:ro",
                     "-v",
                     f"{reports_volume}:/reports",
                     scanner,
-                    "detect",
-                    "--source",
-                    f"/{workspaces_volume}/{repo_path.name}",
+                    "git" if full_history else "dir",
+                    f"/scan/{repo_path.name}",
                     "--report-format",
                     "json",
                     "--report-path",
                     f"/reports/{report_file}",
-                    "--no-git",
                     "--redact=100",
                     "--exit-code=17",
                 ],
@@ -176,6 +198,9 @@ def execute_security_job(job_id: str) -> str:
         raise
     finally:
         # Cloned source trees can contain the very secrets we just detected.
+        # Never retain an unredacted failed scanner output.
+        if report_path.exists() and "raw" not in locals():
+            report_path.unlink(missing_ok=True)
         if repo_path is not None and repo_path.exists():
             shutil.rmtree(repo_path)
 

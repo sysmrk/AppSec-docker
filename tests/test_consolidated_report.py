@@ -29,7 +29,7 @@ class ConsolidatedReportTests(unittest.TestCase):
         }
         text = render("pipeline", payload)
         self.assertIn("Publication not recommended", text)
-        self.assertIn("After-patch vulnerabilities", text)
+        self.assertIn("Full unified finding table", text)
         self.assertNotIn("<script>", text)
         self.assertIn("&lt;script&gt;", text)
 
@@ -47,3 +47,24 @@ class FailedScanTruthfulnessTests(unittest.TestCase):
         self.assertIn("SOURCE_PULL_FAILED", text)
         self.assertIn("no verified results", text)
         self.assertIn("Recommendation pending", text)
+
+class UnifiedFindingTests(unittest.TestCase):
+    def test_all_rows_low_hidden_unknown_and_fixed(self):
+        from appsecctl.consolidated_report import compare_findings, comparison_table
+        def scan(tag, entries):
+            return {"raw_report": {"Results": [{"Class": "os-pkgs", "Type": "debian",
+                "Target": tag + " (debian 13.7)", "Vulnerabilities": entries}]}}
+        items = [{"VulnerabilityID": "CVE-test-" + str(i), "PkgName": "p", "Severity": "HIGH",
+                  "InstalledVersion": "1", "FixedVersion": "2"} for i in range(300)]
+        unknown = {"VulnerabilityID": "TEMP-1", "PkgName": "p", "Severity": "UNKNOWN", "VendorSeverity": {"vendor": 3}}
+        low = {"VulnerabilityID": "LOW-1", "PkgName": "p", "Severity": "LOW"}
+        a = scan("original", items + [unknown, low])
+        b = scan("patched", [unknown, dict(items[0], Severity="LOW")])
+        rows = compare_findings(a, b, True)
+        html = comparison_table(rows, True)
+        self.assertEqual(sum(x[2] == "Fixed" for x in rows), 299)
+        self.assertIn("CVE-test-299", html)
+        self.assertIn('finding-state fixed', html)
+        self.assertIn("vendor: HIGH", html)
+        self.assertNotIn("LOW-1", html)
+        self.assertNotIn('finding-state fixed', comparison_table(compare_findings(a, None, False), False))

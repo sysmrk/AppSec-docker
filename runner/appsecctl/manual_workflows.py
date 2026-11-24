@@ -120,7 +120,7 @@ def get_workflow(conn, workflow_id: str, user: dict[str, Any]) -> dict[str, Any]
 
 def decide(
     conn, workflow_id: str, user: dict[str, Any], action: str,
-    confirm_push: bool = False, destination: str | None = None,
+    confirm_push: bool = False, destination: str | None = None, risk_reason: str | None = None,
 ) -> dict[str, Any]:
     if action not in ("finish", "approve_patch", "cancel", "approve_publish", "skip_publish"):
         raise ValueError("invalid decision")
@@ -185,6 +185,8 @@ def decide(
             raise ValueError("registry publication requires confirm_push=true")
         if prepared["final_policy"] not in ("recommended", "not_recommended", "passed") or locked["pipeline_status"] != "success":
             raise RuntimeError("post-patch recommendation is missing; rescan must complete first")
+        if prepared["final_policy"] == "not_recommended" and len((risk_reason or "").strip()) < 10:
+            raise ValueError("Risk acceptance reason (at least 10 characters) required for a not-recommended image")
         if prepared["publication_status"] != "prepared":
             raise RuntimeError("patched image is not in the approved prepared state")
         from .registry import image_registry
@@ -220,8 +222,8 @@ def decide(
         conn.execute("""
             UPDATE manual_workflows SET publish_decision='approve_publish',
                 publish_job_id=%s, published_by=%s, publish_approved_at=now(),
-                updated_at=now() WHERE id=%s
-        """, (publish_job, user["id"], _uuid(workflow_id)))
+                risk_reason=%s, updated_at=now() WHERE id=%s
+        """, (publish_job, user["id"], (risk_reason or "").strip() or None, _uuid(workflow_id)))
         return {"id": workflow_id, "state": "publish_queued",
                 "publish_job_id": publish_job, "destination": publish_ref}
 

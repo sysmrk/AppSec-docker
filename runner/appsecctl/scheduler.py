@@ -23,6 +23,7 @@ def main() -> int:
     while True:
         with db.connect() as conn:
             db.record_service_heartbeat(conn, "scheduler", os.environ.get("HOSTNAME", "scheduler"))
+            conn.execute("DELETE FROM repository_job_credentials WHERE expires_at <= now() AND job_id IN (SELECT id FROM security_jobs WHERE status NOT IN ('queued','running'))")
         count = enqueue_due()
         if count:
             print(f"enqueued {count} scheduled image(s)", flush=True)

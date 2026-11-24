@@ -129,6 +129,7 @@ class ManualDecisionRequest(BaseModel):
     confirm_patch: bool = False
     confirm_push: bool = False
     destination: str | None = Field(default=None, max_length=1024)
+    risk_reason: str | None = Field(default=None, max_length=2000)
 
 
 class ScheduleRequest(BaseModel):
@@ -138,7 +139,9 @@ class ScheduleRequest(BaseModel):
 
 class SecurityJobRequest(BaseModel):
     kind: str = Field(pattern="^(secrets)$")
-    target: str = Field(min_length=1)
+    target: str = Field(min_length=1, max_length=2048)
+    repo_username: str | None = Field(default=None, max_length=256)
+    repo_password: str | None = Field(default=None, max_length=4096)
     priority: int = 100
     profile: str = Field(default="standard", pattern="^(quick|standard|strict|release)$")
     project_id: str | None = None
@@ -265,8 +268,8 @@ def require_resource(conn, user: dict[str, Any], kind: str, identifier: str, wri
     queries = {
         "pipeline": "SELECT project_id FROM pipeline_runs WHERE id::text = %s",
         "pipeline_job": "SELECT project_id FROM pipeline_jobs WHERE id::text = %s",
-        "security_job": "SELECT project_id FROM security_jobs WHERE id::text = %s",
-        "finding": """SELECT j.project_id FROM security_findings f
+        "security_job": "SELECT project_id, requested_by FROM security_jobs WHERE id::text = %s",
+        "finding": """SELECT j.project_id, j.requested_by FROM security_findings f
                      JOIN security_jobs j ON j.id = f.job_id WHERE f.id::text = %s""",
         "scan": """SELECT p.project_id FROM scan_runs s
                    LEFT JOIN pipeline_runs p ON p.id = s.pipeline_id WHERE s.id::text = %s""",
@@ -281,6 +284,8 @@ def require_resource(conn, user: dict[str, Any], kind: str, identifier: str, wri
     row = conn.execute(queries[kind], (identifier,)).fetchone()
     if row is None:
         raise HTTPException(status_code=404, detail="resource not found")
+    if kind in ("security_job", "finding") and not row["project_id"] and user["role"] != "admin" and str(row.get("requested_by")) != str(user["id"]):
+        raise HTTPException(status_code=403, detail="private repository scan access denied")
     require_project(conn, user, row["project_id"], write=write)
 
 
@@ -673,9 +678,21 @@ def create_security_job(
         validate_repo_target(request.target)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from None
-    job_id = enqueue_security_job(request.kind, request.target, str(user["id"]), request.priority, request.profile, request.project_id)
-    with db.connect() as conn:
-        db.insert_audit(conn, str(user["id"]), "security.enqueue", "security_job", job_id, request.model_dump())
+    from . import repo_credentials
+    if bool(request.repo_username) != bool(request.repo_password):
+        raise HTTPException(status_code=422, detail="Enter both repository username and password/token")
+    try:
+        with db.connect() as conn:
+            job_id = db.enqueue_security_job(conn, request.kind, request.target, str(user["id"]), request.priority, request.profile, request.project_id)
+            if request.repo_username:
+                repo_credentials.store(conn, job_id, request.repo_username, request.repo_password)
+            db.insert_audit(conn, str(user["id"]), "security.enqueue", "security_job", job_id,
+                            {"kind": request.kind, "target": request.target, "profile": request.profile,
+                             "project_id": request.project_id, "authenticated_clone": bool(request.repo_username)})
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
     return {"job_id": job_id, "kind": request.kind, "target": request.target, "status": "queued"}
 
 
@@ -793,7 +810,7 @@ def security_job(job_id: str, user: dict[str, Any] = Depends(current_user)) -> d
     with db.connect() as conn:
         detail = db.security_job_detail(conn, job_id)
         if detail:
-            require_project(conn, user, detail["job"].get("project_id"))
+            require_resource(conn, user, "security_job", job_id)
     if not detail:
         raise HTTPException(status_code=404, detail="security job not found")
     detail["reports"] = reports_with_downloads(detail.get("reports", []))
@@ -1206,7 +1223,7 @@ def decide_manual_workflow(
             raise HTTPException(status_code=409, detail="patch executor disabled; ask an administrator to start --patching")
     with db.connect() as conn:
         try:
-            result = mw.decide(conn, workflow_id, user, request.action, request.confirm_push, request.destination)
+            result = mw.decide(conn, workflow_id, user, request.action, request.confirm_push, request.destination, request.risk_reason)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from None
         except PermissionError as exc:

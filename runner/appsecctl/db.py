@@ -1114,7 +1114,7 @@ def list_security_jobs(conn: psycopg.Connection, limit: int = 50, user: dict[str
                sj.project_id, u.username AS requested_by
         FROM security_jobs sj
         LEFT JOIN users u ON u.id = sj.requested_by
-        WHERE %s OR sj.project_id IS NULL OR EXISTS (
+        WHERE %s OR (sj.project_id IS NULL AND sj.requested_by = %s) OR EXISTS (
             SELECT 1 FROM projects p
             JOIN team_members tm ON tm.team_id = p.team_id
             WHERE p.id = sj.project_id AND tm.user_id = %s
@@ -1122,7 +1122,7 @@ def list_security_jobs(conn: psycopg.Connection, limit: int = 50, user: dict[str
         ORDER BY sj.started_at DESC
         LIMIT %s
         """,
-        (is_admin, user_id, max(1, min(limit, 100))),
+        (is_admin, user_id, user_id, max(1, min(limit, 100))),
     ).fetchall()
     return [dict(row) for row in rows]
 
@@ -1140,6 +1140,8 @@ def cancel_security_job(conn: psycopg.Connection, job_id: str) -> bool:
         """,
         (job_id,),
     ).fetchone()
+    if row:
+        conn.execute("DELETE FROM repository_job_credentials WHERE job_id=%s", (job_id,))
     return bool(row)
 
 
@@ -1371,8 +1373,16 @@ def pipeline_summary(conn: psycopg.Connection, pipeline_id: str) -> dict[str, An
         (pipeline_id,),
     ).fetchall()
     reports = list_generated_reports(conn, "pipeline", pipeline_id)
+    approval = conn.execute("""
+        SELECT w.approved_at, w.publish_approved_at, w.risk_reason,
+               a.username AS patch_approver, b.username AS publish_approver
+        FROM manual_workflows w JOIN pipeline_jobs j ON j.id=w.scan_job_id
+        LEFT JOIN users a ON a.id=w.approved_by LEFT JOIN users b ON b.id=w.published_by
+        WHERE j.pipeline_id=%s ORDER BY w.created_at DESC LIMIT 1
+    """, (pipeline_id,)).fetchone()
     return {
         "pipeline": pipeline,
+        "approval": dict(approval) if approval else {},
         "scans": scans,
         "patches": patches,
         "diffs": diffs,

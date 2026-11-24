@@ -556,6 +556,7 @@
     if (action === "cancel" && !window.confirm("Cancel this queued scan?")) return;
     const payload = { action, confirm_patch: action === "approve_patch", confirm_push: action === "approve_publish",
       destination: action === "approve_publish" ? $("publish-destination")?.value?.trim() : null };
+    if (action === "approve_publish") { const reason=window.prompt("Risk acceptance / publication reason (required when not recommended):"); if(reason===null)return; payload.risk_reason=reason.trim(); }
     try {
       await request("/api/manual-workflows/" + encodeURIComponent(workflowId) + "/decision", {
         method: "POST", body: JSON.stringify(payload)
@@ -887,9 +888,10 @@
   });
   $("repo-form").addEventListener("submit", async event => {
     event.preventDefault();
-    const payload = { kind: "secrets", target: $("repository-url").value.trim(), profile: $("repo-profile").value, project_id: $("repo-project").value || null };
+    const payload = { kind: "secrets", target: $("repository-url").value.trim(), profile: $("repo-profile").value, project_id: $("repo-project").value || null, repo_username: $("repo-user").value || null, repo_password: $("repo-password").value || null };
     try {
       const result = await request("/api/security-jobs", { method: "POST", body: JSON.stringify(payload) });
+      $("repo-password").value = ""; $("repo-user").value = "";
       selectView("overview"); await refreshOverview(); notification("Repository scan queued. Job ID: " + result.job_id);
     } catch (error) { notification(error.message, true); }
   });

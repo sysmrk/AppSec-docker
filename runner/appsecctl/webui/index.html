@@ -134,8 +134,13 @@
             <label for="repository-url">HTTPS Git repository URL</label>
             <input id="repository-url" type="url" placeholder="https://github.com/organization/repository.git" required>
             <p class="hint">Repository host must be explicitly allowed by SECURITY_ALLOWED_GIT_HOSTS.</p>
+            <label for="repo-user">Username (private repositories only)</label>
+            <input id="repo-user" autocomplete="off" maxlength="256">
+            <label for="repo-password">Password / Personal Access Token</label>
+            <input id="repo-password" type="password" autocomplete="new-password" maxlength="4096">
+            <p class="hint">HTTPS only. Credentials are encrypted for one queued job, never included in reports or logs. GitHub/GitLab may require a PAT rather than an account password.</p>
             <label for="repo-project">Project</label>
-            <select id="repo-project"><option value="">Shared / unassigned</option></select>
+            <select id="repo-project"><option value="">Private to you / admin</option></select>
             <label for="repo-profile">Scan profile</label>
             <select id="repo-profile"><option value="standard">Standard</option><option value="quick">Quick</option><option value="strict">Strict</option><option value="release">Release</option></select>
             <div class="form-actions"><button type="submit" class="primary">Start repository scan</button></div>

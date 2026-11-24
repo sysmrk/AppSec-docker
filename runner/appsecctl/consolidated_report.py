@@ -7,13 +7,14 @@ from __future__ import annotations
 
 from html import escape
 from typing import Any
+from collections import defaultdict, deque, Counter
+from .scan_evidence import stable_target
 
 
 SEVERITIES = (("CRITICAL", "critical_count", "#d94362"),
               ("HIGH", "high_count", "#ef923c"),
               ("MEDIUM", "medium_count", "#e5bd56"),
-              ("LOW", "low_count", "#35a58a"),
-              ("UNKNOWN", "unknown_count", "#8894a8"))
+               ("UNKNOWN", "unknown_count", "#8894a8"))
 
 
 def e(value: Any) -> str:
@@ -43,7 +44,14 @@ def findings(scan: dict | None) -> list[dict]:
         for v in target.get("Vulnerabilities", []) or []:
             result.append({
                 "cve": v.get("VulnerabilityID"),
-                "severity": v.get("Severity"),
+                "severity": (v.get("Severity") or "UNKNOWN").upper(),
+                "class": target.get("Class") or "",
+                "type": target.get("Type") or "",
+                "severity_source": v.get("SeveritySource"),
+                "vendor_severity": v.get("VendorSeverity") or {},
+                "cvss": v.get("CVSS") or {},
+                "status": v.get("Status"),
+                "url": v.get("PrimaryURL"),
                 "package": v.get("PkgName"),
                 "installed": v.get("InstalledVersion"),
                 "fixed": v.get("FixedVersion"),
@@ -79,23 +87,86 @@ def bars(scans: list[dict], original: dict | None, patched: dict | None) -> str:
     return '<div class="legend"><span class="legend-before">■ Initial</span><span class="legend-after">■ After patch</span></div>' + "".join(body)
 
 
-def findings_table(title: str, scan: dict | None) -> str:
-    items = findings(scan)
-    if not scan or scan.get("status") != "success":
-        status = scan.get("status", "not yet available") if scan else "not yet available"
-        return '<details><summary>' + e(title) + ' — ' + e(status) + ' (no verified results)</summary></details>'
-    rows = "".join(
-        "<tr><td>" + e(v["cve"]) + "</td><td><b>" + e(v["severity"]) + "</b></td>"
-        "<td>" + e(v["package"]) + "</td><td>" + e(v["installed"]) + "</td><td>" +
-        e(v["fixed"] or "No known fix") + "</td><td>" + e(v["target"]) + "</td></tr>"
-        for v in items[:250]
-    )
-    note = ("Showing first 250 of " + str(len(items)) + " findings." if len(items) > 250 else
-            "All " + str(len(items)) + " recorded vulnerability findings shown.")
-    return ('<details><summary>' + e(title) + " · " + str(len(items)) +
-            ' findings</summary><div class="table-scroll"><table><thead><tr>'
-            '<th>CVE</th><th>Severity</th><th>Package</th><th>Installed</th><th>Fix version</th><th>Target</th>'
-            "</tr></thead><tbody>" + rows + "</tbody></table></div><p class='muted'>" + note + "</p></details>")
+def finding_key(v: dict) -> tuple:
+    return (v["cve"], v["package"], v["class"], v["type"],
+            stable_target(str(v["target"] or "")))
+
+
+def compare_findings(original, patched, verified):
+    before = [v for v in findings(original) if v["severity"] != "LOW"]
+    after = [v for v in findings(patched) if v["severity"] != "LOW"] if verified else []
+    # Match using all severities, so a severity change to LOW is not a fix.
+    pending = defaultdict(deque)
+    for v in findings(patched) if verified else []:
+        pending[finding_key(v)].append(v)
+    rows = []
+    for v in findings(original):
+        bucket = pending[finding_key(v)]
+        new = bucket.popleft() if verified and bucket else None
+        if v["severity"] == "LOW" and (not new or new["severity"] == "LOW"):
+            continue
+        rows.append((v, new, "Remaining" if new else "Fixed" if verified else "Not rescanned"))
+    if verified:
+        rows.extend((None, v, "Introduced") for bucket in pending.values() for v in bucket if v["severity"] != "LOW")
+    order = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "UNKNOWN": 3, "LOW": 4}
+    return sorted(rows, key=lambda row: (order.get((row[1] or row[0])["severity"], 3),
+                                        str((row[1] or row[0])["cve"]), str((row[1] or row[0])["package"])))
+
+
+def unknown_detail(v):
+    if v["severity"] != "UNKNOWN":
+        return ""
+    # Retain vendor rating as evidence, not an invented authoritative rating.
+    vendor = v["vendor_severity"]
+    mapping = {0: "UNKNOWN", 1: "LOW", 2: "MEDIUM", 3: "HIGH", 4: "CRITICAL"}
+    ratings = ", ".join(str(k) + ": " + str(mapping.get(x, x)) for k, x in vendor.items()) if isinstance(vendor, dict) else ""
+    scores = []
+    if isinstance(v["cvss"], dict):
+        for name, data in v["cvss"].items():
+            if isinstance(data, dict):
+                scores.extend(str(name) + " " + key + "=" + str(data[key]) for key in ("V3Score", "V2Score", "V40Score") if key in data)
+    return "Trivy severity unavailable; manual triage. " + ("Vendor: " + ratings + ". " if ratings else "") + ("CVSS: " + ", ".join(scores) if scores else "No CVSS in scan evidence.")
+
+
+def comparison_table(rows, verified):
+    if not rows:
+        return '<p class="muted">No recorded in-scope findings, or no verified results.</p>'
+    body = []
+    for old, new, state in rows:
+        v = new or old
+        sev = (old["severity"] + " → " + new["severity"]) if old and new and old["severity"] != new["severity"] else v["severity"]
+        details = unknown_detail(v) or (unknown_detail(old) if old else "")
+        body.append("<tr>" + "".join("<td>" + e(x) + "</td>" for x in (
+            v["cve"], sev, v["package"], old["installed"] if old else None,
+            new["installed"] if new else None, v["fixed"] or "No known fix", v["target"]))
+            + '<td><span class="finding-state ' + ("fixed" if state == "Fixed" else "pending-state") + '">' + e(state)
+            + '</span></td><td>' + e(details or v["status"] or "—") + "</td></tr>")
+    return ('<p class="muted">Fixed = no longer detected in a verified comparable rescan; not proof of remediation. '
+            'LOW-only findings are excluded from this report view; raw evidence and policy counts are retained.</p>'
+            '<div class="table-scroll"><table><thead><tr><th>CVE / ID</th><th>Severity</th><th>Package</th>'
+            '<th>Before</th><th>After</th><th>Vendor fix version</th><th>Target</th><th>Status</th><th>Triage</th>'
+            '</tr></thead><tbody>' + "".join(body) + "</tbody></table></div>")
+
+
+def package_upgrades(original, patched, verified):
+    if not verified:
+        return '<p class="muted">Package comparison requires verified scans.</p>'
+    def inventory(scan):
+        data = defaultdict(set)
+        for target in (scan.get("raw_report") or {}).get("Results", []):
+            for pkg in target.get("Packages") or []:
+                if pkg.get("Name") and pkg.get("Version"):
+                    data[(target.get("Class"), target.get("Type"), stable_target(str(target.get("Target") or "")), pkg["Name"])].add(str(pkg["Version"]))
+        return data
+    before, after = inventory(original), inventory(patched)
+    if not before or not after:
+        return '<p class="muted">Full package inventories not available in this historical scan.</p>'
+    rows = []
+    for key in sorted(before.keys() & after.keys(), key=str):
+        if before[key] != after[key]:
+            rows.append("<tr>" + "".join("<td>" + e(x) + "</td>" for x in (key[-1], ", ".join(sorted(before[key])), ", ".join(sorted(after[key])), key[2])) + "</tr>")
+    return '<p class="muted">Version changes from actual Trivy package inventories; added/removed inventory keys: ' + str(len(after.keys()-before.keys())) + '/' + str(len(before.keys()-after.keys())) + '.</p><table><thead><tr><th>Package</th><th>Before</th><th>After</th><th>Target</th></tr></thead><tbody>' + "".join(rows) + "</tbody></table>"
+
 
 
 def render(resource_id: str, payload: dict[str, Any]) -> str:
@@ -131,16 +202,22 @@ def render(resource_id: str, payload: dict[str, Any]) -> str:
     patched_total = sum(number(patched.get(field)) for _,field,_ in SEVERITIES) if patched and patched.get("status") == "success" else None
     value = lambda x: str(x) if x is not None else "—"
     metric = lambda label,count,note: '<div class="metric"><span>' + e(label) + '</span><strong>' + e(value(count)) + '</strong><small>' + e(note) + "</small></div>"
-    cards = (metric("Initial scan", original_total, "Vulnerabilities before patch")
+    rows = compare_findings(original, patched, verified_pair)
+    states = Counter(row[2] for row in rows)
+    initial_rows = [old for old, new, state in rows if old and old["severity"] != "LOW"]
+    final_rows = [v for v in findings(patched) if v["severity"] != "LOW"] if verified_pair else []
+    initial_fixable = sum(bool(v["fixed"]) for v in initial_rows)
+    removed_fixable = sum(bool(old["fixed"]) for old, new, state in rows if old and old["severity"] != "LOW" and state == "Fixed")
+    cards = (metric("Initial scan", original_total, "CRITICAL, HIGH, MEDIUM and UNKNOWN; LOW excluded")
              + metric("After patch", patched_total, "Only real completed rescans")
-             + metric("Fixed", number(latest_diff.get("fixed_count")) if latest_diff else None, "No longer detected (not proof of remediation)")
-             + metric("Introduced", number(latest_diff.get("introduced_count")) if latest_diff else None, "Newly detected"))
+             + metric("No longer detected", states["Fixed"] if verified_pair else None, "In-scope findings, not proof of remediation")
+             + metric("Introduced", states["Introduced"] if verified_pair else None, "Newly detected in report scope"))
     changes = ""
     if latest_diff:
         changes = ('<div class="changes">' +
-                   metric("Remaining", number(latest_diff.get("remaining_count")), "Still present after patch") +
+                   metric("Remaining", patched_total, "In-scope post-patch findings") +
                    metric("Net reduction", (original_total - patched_total) if original_total is not None and patched_total is not None else None,
-                          "Initial minus final, all severities") + "</div>")
+                          "Initial minus final, LOW excluded") + "</div>")
     elif not patched:
         changes = '<p class="muted">No patched scan yet. Comparison will appear here after you approve local patch preparation and the rescan finishes.</p>'
     violations = list(final_policy.get("violations") or []) if final_policy else []
@@ -161,12 +238,15 @@ def render(resource_id: str, payload: dict[str, Any]) -> str:
     banner = ('<div class="report-top"><div><div class="kicker">APPSEC · CONSOLIDATED IMAGE REPORT</div>'
               "<h1>" + e(p.get("requested_image")) + "</h1><p>Pipeline " + e(resource_id) +
               " · " + e(p.get("started_at")) + "</p></div>" +
-              badge(p.get("status") or "queued", "neutral") + "</div>")
+              badge("Execution: " + (p.get("status") or "queued"), "neutral") + "</div>")
     patch = (payload.get("patches") or [{}])[-1]
     publication = '<section><h2>Image identity and publication</h2>'
     for label, scan in (("Original scan", original), ("Patched rescan", patched)):
         evidence = (scan.get("raw_report") or {}).get("_appsec") or {} if scan else {}
-        publication += '<p><strong>' + e(label) + '</strong>: ' + e(scan.get("image_ref") if scan else None) + '<br>Scan ID: ' + e(scan.get("id") if scan else None) + '<br>Image ID: ' + e(evidence.get("image_id")) + '<br>OS packages inspected: ' + e(evidence.get("os_package_count")) + '<br>Application packages inspected: ' + e(evidence.get("application_package_count")) + '<br>Finished: ' + e(scan.get("finished_at") if scan else None) + '</p>'
+        publication += '<p><strong>' + e(label) + '</strong>: ' + e(scan.get("image_ref") if scan else None) + '<br>Scan ID: ' + e(scan.get("id") if scan else None) + '<br>Image ID: ' + e(evidence.get("image_id")) + '<br>Registry references: ' + e(", ".join((scan.get("raw_report") or {}).get("Metadata", {}).get("RepoDigests") or []) if scan else None) + '<br>OS packages inspected: ' + e(evidence.get("os_package_count")) + '<br>Application packages inspected: ' + e(evidence.get("application_package_count")) + '<br>Finished: ' + e(scan.get("finished_at") if scan else None) + '</p>'
+    approval = payload.get("approval") or {}
+    publication += '<p>Patch approval: ' + e(approval.get("patch_approver")) + ' · ' + e(approval.get("approved_at")) + '<br>Publish approval: ' + e(approval.get("publish_approver")) + ' · ' + e(approval.get("publish_approved_at")) + '<br>Risk acceptance reason: ' + e(approval.get("risk_reason") or "Not recorded") + '</p>'
+    publication += '<p>Patch execution: ' + e(patch.get("status")) + ' · ' + e(patch.get("started_at")) + ' → ' + e(patch.get("finished_at")) + '<br>Rescan: ' + e(patched.get("status") if patched else None) + '<br>Security recommendation: ' + e(recommended) + '</p>'
     publication += '<p>Local patched image: ' + e(patch.get("local_image_ref")) + '</p>'
     publication += '<p>Publication status: ' + e(patch.get("publication_status") or "not published") + '</p>'
     if patch.get("publication_status") == "published":
@@ -181,9 +261,14 @@ def render(resource_id: str, payload: dict[str, Any]) -> str:
         + recommendation + "</section>" +
         ('<section><h2>Execution diagnostics</h2>' + "".join(errors) + "</section>" if errors else "") +
         '<section><div class="section-title"><h2>Evidence, without the clutter</h2>'
-        '<p>Expand only the scan you need. Underlying Trivy JSON and CycloneDX SBOM remain separate raw artifacts.</p></div>' +
-        findings_table("Initial vulnerabilities", original) +
-        findings_table("After-patch vulnerabilities", patched) + "</section>" +
+        '<p>Full unified finding table. Raw Trivy JSON and SBOM retain LOW.</p></div>' +
+        '<p>Known fix before: ' + e(initial_fixable) + ' · No known fix before: ' + e(len(initial_rows)-initial_fixable) +
+        ' · Known-fix findings no longer detected: ' + e(removed_fixable if verified_pair else None) +
+        ' · Remaining with a known fix: ' + e(sum(bool(v["fixed"]) for v in final_rows) if verified_pair else None) +
+        ' · Known-fix disappearance rate: ' + e(round(removed_fixable/initial_fixable*100, 2) if verified_pair and initial_fixable else None) + '%</p>' +
+        '<p class="muted">UNKNOWN means Trivy did not assign a severity, not that the finding is harmless. Review vendor ratings/CVSS and advisory IDs; no automatic downgrade.</p>' +
+        comparison_table(rows, verified_pair) + "</section>" +
+        '<section><h2>Package Upgrade Summary</h2>' + package_upgrades(original, patched, verified_pair) + '</section>' +
         '<footer>Based on persisted Trivy findings. An absent or failed rescan is never reported as zero vulnerabilities. '
         'A recommendation is not a guarantee of security. Generated by AppSec Control Center.</footer>'
     )
@@ -218,6 +303,7 @@ details{border:1px solid #e2eaf3;border-radius:12px;margin:10px 0;padding:16px}
 summary{cursor:pointer;font-weight:750}details[open] summary{margin-bottom:12px}
 .table-scroll{overflow:auto}table{border-collapse:collapse;width:100%;font-size:12px}
 th,td{padding:9px 11px;border-bottom:1px solid #edf1f5;text-align:left}th{background:#f6f9fc;white-space:nowrap}
+.finding-state{display:inline-block;padding:5px 9px;border-radius:5px;font-weight:750;white-space:nowrap}.finding-state.fixed{color:#116142;background:#e6f8f0;border:1px solid #8fcea9}.finding-state.pending-state{color:#934a13;background:#fff1dd;border:1px solid #eec98e}
 .muted,footer{font-size:12px;color:#6a788e;line-height:1.65}footer{padding:18px 8px}
 @media(max-width:750px){.summary{grid-template-columns:repeat(2,minmax(0,1fr))}.severity-row{grid-template-columns:75px 1fr 80px}.report-top{flex-direction:column}.section-title{display:block}}
 @media print{body{background:white}main{margin:0;max-width:none}section,.metric{break-inside:avoid}}

@@ -24,7 +24,7 @@ def overview_data(conn, user: dict[str, Any]) -> dict[str, Any]:
     pipeline_filter = """(%s OR p.project_id IS NULL OR EXISTS (
       SELECT 1 FROM projects pr JOIN team_members tm ON tm.team_id = pr.team_id
       WHERE pr.id = p.project_id AND tm.user_id = %s))"""
-    security_filter = """(%s OR sj.project_id IS NULL OR EXISTS (
+    security_filter = """(%s OR (sj.project_id IS NULL AND sj.requested_by = %s) OR EXISTS (
       SELECT 1 FROM projects pr JOIN team_members tm ON tm.team_id = pr.team_id
       WHERE pr.id = sj.project_id AND tm.user_id = %s))"""
     job_filter = """(%s OR j.project_id IS NULL OR EXISTS (
@@ -68,7 +68,7 @@ def overview_data(conn, user: dict[str, Any]) -> dict[str, Any]:
            FROM security_jobs sj
            WHERE {security_filter}
            ORDER BY sj.started_at DESC LIMIT 30""",
-        (admin, uid),
+        (admin, uid, uid),
     )
     return {
         "summary": dict(stats),
