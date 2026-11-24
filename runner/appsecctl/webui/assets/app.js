@@ -5,6 +5,8 @@
   const $ = (id) => document.getElementById(id);
   const app = $("app"), loginScreen = $("login-screen"), notice = $("global-notice");
   const state = { user: null, overview: null, view: "overview", result: null, selectedWorkflow: null, workflowState: null, patchEnabled: false };
+  const selectedPipelines = new Set();
+  let bulkBusy = false;
   const date = (value) => value ? new Date(value).toLocaleString() : "—";
   const text = (value) => value == null || value === "" ? "—" : String(value);
   const node = (tag, css, value) => {
@@ -48,6 +50,7 @@
   };
   function showLogin() {
     state.user = null;
+    selectedPipelines.clear();
     loginScreen.hidden = false; app.hidden = true;
   }
   function showApp(user) {
@@ -114,6 +117,72 @@
       body.appendChild(row);
     });
   }
+  function eligiblePipeline(p) {
+    return ["success","failed","policy_failed"].includes(p.status) &&
+      !(state.overview?.pipeline_jobs || []).some(j=>String(j.pipeline_id)===String(p.id) && ["queued","running"].includes(j.status));
+  }
+  function updateBulkControls() {
+    const eligible = (state.overview?.pipelines || []).filter(eligiblePipeline).map(p=>String(p.id));
+    for (const id of [...selectedPipelines]) if (!eligible.includes(id)) selectedPipelines.delete(id);
+    $("pipeline-selection-count").textContent = selectedPipelines.size + " selected";
+    $("pipeline-export").disabled = bulkBusy || !selectedPipelines.size;
+    $("pipeline-delete").hidden = state.user?.role !== "admin";
+    $("pipeline-delete").disabled = bulkBusy || !selectedPipelines.size || state.user?.role !== "admin";
+    const all = $("pipeline-select-all");
+    all.disabled = bulkBusy || !eligible.length;
+    all.checked = eligible.length > 0 && eligible.every(id=>selectedPipelines.has(id));
+    all.indeterminate = selectedPipelines.size > 0 && !all.checked;
+    document.querySelectorAll(".pipeline-checkbox").forEach(box=>{
+      box.checked=selectedPipelines.has(box.value);
+      box.disabled=bulkBusy || !eligible.includes(box.value);
+    });
+  }
+  $("pipeline-select-all").addEventListener("change",event=>{
+    selectedPipelines.clear();
+    if (event.target.checked) (state.overview?.pipelines || []).filter(eligiblePipeline).forEach(p=>selectedPipelines.add(String(p.id)));
+    updateBulkControls();
+  });
+  $("pipeline-export").addEventListener("click",async()=>{
+    const ids = [...selectedPipelines];
+    if (!ids.length || bulkBusy) return;
+    bulkBusy=true;updateBulkControls();
+    try {
+      const result=await fetch(prefix+"/api/ui/pipelines/export",{
+        method:"POST",credentials:"same-origin",cache:"no-store",
+        headers:{"Content-Type":"application/json","X-Requested-With":"AppSec-Control-Center"},
+        body:JSON.stringify({pipeline_ids:ids})
+      });
+      if(!result.ok) {
+        const err=await result.json().catch(()=>({}));
+        throw new Error(typeof err.detail==="string"?err.detail:"Export failed ("+result.status+")");
+      }
+      const url=URL.createObjectURL(await result.blob());
+      const link=node("a");link.href=url;link.download=ids.length===1?"appsec-"+ids[0]+".html":"appsec-selected-reports.zip";
+      document.body.appendChild(link);link.click();link.remove();
+      setTimeout(()=>URL.revokeObjectURL(url),30000);
+      notification(ids.length+" report(s) exported.");
+    } catch(error){notification(error.message,true);}
+    finally {bulkBusy=false;updateBulkControls();}
+  });
+  $("pipeline-delete").addEventListener("click",async()=>{
+    const ids=[...selectedPipelines];
+    if (!ids.length || bulkBusy || state.user?.role!=="admin") return;
+    if(window.prompt("Permanently delete "+ids.length+" selected image workflow(s), DB history and report evidence?\nPublished registry images and audit records stay.\nType DELETE to confirm:")!=="DELETE")return;
+    bulkBusy=true;updateBulkControls();
+    const failed=[];let deleted=0,queued=0;
+    try {
+      for(const id of ids){
+        try{
+          const result=await request("/api/pipelines/"+encodeURIComponent(id)+"/history?confirm="+encodeURIComponent(id),{method:"DELETE"});
+          selectedPipelines.delete(id);deleted++;queued+=Number(result.local_tags_queued_for_removal||0);
+        }catch(error){failed.push(id+": "+error.message);}
+      }
+      await refreshOverview();
+      notification(deleted+" deleted; "+queued+" local patched tags queued for cleanup."+
+        (failed.length?" Failed: "+failed.join("; "):""),failed.length>0);
+    }catch(error){notification("Deleted "+deleted+"; refresh failed: "+error.message,true);}
+    finally{bulkBusy=false;updateBulkControls();}
+  });
   async function refreshOverview() {
     const data = await request("/api/ui/overview");
     state.overview = data;
@@ -121,9 +190,13 @@
       $(id).textContent = text(data.summary[key] ?? 0);
     }
     const pipelines = $("pipelines-body"); clear(pipelines);
-    if (!data.pipelines.length) empty(pipelines, "No image scans have run yet. Start your first real scan.", 6);
+    if (!data.pipelines.length) empty(pipelines, "No image scans have run yet. Start your first real scan.", 7);
     data.pipelines.forEach(p => {
       const r = node("tr");
+      const choose=cell(r,""), checkbox=node("input","pipeline-checkbox");
+      checkbox.type="checkbox";checkbox.value=String(p.id);checkbox.setAttribute("aria-label","Select "+p.requested_image);
+      checkbox.addEventListener("change",()=>{if(checkbox.checked)selectedPipelines.add(checkbox.value);else selectedPipelines.delete(checkbox.value);updateBulkControls();});
+      choose.appendChild(checkbox);
       cell(r, p.requested_image, "wide-text");
       const s = cell(r, ""); s.appendChild(statusPill(p.status));
       cell(r, p.critical_count); cell(r, p.high_count);
@@ -131,6 +204,7 @@
       const actions = cell(r, ""); actions.appendChild(button("Details →", () => openPipeline(p.id)));
       pipelines.appendChild(r);
     });
+    updateBulkControls();
     const jobs = $("jobs-body"); clear(jobs);
     if (!data.pipeline_jobs.length) empty(jobs, "No image jobs recorded.", 5);
     data.pipeline_jobs.forEach(j => {

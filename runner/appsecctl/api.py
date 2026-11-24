@@ -994,6 +994,51 @@ def ui_overview(user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
         return overview_data(conn, user)
 
 
+class PipelineExportRequest(BaseModel):
+    pipeline_ids: list[str] = Field(min_length=1, max_length=30)
+
+
+@app.post("/api/ui/pipelines/export")
+def export_selected_pipelines(request: PipelineExportRequest, user: dict[str, Any] = Depends(current_user)):
+    """Generate current standalone HTML reports; zip multiple selections."""
+    import io
+    import zipfile
+    from uuid import UUID
+    from .reports import ensure_report_ready, pipeline_report_html
+
+    try:
+        ids = list(dict.fromkeys(str(UUID(value)) for value in request.pipeline_ids))
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Invalid pipeline ID") from None
+    documents = []
+    total_bytes = 0
+    with db.connect() as conn:
+        # Authorize the entire batch before returning any data.
+        for identifier in ids:
+            require_resource(conn, user, "pipeline", identifier)
+        for identifier in ids:
+            payload = db.pipeline_summary(conn, identifier)
+            try:
+                ensure_report_ready("pipeline", payload)
+            except RuntimeError:
+                raise HTTPException(status_code=409, detail="Select completed or failed pipelines only") from None
+            document = pipeline_report_html(identifier, payload).encode("utf-8")
+            total_bytes += len(document)
+            if total_bytes > 50 * 1024 * 1024:
+                raise HTTPException(status_code=413, detail="Export too large; select fewer reports")
+            documents.append((f"appsec-{identifier}.html", document))
+    if len(documents) == 1:
+        name, document = documents[0]
+        return Response(content=document, media_type="application/octet-stream",
+                        headers={"Content-Disposition": f'attachment; filename="{name}"', "Cache-Control": "no-store"})
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for name, document in documents:
+            archive.writestr(name, document)
+    return Response(content=output.getvalue(), media_type="application/zip",
+                    headers={"Content-Disposition": 'attachment; filename="appsec-selected-reports.zip"', "Cache-Control": "no-store"})
+
+
 @app.get("/api/ui/pipelines/{pipeline_id}")
 def ui_pipeline(
     pipeline_id: str, user: dict[str, Any] = Depends(current_user)

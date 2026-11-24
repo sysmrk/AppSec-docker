@@ -45,3 +45,14 @@ class UIContractTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BulkUIContractTests(unittest.TestCase):
+    def test_overview_bulk_actions_present(self):
+        root = Path(__file__).resolve().parents[1] / "runner/appsecctl/webui"
+        html = (root / "index.html").read_text()
+        script = (root / "assets/app.js").read_text()
+        for identifier in ("pipeline-select-all", "pipeline-export", "pipeline-delete"):
+            self.assertIn('id="'+identifier+'"', html)
+        self.assertIn("/api/ui/pipelines/export", script)
+        self.assertIn("selectedPipelines", script)

@@ -74,7 +74,13 @@
             <article class="stat"><span>Execution failed</span><strong id="stat-failed">—</strong></article>
           </div>
           <div class="section-heading"><h2>Recent image scans</h2><button class="text-button" data-view="scan">+ New scan</button></div>
-          <div class="table-wrap"><table><thead><tr><th>Image</th><th>Status</th><th>Critical</th><th>High</th><th>Started</th><th></th></tr></thead><tbody id="pipelines-body"></tbody></table></div>
+          <div class="approval-actions" aria-label="Selected image scans">
+            <span id="pipeline-selection-count" class="muted" aria-live="polite">0 selected</span>
+            <button id="pipeline-export" class="outline small" type="button" disabled>Export selected</button>
+            <button id="pipeline-delete" class="danger-button small" type="button" disabled>Delete selected</button>
+          </div>
+          <p class="hint">Select finished or failed image workflows. Export downloads one HTML report or a ZIP of selected reports. Delete permanently removes workflow evidence and history; remote registry images and audit records are preserved.</p>
+          <div class="table-wrap"><table><thead><tr><th><input type="checkbox" id="pipeline-select-all" aria-label="Select all eligible image scans"></th><th>Image</th><th>Status</th><th>Critical</th><th>High</th><th>Started</th><th></th></tr></thead><tbody id="pipelines-body"></tbody></table></div>
           <div class="section-heading"><h2>Queued and recent jobs</h2></div>
           <div class="table-wrap"><table><thead><tr><th>Image</th><th>Mode</th><th>Status</th><th>Submitted</th><th></th></tr></thead><tbody id="jobs-body"></tbody></table></div>
           <div class="section-heading"><h2>Repository security jobs</h2></div>

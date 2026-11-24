@@ -25,12 +25,19 @@ def remove_evidence(paths: set[str], pipeline_id: str) -> int:
             if not slash or stored_bucket != bucket or not key:
                 raise ValueError("Evidence is outside the AppSec S3 bucket")
             objects.setdefault(stored_bucket, set()).add(key)
+            # Uploads retain the original local copy.
+            local.add(root / Path(key).name)
         else:
             path = Path(item).resolve()
             if not path.is_relative_to(root):
                 raise ValueError("Evidence path is outside /reports; deletion refused")
             local.add(path)
     count = 0
+    # If storage is enabled, check the pipeline prefix even when an older
+    # report row was overwritten or a previous upload was not recorded.
+    from .artifacts import s3_enabled
+    if s3_enabled():
+        objects.setdefault(bucket, set())
     if objects:
         client = boto3.client(
             "s3",
@@ -50,6 +57,8 @@ def remove_evidence(paths: set[str], pipeline_id: str) -> int:
             for key in keys:
                 client.delete_object(Bucket=name, Key=key)
                 count += 1
+            # A versioned bucket needs separate lifecycle/retention handling.
+            # Never claim physical erasure of object versions or backups.
     for path in local:
         if path.is_file():
             path.unlink()
@@ -59,8 +68,11 @@ def remove_evidence(paths: set[str], pipeline_id: str) -> int:
 
 def purge_pipeline(conn, pipeline_id: str) -> dict:
     pid = UUID(pipeline_id)
-    if not conn.execute("SELECT id FROM pipeline_runs WHERE id=%s FOR UPDATE", (pid,)).fetchone():
+    pipeline = conn.execute("SELECT id, status FROM pipeline_runs WHERE id=%s FOR UPDATE", (pid,)).fetchone()
+    if not pipeline:
         raise LookupError("Pipeline does not exist")
+    if pipeline.get("status") in ("running", "queued"):
+        raise RuntimeError("Pending or running jobs exist; finish or cancel them first")
     jobs = conn.execute(
         "SELECT status FROM pipeline_jobs WHERE pipeline_id=%s FOR UPDATE", (pid,)
     ).fetchall()
