@@ -13,7 +13,7 @@ from alembic import command as alembic_command
 from alembic.config import Config as AlembicConfig
 
 from . import db, policy, image_sources, patch_sources
-from .errors import safe_message
+from .errors import safe_message, safe_detail
 from .reports import write_html_report, write_security_sarif
 from .security import enqueue_security_job, run_security_job
 
@@ -81,6 +81,34 @@ def trivy_database_options(sources=None) -> list[str]:
     return ["-e", f"TRIVY_DB_REPOSITORY={db_refs}", "-e", f"TRIVY_JAVA_DB_REPOSITORY={java_refs}"]
 
 
+def prepare_trivy_database(trivy_image: str, repositories: str, *, java: bool = False) -> None:
+    """Try one approved OCI artifact repository at a time, including HTTP 403/404.
+    
+    Trivy still decides whether its existing local cache needs an update.
+    This intentionally never uses docker pull for a vulnerability DB artifact.
+    """
+    flag = "--java-db-repository" if java else "--db-repository"
+    download = "--download-java-db-only" if java else "--download-db-only"
+    stage = "java" if java else "vulnerability"
+    cache = env("TRIVY_CACHE_VOLUME", "appsec_trivy_cache")
+    attempts = []
+    for ref in repositories.split(","):
+        cmd = docker_base() + ["--pull=never", "-v", f"{cache}:/root/.cache/trivy",
+                               trivy_image, "image", download, flag, ref]
+        try:
+            run_command(cmd, capture_errors=True)
+            print(f"TRIVY_DB_READY kind={stage} repository={ref} (download or fresh cache)", flush=True)
+            return
+        except subprocess.CalledProcessError as exc:
+            reason = safe_detail(exc.stderr)
+        except OSError as exc:
+            reason = type(exc).__name__
+        attempts.append(f"{ref}: {reason}")
+        print(f"TRIVY_DB_SOURCE_FAILED kind={stage} repository={ref} reason={reason}", flush=True)
+    code = "TRIVY_JAVA_DB" if java else "TRIVY_DB"
+    raise RuntimeError(code + ": All approved database repositories failed: " + "; ".join(attempts)[:1200])
+
+
 def trivy_runtime() -> tuple[str, list[str], list[str]]:
     with db.connect() as conn:
         sources = image_sources.configured_sources(conn)
@@ -88,7 +116,16 @@ def trivy_runtime() -> tuple[str, list[str], list[str]]:
     if sources is None:
         return trivy_image, [], trivy_database_options()
     resolved = image_sources.pull_ordered(image_sources.ordered_candidates(sources, [trivy_image]))
-    return resolved, ["--pull=never"], trivy_database_options(sources)
+    options = trivy_database_options(sources)
+    db_refs = image_sources.artifact_repositories(sources, env("TRIVY_DB_REPOSITORY", "ghcr.io/aquasecurity/trivy-db:2"))
+    prepare_trivy_database(resolved, db_refs)
+    # The scan must not start another vulnerability DB download from defaults.
+    options += ["-e", "TRIVY_SKIP_DB_UPDATE=true"]
+    if env("APPSEC_PREFETCH_JAVA_DB", "false").lower() in ("1", "true", "yes"):
+        java_refs = image_sources.artifact_repositories(sources, env("TRIVY_JAVA_DB_REPOSITORY", "ghcr.io/aquasecurity/trivy-java-db:1"))
+        prepare_trivy_database(resolved, java_refs, java=True)
+        options += ["-e", "TRIVY_SKIP_JAVA_DB_UPDATE=true"]
+    return resolved, ["--pull=never"], options
 
 
 def scan_image(image_ref: str, phase: str, pipeline_id: str | None = None) -> str:

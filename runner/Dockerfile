@@ -6,6 +6,14 @@ ARG COPA_VERSION=0.14.1
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
+# Optional trusted Debian archive mirror (base URL without /debian).
+ARG DEBIAN_MIRROR=
+RUN if [ -n "${DEBIAN_MIRROR}" ]; then \
+        sed -i -e "s|http://deb.debian.org/debian-security|${DEBIAN_MIRROR%/}/debian-security|g" \
+               -e "s|http://deb.debian.org/debian|${DEBIAN_MIRROR%/}/debian|g" \
+               /etc/apt/sources.list.d/debian.sources; \
+    fi
+
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \

@@ -7,6 +7,7 @@ x-runner-build: &runner-build
     COPA_VERSION: ${COPA_VERSION:-0.14.1}
     RUNNER_BASE_IMAGE: ${RUNNER_BASE_IMAGE:-python:3.12-slim}
     PIP_INDEX_URL: ${APPSEC_PIP_INDEX_URL:-https://pypi.org/simple}
+    DEBIAN_MIRROR: ${APPSEC_DEBIAN_MIRROR:-}
 
 x-runner-env: &runner-env
   DATABASE_URL: postgresql://${POSTGRES_USER:-appsec}:${POSTGRES_PASSWORD:-appsec-change-me}@postgres:5432/${POSTGRES_DB:-appsec}
@@ -17,6 +18,7 @@ x-runner-env: &runner-env
   POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-appsec-change-me}
   POSTGRES_PASSWORD_FILE: ${POSTGRES_PASSWORD_FILE:-}
   APPSEC_REQUIRE_IMAGE_SOURCES: ${APPSEC_REQUIRE_IMAGE_SOURCES:-false}
+  APPSEC_PREFETCH_JAVA_DB: ${APPSEC_PREFETCH_JAVA_DB:-false}
   TRIVY_IMAGE: ${TRIVY_IMAGE:-aquasec/trivy:latest}
   TRIVY_DB_REPOSITORY: ${TRIVY_DB_REPOSITORY:-ghcr.io/aquasecurity/trivy-db:2}
   TRIVY_JAVA_DB_REPOSITORY: ${TRIVY_JAVA_DB_REPOSITORY:-ghcr.io/aquasecurity/trivy-java-db:1}

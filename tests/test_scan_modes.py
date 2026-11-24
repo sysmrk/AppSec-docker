@@ -21,6 +21,24 @@ class ScanModeTests(unittest.TestCase):
         self.assertEqual(classify(java_error)["code"], "TRIVY_JAVA_DB")
         self.assertEqual(classify(subprocess.CalledProcessError(1, command))["code"], "OPERATION_FAILED")
 
+    def test_database_prefetch_retries_forbidden_and_stops_on_success(self):
+        denied = subprocess.CalledProcessError(1, ["trivy"], stderr="403 Forbidden")
+        with patch.object(cli, "run_command", side_effect=[denied, None]) as runner:
+            cli.prepare_trivy_database("mirror.example/aquasec/trivy:1",
+                                       "a.example/db:2,b.example/db:2,c.example/db:2")
+        self.assertEqual(runner.call_count, 2)
+        first, second = [call.args[0] for call in runner.call_args_list]
+        self.assertEqual(first[-2:], ["--db-repository", "a.example/db:2"])
+        self.assertEqual(second[-2:], ["--db-repository", "b.example/db:2"])
+        self.assertIn("--pull=never", second)
+
+    def test_database_prefetch_fails_closed(self):
+        denied = subprocess.CalledProcessError(1, ["trivy"], stderr="403 Forbidden")
+        with patch.object(cli, "run_command", side_effect=denied) as runner:
+            with self.assertRaisesRegex(RuntimeError, "TRIVY_DB:.*403 Forbidden"):
+                cli.prepare_trivy_database("mirror.example/aquasec/trivy:1", "a.example/db:2")
+        self.assertEqual(runner.call_count, 1)
+
     def test_java_database_repository_is_forwarded(self):
         with patch.dict("os.environ", {"TRIVY_JAVA_DB_REPOSITORY": "registry.example.org/java-db:1"}):
             self.assertIn("TRIVY_JAVA_DB_REPOSITORY=registry.example.org/java-db:1", cli.trivy_database_options())
