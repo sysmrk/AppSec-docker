@@ -222,6 +222,7 @@
   async function loadCapabilities() {
     const features = await request("/api/ui/capabilities");
     state.patchEnabled = Boolean(features.patch_enabled);
+    if(state.user?.role === "admin") loadToolUpdates().catch(() => {});
   }
   async function loadProjects() {
     const projects = await request("/api/projects");
@@ -267,7 +268,7 @@
       const res = await request("/api/ui/scans/" + encodeURIComponent(scanId) + "/vulnerabilities?limit=200" + (severity ? "&severity=" + encodeURIComponent(severity) : ""));
       clear(holder);
       detailsTable(holder, [["CVE", "vulnerability_id"], ["Severity", "severity"], ["Package", "pkg_name"], ["Installed", "installed_version"], ["Fix", "fixed_version"], ["Target", "target"]], res.findings);
-      holder.appendChild(node("p", "info-note", "Showing up to 200 findings for the selected scan and severity."));
+      holder.appendChild(node("p", "info-note", "Showing up to 200 findings. Full unified HTML export includes every in-scope finding. UNKNOWN requires triage; LOW is raw evidence only."));
     } catch (error) { holder.textContent = error.message; }
   }
 
@@ -329,7 +330,7 @@
     block.appendChild(rows);
     if (diff) {
       const changes=node("div","change-metrics");
-      for (const [label,count,kind] of [["No longer detected (all severities)",diff.fixed_count,"fixed"],["Remaining (all severities)",diff.remaining_count,"remaining"],["Introduced (all severities)",diff.introduced_count,"introduced"]]) {
+      for (const [label,count,kind] of [["No longer detected",diff.report_fixed_count ?? diff.fixed_count,"fixed"],["Remaining",diff.report_remaining_count ?? diff.remaining_count,"remaining"],["Introduced",diff.report_introduced_count ?? diff.introduced_count,"introduced"]]) {
         const item=node("article","change-metric "+kind);
         item.appendChild(node("strong","",count));item.appendChild(node("span","",label));changes.appendChild(item);
       }
@@ -399,7 +400,7 @@
         });
         const last=d.scans.find(x=>x.phase==="patched")||d.scans[0];
         selector.value=String(last.id);
-        ["All severities","CRITICAL","HIGH","MEDIUM","LOW","UNKNOWN"].forEach((name,i)=>{
+        ["All report severities","CRITICAL","HIGH","MEDIUM","UNKNOWN","LOW"].forEach((name,i)=>{
           const o=node("option","",name);o.value=i?name:"";severity.appendChild(o);
         });
         filters.appendChild(selector);filters.appendChild(severity);evidence.appendChild(filters);
@@ -762,6 +763,8 @@
   async function loadToolUpdates() {
     if (state.user?.role !== "admin") return;
     const items = await request("/api/tool-updates");
+    const badge = $("tool-update-count"), count = items.filter(x => x.update_available).length;
+    badge.hidden = !count; badge.textContent = count ? "(" + count + " updates)" : "";
     const holder = $("tool-updates-body"); clear(holder);
     for (const item of items) {
       const row = node("tr");
@@ -921,6 +924,7 @@
       $("repo-password").value = ""; $("repo-user").value = "";
       selectView("overview"); await refreshOverview(); notification("Repository scan queued. Job ID: " + result.job_id);
     } catch (error) { notification(error.message, true); }
+    finally { $("repo-password").value = ""; }
   });
   const metabaseUrl = location.protocol + "//" + location.hostname + ":3001/";
   $("metabase-link").href = metabaseUrl;
@@ -939,7 +943,7 @@
   initialize();
   window.setInterval(() => {
     if (!state.user || document.hidden || state.user.must_change_password) return;
-    if (state.view === "settings" && state.user.role === "admin") loadToolUpdates().catch(() => {});
+    if (state.user.role === "admin") loadToolUpdates().catch(() => {});
     if (state.view === "overview") {
       refreshOverview().catch(() => {});
       refreshHealth();

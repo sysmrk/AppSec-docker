@@ -174,7 +174,10 @@ def pipeline_details(conn, pipeline_id: str) -> dict[str, Any]:
         """SELECT id, local_image_ref, local_image_id, patched_image_ref, publication_status, published_at, published_digest, status, started_at, finished_at, error_message
            FROM patch_runs WHERE pipeline_id = %s ORDER BY started_at DESC LIMIT 10""", (pid,))
     diffs = _rows(conn,
-        """SELECT original_scan_id, patched_scan_id, fixed_count, remaining_count, introduced_count, created_at
+        """SELECT original_scan_id, patched_scan_id, fixed_count, remaining_count, introduced_count, created_at,
+                  (SELECT count(*) FROM jsonb_array_elements(COALESCE(fixed_vulnerabilities,'[]'::jsonb)) v WHERE COALESCE(v->>'severity','UNKNOWN') <> 'LOW')::int AS report_fixed_count,
+                  (SELECT count(*) FROM jsonb_array_elements(COALESCE(remaining_vulnerabilities,'[]'::jsonb)) v WHERE COALESCE(v->>'severity','UNKNOWN') <> 'LOW')::int AS report_remaining_count,
+                  (SELECT count(*) FROM jsonb_array_elements(COALESCE(introduced_vulnerabilities,'[]'::jsonb)) v WHERE COALESCE(v->>'severity','UNKNOWN') <> 'LOW')::int AS report_introduced_count
            FROM scan_diffs WHERE pipeline_id = %s ORDER BY created_at DESC LIMIT 1""", (pid,))
     policies = _rows(conn,
         """SELECT scan_id, status, violations, created_at FROM policy_results
@@ -206,7 +209,7 @@ def scan_vulnerabilities(
         """SELECT vulnerability_id, target, pkg_name, installed_version,
                   fixed_version, severity, title, primary_url
            FROM vulnerabilities WHERE scan_id = %s
-             AND (%s IS NULL OR severity = %s)
+             AND ((%s IS NULL AND severity <> 'LOW') OR severity = %s)
            ORDER BY CASE severity WHEN 'CRITICAL' THEN 0
                  WHEN 'HIGH' THEN 1 WHEN 'MEDIUM' THEN 2 WHEN 'LOW' THEN 3 ELSE 4 END,
                  vulnerability_id LIMIT %s""",

@@ -118,15 +118,29 @@ def install_copa(v, item):
         os.replace(path, folder / "copa")
     finally:
         path.unlink(missing_ok=True)
+def resolve_scanner(tool, requested, sources, expected=None):
+    """Use configured priority, also fall back if a mirror has the wrong version."""
+    if sources is None and expected is None:
+        return requested
+    if sources is None:
+        raise RuntimeError("Configure an approved image pull source before using managed scanner versions")
+    failures = []
+    for candidate in image_sources.ordered_candidates(sources, [requested]):
+        try:
+            ref = image_sources.pull_ordered([candidate])
+            if expected and scanner_version(ref)[0] != expected:
+                raise RuntimeError("Scanner version mismatch")
+            return ref
+        except RuntimeError as exc:
+            failures.append(candidate["name"] + ": " + str(exc)[:200])
+    raise RuntimeError("SOURCE_PULL_FAILED: No approved scanner source succeeded: " + "; ".join(failures)[:1000])
+
 def install_scanner(tool, v):
     with db.connect() as conn:
         sources = image_sources.configured_sources(conn)
     if not sources:
         raise RuntimeError("Configure an approved image pull source before installing scanner updates")
-    reference = image_sources.pull_ordered(image_sources.ordered_candidates(sources, [image_ref(tool, v)]))
-    actual, _ = scanner_version(reference)
-    if actual != v:
-        raise RuntimeError("Pulled scanner version does not match approved release")
+    resolve_scanner(tool, image_ref(tool, v), sources, v)
 def installed_version(tool):
     with db.connect() as conn:
         if tool == "copa":
@@ -139,12 +153,12 @@ def installed_version(tool):
     return None
 def status_rows(conn):
     rows = conn.execute("SELECT * FROM tool_updates ORDER BY tool").fetchall()
-    return [dict(row, update_available=newer(row["latest_version"], row["current_version"])) for row in rows]
+    return [dict(row, update_available=row["status"] in ("available", "failed") and newer(row["latest_version"], row["current_version"])) for row in rows]
 def enqueue(conn, tool):
     if tool not in TOOLS:
         raise ValueError("Unsupported tool")
     row = conn.execute("SELECT * FROM tool_updates WHERE tool=%s FOR UPDATE", (tool,)).fetchone()
-    if not row or row["status"] in ("queued", "applying") or not newer(row["latest_version"], row["current_version"]):
+    if not row or row["status"] not in ("available", "failed") or not newer(row["latest_version"], row["current_version"]):
         raise ValueError("No verified newer release available or update already queued")
     conn.execute("UPDATE tool_updates SET requested_version=latest_version, requested_at=now(), status='queued', last_error=NULL WHERE tool=%s", (tool,))
     return row["latest_version"]

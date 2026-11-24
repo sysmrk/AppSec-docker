@@ -27,7 +27,11 @@ class UIContractTests(unittest.TestCase):
         self.assertEqual(result["summary"]["total"], 0)
         for sql, params in conn.calls:
             self.assertIn("team_members", sql)
-            self.assertEqual(params, (False, "test-user"))
+            if "FROM security_jobs sj" in sql:
+                self.assertIn("sj.requested_by", sql)
+                self.assertEqual(params, (False, "test-user", "test-user"))
+            else:
+                self.assertEqual(params, (False, "test-user"))
 
     def test_ui_has_real_api_paths_without_fake_data(self):
         root = Path(__file__).resolve().parents[1] / "runner/appsecctl/webui"

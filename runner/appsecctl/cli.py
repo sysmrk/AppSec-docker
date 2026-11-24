@@ -113,10 +113,11 @@ def prepare_trivy_database(trivy_image: str, repositories: str, *, java: bool = 
 def trivy_runtime() -> tuple[str, list[str], list[str]]:
     with db.connect() as conn:
         sources = image_sources.configured_sources(conn)
-        trivy_image = tool_updates.scanner_reference(conn, "trivy")
-    if sources is None:
+        active_version = tool_updates.active(conn, "trivy")
+        trivy_image = tool_updates.image_ref("trivy", active_version)
+    if sources is None and not active_version:
         return trivy_image, [], trivy_database_options()
-    resolved = image_sources.pull_ordered(image_sources.ordered_candidates(sources, [trivy_image]))
+    resolved = tool_updates.resolve_scanner("trivy", trivy_image, sources, active_version)
     options = trivy_database_options(sources)
     db_refs = image_sources.artifact_repositories(sources, env("TRIVY_DB_REPOSITORY", "ghcr.io/aquasecurity/trivy-db:2"))
     prepare_trivy_database(resolved, db_refs)
@@ -316,6 +317,12 @@ def patch_from_scan(scan_id: str) -> tuple[str, str]:
                          (Jsonb({"copa_version": copa_version, "buildkit_version": buildkit_info,
                                  "source_image": source_image_ref}), patch_id))
         with patch_sources.policy_environment(source_image_ref, copa_path) as environment:
+            if environment and environment.get("EXPERIMENTAL_BUILDKIT_SOURCE_POLICY"):
+                source_rules = json.loads(Path(environment["EXPERIMENTAL_BUILDKIT_SOURCE_POLICY"]).read_text())["rules"]
+                helper_refs = sorted({rule["updates"]["identifier"] for rule in source_rules if rule["action"] == "CONVERT"})
+                with db.connect() as conn:
+                    conn.execute("UPDATE patch_runs SET execution_evidence=COALESCE(execution_evidence,'{}'::jsonb) || %s WHERE id=%s",
+                                 (Jsonb({"helper_sources": helper_refs}), patch_id))
             run_command(command, capture_errors=True, environment=environment)
         patched_id = scan_evidence.local_image_id(local_patched_ref)
         if patched_id == expected_id:

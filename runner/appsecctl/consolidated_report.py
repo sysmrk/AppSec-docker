@@ -128,17 +128,24 @@ def unknown_detail(v):
     return "Trivy severity unavailable; manual triage. " + ("Vendor: " + ratings + ". " if ratings else "") + ("CVSS: " + ", ".join(scores) if scores else "No CVSS in scan evidence.")
 
 
-def comparison_table(rows, verified):
+def comparison_table(rows, verified, patched=None):
     if not rows:
         return '<p class="muted">No recorded in-scope findings, or no verified results.</p>'
     body = []
+    versions = package_inventory(patched) if verified else {}
     for old, new, state in rows:
         v = new or old
         sev = (old["severity"] + " → " + new["severity"]) if old and new and old["severity"] != new["severity"] else v["severity"]
         details = unknown_detail(v) or (unknown_detail(old) if old else "")
+        if v["severity"] == "UNKNOWN" or (old and old["severity"] == "UNKNOWN"):
+            details += " Source: " + str(v.get("severity_source") or "not supplied") + ". " + str(v.get("url") or "Advisory URL unavailable")
+            if str(v["cve"]).startswith("TEMP-"):
+                details += ". Temporary vendor/advisory ID, not an assigned CVE ID."
+        key = (v["class"], v["type"], stable_target(str(v["target"] or "")), v["package"])
+        installed_after = new["installed"] if new else ", ".join(sorted(versions.get(key, []))) or None
         body.append("<tr>" + "".join("<td>" + e(x) + "</td>" for x in (
             v["cve"], sev, v["package"], old["installed"] if old else None,
-            new["installed"] if new else None, v["fixed"] or "No known fix", v["target"]))
+            installed_after, v["fixed"] or "No known fix", v["target"]))
             + '<td><span class="finding-state ' + ("fixed" if state == "Fixed" else "pending-state") + '">' + e(state)
             + '</span></td><td>' + e(details or v["status"] or "—") + "</td></tr>")
     return ('<p class="muted">Fixed = no longer detected in a verified comparable rescan; not proof of remediation. '
@@ -148,24 +155,28 @@ def comparison_table(rows, verified):
             '</tr></thead><tbody>' + "".join(body) + "</tbody></table></div>")
 
 
-def package_upgrades(original, patched, verified):
+def package_inventory(scan):
+    data = defaultdict(set)
+    for target in ((scan or {}).get("raw_report") or {}).get("Results", []):
+        for pkg in target.get("Packages") or []:
+            if pkg.get("Name") and pkg.get("Version"):
+                data[(target.get("Class") or "", target.get("Type") or "", stable_target(str(target.get("Target") or "")), pkg["Name"])].add(str(pkg["Version"]))
+    return data
+
+
+def package_upgrades(original, patched, verified, finding_rows=()):
     if not verified:
         return '<p class="muted">Package comparison requires verified scans.</p>'
-    def inventory(scan):
-        data = defaultdict(set)
-        for target in (scan.get("raw_report") or {}).get("Results", []):
-            for pkg in target.get("Packages") or []:
-                if pkg.get("Name") and pkg.get("Version"):
-                    data[(target.get("Class"), target.get("Type"), stable_target(str(target.get("Target") or "")), pkg["Name"])].add(str(pkg["Version"]))
-        return data
-    before, after = inventory(original), inventory(patched)
+    before, after = package_inventory(original), package_inventory(patched)
     if not before or not after:
         return '<p class="muted">Full package inventories not available in this historical scan.</p>'
+    removed = Counter((v["class"], v["type"], stable_target(str(v["target"] or "")), v["package"])
+                      for v, new, state in finding_rows if v and state == "Fixed")
     rows = []
     for key in sorted(before.keys() & after.keys(), key=str):
         if before[key] != after[key]:
-            rows.append("<tr>" + "".join("<td>" + e(x) + "</td>" for x in (key[-1], ", ".join(sorted(before[key])), ", ".join(sorted(after[key])), key[2])) + "</tr>")
-    return '<p class="muted">Version changes from actual Trivy package inventories; added/removed inventory keys: ' + str(len(after.keys()-before.keys())) + '/' + str(len(before.keys()-after.keys())) + '.</p><table><thead><tr><th>Package</th><th>Before</th><th>After</th><th>Target</th></tr></thead><tbody>' + "".join(rows) + "</tbody></table>"
+            rows.append("<tr>" + "".join("<td>" + e(x) + "</td>" for x in (key[-1], ", ".join(sorted(before[key])), ", ".join(sorted(after[key])), key[2], removed[key])) + "</tr>")
+    return '<p class="muted">Version changes from actual Trivy package inventories; added/removed inventory keys: ' + str(len(after.keys()-before.keys())) + '/' + str(len(before.keys()-after.keys())) + '.</p><table><thead><tr><th>Package</th><th>Before</th><th>After</th><th>Target</th><th>Findings no longer detected</th></tr></thead><tbody>' + "".join(rows) + "</tbody></table>"
 
 
 
@@ -252,7 +263,7 @@ def render(resource_id: str, payload: dict[str, Any]) -> str:
     publication += '<p>Patch approval: ' + e(approval.get("patch_approver")) + ' · ' + e(approval.get("approved_at")) + '<br>Publish approval: ' + e(approval.get("publish_approver")) + ' · ' + e(approval.get("publish_approved_at")) + '<br>Risk acceptance reason: ' + e(approval.get("risk_reason") or "Not recorded") + '</p>'
     publication += '<p>Patch execution: ' + e(patch.get("status")) + ' · ' + e(patch.get("started_at")) + ' → ' + e(patch.get("finished_at")) + '<br>Rescan: ' + e(patched.get("status") if patched else None) + '<br>Security recommendation: ' + e(recommended) + '</p>'
     exec_evidence = patch.get("execution_evidence") or {}
-    publication += '<p>Copa: ' + e(exec_evidence.get("copa_version")) + '<br>BuildKit: ' + e(exec_evidence.get("buildkit_version")) + '<br>Published image identity verified by pull-by-digest: ' + e(exec_evidence.get("remote_identity_verified") if exec_evidence.get("remote_identity_verified") else "Not recorded / not verified") + '</p>'
+    publication += '<p>Copa: ' + e(exec_evidence.get("copa_version")) + '<br>BuildKit: ' + e(exec_evidence.get("buildkit_version")) + '<br>Helper sources: ' + e(", ".join(exec_evidence.get("helper_sources") or []) or None) + '<br>Published image identity verified by pull-by-digest: ' + e(exec_evidence.get("remote_identity_verified") if exec_evidence.get("remote_identity_verified") else "Not recorded / not verified") + '</p>'
     publication += '<p>Local patched image: ' + e(patch.get("local_image_ref")) + '</p>'
     publication += '<p>Publication status: ' + e(patch.get("publication_status") or "not published") + '</p>'
     if patch.get("publication_status") == "published":
@@ -273,8 +284,8 @@ def render(resource_id: str, payload: dict[str, Any]) -> str:
         ' · Remaining with a known fix: ' + e(sum(bool(v["fixed"]) for v in final_rows) if verified_pair else None) +
         ' · Known-fix disappearance rate: ' + e(round(removed_fixable/initial_fixable*100, 2) if verified_pair and initial_fixable else None) + '%</p>' +
         '<p class="muted">UNKNOWN means Trivy did not assign a severity, not that the finding is harmless. Review vendor ratings/CVSS and advisory IDs; no automatic downgrade.</p>' +
-        comparison_table(rows, verified_pair) + "</section>" +
-        '<section><h2>Package Upgrade Summary</h2>' + package_upgrades(original, patched, verified_pair) + '</section>' +
+        comparison_table(rows, verified_pair, patched) + "</section>" +
+        '<section><h2>Package Upgrade Summary</h2>' + package_upgrades(original, patched, verified_pair, rows) + '</section>' +
         '<footer>Based on persisted Trivy findings. An absent or failed rescan is never reported as zero vulnerabilities. '
         'A recommendation is not a guarantee of security. Generated by AppSec Control Center.</footer>'
     )

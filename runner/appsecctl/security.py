@@ -65,7 +65,7 @@ def prepare_repo(target: str, job_id: str, credentials=None, full_history=False)
         if exit_code:
             raise RuntimeError("GIT_CLONE_FAILED: git clone returned an error")
     except subprocess.TimeoutExpired:
-        raise RuntimeError("GIT_CLONE_TIMEOUT: git clone exceeded 120 seconds") from None
+        raise RuntimeError("GIT_CLONE_TIMEOUT: git clone exceeded its configured timeout") from None
     except OSError:
         raise RuntimeError("GIT_CLONE_FAILED: could not start git") from None
     finally:
@@ -151,8 +151,9 @@ def execute_security_job(job_id: str) -> str:
             from . import tool_updates
             with db.connect() as conn:
                 configured = image_sources.configured_sources(conn)
-                requested_scanner = tool_updates.scanner_reference(conn, "gitleaks")
-            scanner = image_sources.runtime_image(requested_scanner)
+                active_version = tool_updates.active(conn, "gitleaks")
+                requested_scanner = tool_updates.image_ref("gitleaks", active_version)
+            scanner = tool_updates.resolve_scanner("gitleaks", requested_scanner, configured, active_version)
             scan_exit_code = run_command(
                 [
                     "docker",
@@ -182,7 +183,13 @@ def execute_security_job(job_id: str) -> str:
             if scan_exit_code not in (0, 17):
                 raise RuntimeError("GITLEAKS_FAILED: scanner returned an unexpected exit status")
             try:
-                raw = redact_gitleaks_report(json.loads(report_path.read_text(encoding="utf-8")))
+                decoded = json.loads(report_path.read_text(encoding="utf-8"))
+                # Some Gitleaks releases encode an empty finding slice as null.
+                if decoded is None and scan_exit_code == 0:
+                    decoded = []
+                raw = redact_gitleaks_report(decoded)
+                if (scan_exit_code == 17) != bool(raw):
+                    raise ValueError("Scanner exit status does not agree with the report")
             except (OSError, ValueError):
                 raise RuntimeError("GITLEAKS_REPORT: expected a readable JSON report") from None
             report_path.write_text(json.dumps(raw, indent=2), encoding="utf-8")
