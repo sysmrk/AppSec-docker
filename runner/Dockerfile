@@ -1,4 +1,5 @@
-FROM python:3.12-slim
+ARG RUNNER_BASE_IMAGE=python:3.12-slim
+FROM ${RUNNER_BASE_IMAGE}
 
 ARG COPA_VERSION=0.14.1
 
@@ -23,7 +24,8 @@ RUN curl --retry 5 --retry-all-errors -fsSL \
 WORKDIR /app
 
 COPY runner/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+ARG PIP_INDEX_URL=https://pypi.org/simple
+RUN pip install --no-cache-dir --index-url "${PIP_INDEX_URL}" -r requirements.txt
 
 COPY runner/appsecctl ./appsecctl
 COPY alembic.ini ./alembic.ini

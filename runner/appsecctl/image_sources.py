@@ -38,6 +38,8 @@ def normalize_endpoint(value: str) -> str:
         raw = raw[8:]
     host, sep, prefix = raw.partition("/")
     host = normalize_host(host)
+    if image_registry(host + "/probe") is None:
+        raise ValueError("Use an explicit registry hostname (FQDN, localhost, or host:port)")
     if sep and not re.fullmatch(r"[a-z0-9]+(?:[._-][a-z0-9]+)*(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)*", prefix):
         raise ValueError("Enter a registry hostname and optional lowercase repository prefix")
     return host + ("/" + prefix if sep else "")
@@ -94,6 +96,7 @@ def ordered_candidates(sources: list[dict[str, Any]] | None, references: list[st
 
 
 def candidates(conn: Any, requested: str) -> list[dict[str, Any]]:
+    canonical_ref(requested)
     return ordered_candidates(configured_sources(conn), [requested])
 
 

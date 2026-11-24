@@ -10,6 +10,7 @@ import subprocess
 from typing import Any
 
 _CATALOG = [
+    ("PATCH_SOURCE_POLICY", r"^PATCH_SOURCE_POLICY:|source denied by policy", "Image source is not approved for this patch", "Review the enabled registry endpoints and supported Copa helper mapping. Start a new scan if the original source changed.", False),
     ("SOURCE_PULL_FAILED", r"^SOURCE_PULL_FAILED:", "Image unavailable from approved sources", "Check each source's HTTP code, image path, permissions and TLS; no Docker Hub fallback was attempted.", True),
     ("REGISTRY_PUSH_DENIED", r"^REGISTRY_PUSH_DENIED:", "Registry push permission revoked", "Have an admin review the destination registry authorization.", False),
     ("TRIVY_JAVA_DB", r"java db update failed|unable to initialize the java db|failed to (?:download|update) (?:the )?java db", "Trivy Java database unavailable", "Check TRIVY_JAVA_DB_REPOSITORY, registry access and the Trivy cache.", True),
@@ -20,6 +21,7 @@ _CATALOG = [
     ("GITLEAKS_FAILED", r"^GITLEAKS_FAILED:", "Gitleaks execution failed", "Check the scanner version, entrypoint and workspace permissions.", False),
     ("GITLEAKS_REPORT", r"^GITLEAKS_REPORT:", "Gitleaks report is missing or invalid", "Check report volume permissions and the scanner JSON format.", False),
     ("MFA_REQUIRED", r"mfa_required|authenticator code.*required", "Authenticator verification required", "Enter your 6-digit authenticator code or one of your one-time recovery codes.", False),
+    ("REGISTRY_FORBIDDEN", r"403 Forbidden|status code: 403|status: 403", "Registry access forbidden", "Check approved source availability, registry permissions and egress policy.", True),
     ("REGISTRY_AUTH", r"(unauthorized|authentication required|denied: requested access|401 Unauthorized|no basic auth credentials)", "Registry authentication failed", "Check registry credentials, permissions and image namespace.", False),
     ("REGISTRY_NOT_FOUND", r"(manifest unknown|manifest not found|name unknown|pull access denied|404 Not Found|repository does not exist)", "Container image not found", "Check the repository, tag/digest and registry hostname.", False),
     ("DOCKER_UNAVAILABLE", r"(cannot connect to the docker daemon|docker daemon.*not running|/var/run/docker.sock|connection refused.*docker)", "Docker execution service unavailable", "Ask an administrator to check Docker and the isolated scanning worker.", True),

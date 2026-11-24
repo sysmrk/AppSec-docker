@@ -321,7 +321,7 @@
       },"outline small"));
       body.appendChild(tr);
     }
-    if(!rows.length)empty(body,5,"No source policy configured. Direct image pulls remain enabled until you add your first source.");
+    if(!rows.length)empty(body,5,"No sources configured. Direct pulls are possible only if APPSEC_REQUIRE_IMAGE_SOURCES is false.");
   }
 
   async function refreshRegistries() {
