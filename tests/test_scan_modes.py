@@ -78,6 +78,20 @@ class ScanModeTests(unittest.TestCase):
         command.assert_called_once()
         self.assertEqual(command.call_args.args[0][:2], ["copa", "patch"])
         self.assertTrue(image_ref.startswith("example.org/team/image:patched-"))
+        self.assertTrue(command.call_args.kwargs["capture_errors"])
+
+    def test_copa_failure_persists_concrete_diagnostic(self):
+        scan = {"status": "success", "image_ref": "example.org/team/image:1",
+                "pipeline_id": "pipeline", "report_path": "/reports/scan.json"}
+        failure = subprocess.CalledProcessError(
+            1, ["copa", "patch"], stderr="failed to solve: registry returned 403 Forbidden")
+        with patch.object(cli, "db") as database, \
+             patch.object(cli, "run_command", side_effect=failure) as command:
+            database.get_scan.return_value = scan
+            with self.assertRaises(subprocess.CalledProcessError):
+                cli.patch_from_scan("scan")
+            self.assertTrue(command.call_args.kwargs["capture_errors"])
+            self.assertIn("403 Forbidden", database.update_patch_failed.call_args.args[2])
 
     def test_publication_without_approved_job_is_blocked(self):
         with patch.object(cli, "db") as database, patch.object(cli, "run_command") as command:

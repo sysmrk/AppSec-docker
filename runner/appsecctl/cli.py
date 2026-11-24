@@ -222,7 +222,9 @@ def patch_from_scan(scan_id: str) -> tuple[str, str]:
     ]
 
     try:
-        run_command(command)
+        # Capture Copa stderr so a failed patch has a concrete diagnostic in
+        # the persisted patch/job error instead of only an exit status.
+        run_command(command, capture_errors=True)
         with db.connect() as conn:
             db.update_patch_success(conn, patch_id, None)
             conn.execute("""
@@ -230,8 +232,10 @@ def patch_from_scan(scan_id: str) -> tuple[str, str]:
                 WHERE id=%s
             """, (local_patched_ref, patch_id))
     except BaseException as exc:
+        message = safe_message(exc, "patch_build")
+        print("Patch build failed: " + message, flush=True)
         with db.connect() as conn:
-            db.update_patch_failed(conn, patch_id, safe_message(exc, 'patch'))
+            db.update_patch_failed(conn, patch_id, message)
         raise
 
     print(json.dumps({"patch_id": patch_id, "patched_image": local_patched_ref,

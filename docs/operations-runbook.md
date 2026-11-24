@@ -83,3 +83,5 @@ Open Registries to add approved mirror hostnames in numeric priority order. Test
 ## Upgrade: build the migration runner before applying Alembic revisions
 
 The start command rebuilds appsec-runner from the current checkout before invoking migrate, then starts the API and workers. This prevents an existing cached runner from using stale migration files. Stop the previous platform and back up the database and evidence before upgrading. If a worker reports UndefinedTable for pending_image_removals, check the PostgreSQL alembic_version: revision 0015_history_purge must be present for this release. Rebuild the runner and run migrate before restarting the worker. Keep all data volumes. A restarting or stopped required worker is a doctor failure, not a healthy deployment.
+
+Copa patch failures capture stderr and persist a bounded, sanitized diagnostic in the patch and job error. Existing historical failures are unchanged. Inspect worker and BuildKit logs and validate the executor, registry access and package repositories before submitting a new approved workflow; never retry an uncertain publication automatically.
