@@ -153,6 +153,7 @@ def pull_ordered(ordered: list[dict[str, Any]]) -> str:
         raise RuntimeError("SOURCE_PULL_FAILED: All trusted image sources are disabled or none match; enable a compatible source in Registries.")
     for item in ordered:
         ref = item["ref"]
+        print("IMAGE_SOURCE_TRY priority=%s source=%s ref=%s" % (item["priority"], item["name"], ref), flush=True)
         try:
             result = subprocess.run(["docker", "pull", ref], capture_output=True,
                                     text=True, timeout=180, check=False)
@@ -166,6 +167,7 @@ def pull_ordered(ordered: list[dict[str, Any]]) -> str:
             print("IMAGE_SOURCE_FAILED priority=%s source=%s reason=%s" %
                   (item["priority"], item["name"], reason), flush=True)
         except subprocess.TimeoutExpired:
+            print("IMAGE_SOURCE_FAILED priority=%s source=%s reason=pull timeout after 180 seconds" % (item["priority"], item["name"]), flush=True)
             attempts.append("%s (%s): pull timeout after 180 seconds" %
                             (item["name"], item["priority"]))
         except OSError as exc:

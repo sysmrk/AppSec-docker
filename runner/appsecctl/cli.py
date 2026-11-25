@@ -6,6 +6,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
@@ -26,10 +27,45 @@ def env(name: str, default: str) -> str:
     return os.environ.get(name, default)
 
 
-def run_command(command: list[str], *, capture_errors: bool = False, environment: dict[str, str] | None = None) -> None:
+def run_command(command: list[str], *, capture_errors: bool = False, environment: dict[str, str] | None = None,
+                timeout: int | None = None) -> None:
     print("+ " + " ".join(command), flush=True)
     subprocess.run(command, check=True, stderr=subprocess.PIPE if capture_errors else None,
-                   text=capture_errors, env=environment)
+                   text=capture_errors, env=environment, timeout=timeout)
+
+
+def timeout_seconds(name: str, default: int) -> int:
+    try:
+        value = int(env(name, str(default)))
+        if not 1 <= value <= 86400:
+            raise ValueError()
+        return value
+    except ValueError:
+        raise RuntimeError("Invalid timeout configuration: " + name) from None
+
+
+def run_trivy_command(command: list[str], stage: str, timeout: int) -> None:
+    """Bound Docker client execution and remove only this scanner on timeout."""
+    name = "appsec-trivy-" + uuid4().hex
+    command = command[:2] + ["--name", name, "--label", "appsec.managed=trivy"] + command[2:]
+    started = time.monotonic()
+    print(f"SCAN_STAGE_START stage={stage} container={name} timeout={timeout}s", flush=True)
+    try:
+        run_command(command, capture_errors=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        try:
+            removed = subprocess.run(["docker", "rm", "-f", name], capture_output=True,
+                                     text=True, timeout=30, check=False)
+            if removed.returncode and "no such container" not in (removed.stderr or "").lower():
+                print(f"SCAN_CLEANUP_FAILED container={name}; inspect manually", flush=True)
+        except (OSError, subprocess.SubprocessError):
+            print(f"SCAN_CLEANUP_FAILED container={name}; inspect manually", flush=True)
+        raise RuntimeError(f"SCAN_STAGE_TIMEOUT: {stage} exceeded {timeout}s; scanner container {name}") from None
+    except subprocess.CalledProcessError as exc:
+        print(f"SCAN_STAGE_FAILED stage={stage} reason={safe_detail(exc.stderr)}", flush=True)
+        raise
+    else:
+        print(f"SCAN_STAGE_DONE stage={stage} seconds={time.monotonic()-started:.1f}", flush=True)
 
 
 def report_name(prefix: str, identifier: str) -> str:
@@ -97,13 +133,17 @@ def prepare_trivy_database(trivy_image: str, repositories: str, *, java: bool = 
         cmd = docker_base() + ["--pull=never", "-v", f"{cache}:/root/.cache/trivy",
                                trivy_image, "image", download, flag, ref]
         try:
-            run_command(cmd, capture_errors=True)
+            run_trivy_command(cmd, f"trivy-{stage}-db", timeout_seconds("APPSEC_TRIVY_DB_TIMEOUT_SECONDS", 180))
             print(f"TRIVY_DB_READY kind={stage} repository={ref} (download or fresh cache)", flush=True)
             return
         except subprocess.CalledProcessError as exc:
             reason = safe_detail(exc.stderr)
         except OSError as exc:
             reason = type(exc).__name__
+        except RuntimeError as exc:
+            if not str(exc).startswith("SCAN_STAGE_TIMEOUT:"):
+                raise
+            reason = str(exc)
         attempts.append(f"{ref}: {reason}")
         print(f"TRIVY_DB_SOURCE_FAILED kind={stage} repository={ref} reason={reason}", flush=True)
     code = "TRIVY_JAVA_DB" if java else "TRIVY_DB"
@@ -169,7 +209,7 @@ def scan_image(image_ref: str, phase: str, pipeline_id: str | None = None) -> st
         image_ref,
         ]
 
-        run_command(command, capture_errors=True)
+        run_trivy_command(command, f"vulnerability-scan-{phase}", timeout_seconds("APPSEC_TRIVY_SCAN_TIMEOUT_SECONDS", 900))
         report = json.loads(report_path.read_text(encoding="utf-8"))
         scan_evidence.validate_report(report, expected_id)
         if scan_evidence.local_image_id(image_ref) != expected_id:
@@ -225,7 +265,7 @@ def generate_sbom(image_ref: str, phase: str, scan_id: str, pipeline_id: str | N
     ]
 
     expected_id = scan_evidence.local_image_id(image_ref)
-    run_command(command, capture_errors=True)
+    run_trivy_command(command, f"sbom-{phase}", timeout_seconds("APPSEC_SBOM_TIMEOUT_SECONDS", 600))
     document = json.loads(sbom_path.read_text(encoding="utf-8"))
     if document.get("bomFormat") != "CycloneDX" or not isinstance(document.get("metadata"), dict):
         raise RuntimeError("SCAN_EVIDENCE_INVALID: SBOM is missing valid CycloneDX metadata")
@@ -418,8 +458,10 @@ def run_pipeline(image_ref: str, project_id: str | None = None, mode: str = "sca
             conn.execute("UPDATE pipeline_jobs SET pipeline_id=%s WHERE id=%s", (pipeline_id, job_id))
 
     try:
+        print(f"SCAN_STAGE_START stage=image-pull pipeline={pipeline_id}", flush=True)
         with db.connect() as conn:
             resolved_image = image_sources.pull_image(conn, image_ref)
+        print(f"SCAN_STAGE_DONE stage=image-pull pipeline={pipeline_id} source={resolved_image}", flush=True)
         original_scan_id = scan_image(resolved_image, "original", pipeline_id)
         generate_sbom(resolved_image, "original", original_scan_id, pipeline_id)
         policy_scan_id = original_scan_id
@@ -605,7 +647,12 @@ def write_pipeline_report_if_ready(pipeline_id: str) -> None:
 def print_summary(pipeline_id: str) -> None:
     with db.connect() as conn:
         summary = db.pipeline_summary(conn, pipeline_id)
-    print(json.dumps(summary, indent=2, default=str))
+    if env("APPSEC_SUMMARY_COMPACT", "false").lower() == "true":
+        print(json.dumps({"pipeline_id": pipeline_id, "status": (summary.get("pipeline") or {}).get("status"),
+                          "scans": [{k: scan.get(k) for k in ("id", "phase", "status", "critical_count", "high_count", "medium_count", "low_count", "unknown_count")} for scan in summary.get("scans", [])],
+                          "artifact_count": len(summary.get("artifacts", [])), "report_count": len(summary.get("reports", []))}, default=str), flush=True)
+    else:
+        print(json.dumps(summary, indent=2, default=str))
 
 
 def ci_image(image_ref: str, mode: str = "scan") -> int:

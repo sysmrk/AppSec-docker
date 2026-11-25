@@ -15,6 +15,7 @@ from .errors import safe_detail
 
 
 def main() -> int:
+    os.environ["APPSEC_SUMMARY_COMPACT"] = "true"
     poll_seconds = int(os.environ.get("WORKER_POLL_SECONDS", "5"))
     queues = {item.strip() for item in os.environ.get("WORKER_QUEUES", "image,security").split(",") if item.strip()}
     log_event("worker.started", poll_seconds=poll_seconds, queues=sorted(queues))

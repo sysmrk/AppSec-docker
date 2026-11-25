@@ -39,6 +39,17 @@ class ScanModeTests(unittest.TestCase):
                 cli.prepare_trivy_database("mirror.example/aquasec/trivy:1", "a.example/db:2")
         self.assertEqual(runner.call_count, 1)
 
+    def test_scanner_timeout_cleans_only_named_container(self):
+        with patch.object(cli, "run_command", side_effect=subprocess.TimeoutExpired(["docker"], 5)) as run, \
+             patch.object(cli.subprocess, "run", return_value=MagicMock(returncode=0)) as cleanup:
+            with self.assertRaisesRegex(RuntimeError, "SCAN_STAGE_TIMEOUT: sbom-original"):
+                cli.run_trivy_command(["docker", "run", "--rm", "trivy"], "sbom-original", 5)
+            args = run.call_args.args[0]
+            self.assertEqual(run.call_args.kwargs["timeout"], 5)
+            name = args[args.index("--name")+1]
+            self.assertTrue(name.startswith("appsec-trivy-"))
+            self.assertEqual(cleanup.call_args.args[0], ["docker", "rm", "-f", name])
+
     def test_java_database_repository_is_forwarded(self):
         with patch.dict("os.environ", {"TRIVY_JAVA_DB_REPOSITORY": "registry.example.org/java-db:1"}):
             self.assertIn("TRIVY_JAVA_DB_REPOSITORY=registry.example.org/java-db:1", cli.trivy_database_options())
