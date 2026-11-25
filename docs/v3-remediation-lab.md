@@ -23,3 +23,13 @@ Source checked: https://github.com/project-copacetic/copacetic/blob/v0.15.0/pkg/
 ## Experimental Python and Node candidates
 
 Same isolated host and exact-source prerequisites apply. Explicitly set APPSEC_ENABLE_LIBRARY_LAB=true in the docker compose exec command (in addition to APPSEC_ENABLE_REMEDIATION_LAB=true). Use --strategy python_in_image or node_in_image and optionally --library-level minor. Default is patch; major upgrades are not enabled. The lab selects only installed library groups with a single known installation path, matching package inventory, plain three-component release versions and an exact common scanner-reported fix for all findings in the group. Special Python packages, nested/vendor paths, ambiguous instances, npm internals and unknown Node runtime are excluded. This is intentionally narrower than upstream capability. It records exclusions by reason; original reports are immutable. The exact language helper is resolved through the existing registry priority, never a wildcard or direct fallback. Upstream uses public package sources, including hardcoded npm endpoints, and may run package installation scripts; only use a disposable lab with approved egress and no sensitive data. No private package credentials are forwarded by AppSec. Do not interpret package download or build success as dependency compatibility. Candidate validation and frozen-DB rescanning are still required. No web execution or publication is exposed. Upstream special behavior such as certifi upgrading to latest is excluded from this first lab.
+
+### Dependency consistency check (optional)
+
+On the isolated v3 worker, stage the candidate JSON file in a private location, then run:
+
+    docker compose exec -T -e APPSEC_ENABLE_DEPENDENCY_LAB=true worker \\
+      python -m appsecctl.dependency_check --confirm-isolated-lab \\
+      --candidate /private/candidate.json
+
+The verifier uses the immutable local candidate ID and executes pip check in each recognized Python installation environment or npm ls --all --offline --ignore-scripts --omit=dev in each recognized application directory. It uses no host bind mount, socket, registry pull or network, drops capabilities, uses a non-root UID and bounds resources. Runtime code is still untrusted; use a disposable isolated host. An unavailable runtime, permissions issue, dependency conflict or timeout requires review. A successful check is only package-manager consistency, not full compatibility, fix validation, artifact integrity or a functional smoke test. Raw process output is not returned because it may expose environment-specific data. Some images lack the required executable or cannot run as the restricted UID; they remain unverified. No registry publication is authorized.

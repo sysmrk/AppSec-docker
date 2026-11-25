@@ -22,3 +22,13 @@ Next: isolate and benchmark comprehensive OS candidate generation; verify native
 The initial isolated candidate generation CLI is now available: [Remediation lab](v3-remediation-lab.md). It is not connected to the planner or publication workflow. Actual candidate coverage and functionality are not yet measured.
 
 Experimental Python/npm candidate generation is now implemented in the isolated lab. Its eligibility filter is deliberately narrower than the planning classification; the planner does not authorize or predict successful execution. See [lab](v3-remediation-lab.md).
+
+## Local AI provider (optional)
+
+The host-side assistant supports an already installed local Ollama model through the fixed loopback HTTP endpoint. It reads an exported full pipeline summary (see [research](v3-remediation-research.md)), builds the deterministic plan, and sends at most 25 sanitized package groups per request. Only package names, ecosystem, bounded CVE/version tokens, severity counts and allowed strategy IDs are sent. No repository URL, image reference, paths, raw report, credentials or environment variables are sent. No remote provider, model download, proxy or redirect is supported. Ensure the Ollama service really is local and authorized; it may retain prompts or have its own external configuration.
+
+    PYTHONPATH=../AppSec-v3/runner python3 -m appsecctl.ai_assist \\
+      --summary pipeline-summary.json --model YOUR_LOCAL_MODEL \\
+      --stage original --confirm-local-ai > ai-advice.json
+
+Use --offset to review further groups, or --stage residual for linked verified rescans. The response accepts only action_id, an allowlisted strategy and a fixed reason code. The planner rejects unknown, duplicate, out-of-batch or disallowed selections. Model-generated prose, commands, package versions, metrics and approval fields are rejected. Output is a separate JSON advisory; it cannot modify scans, build images or authorize publication. This is an initial provider adapter, not automatic integration into the UI or MCP client transport. The existing scoped MCP endpoints remain available for independent external AI clients. Real-model performance is unverified.

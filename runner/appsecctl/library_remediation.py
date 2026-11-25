@@ -73,7 +73,11 @@ def prepare(scan, strategy, level, image_config):
     output.pop("_appsec", None)
     output["Results"] = []
     records, helpers, skipped = [], set(), Counter()
-    targets = []
+    global_instances = defaultdict(set)
+    for target in raw["Results"]:
+        if target["Class"] == "lang-pkgs" and target["Type"] == TYPES[strategy]:
+            for v in target.get("Vulnerabilities") or []:
+                global_instances[v["PkgName"]].add((target["Target"], str(v.get("PkgPath") or ""), v["InstalledVersion"]))
     for target in raw["Results"]:
         if target["Class"] != "lang-pkgs" or target["Type"] != TYPES[strategy]:
             continue
@@ -89,7 +93,8 @@ def prepare(scan, strategy, level, image_config):
         for (name, path), entries in sorted(grouped.items()):
             reason, helper = None, None
             versions = {v["InstalledVersion"] for v in entries}
-            if len(paths[name]) != 1 or not versions <= inventory.get(audit.target_key(target)+(name,), set()):
+            if (len(paths[name]) != 1 or len(global_instances[name]) != 1
+                    or not versions <= inventory.get(audit.target_key(target)+(name,), set())):
                 reason = "ambiguous_package_inventory"
             elif not clean_path(path):
                 reason = "missing_or_unsafe_package_path"

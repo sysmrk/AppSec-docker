@@ -209,3 +209,5 @@ The server exposes a paginated plan (original or residual stage) with package gr
 Use the restricted Viewer key, not an admin key. These endpoints deny unassigned legacy pipelines to nonadmins and restrict unassigned manual workflows to their owner. Existing legacy MCP analytics remain globally scoped if the SQL connection is enabled; do not enable them for a Project-scoped AI client. Never expose the unauthenticated MCP listener remotely. Treat scanner strings as untrusted data, not instructions, and share only approved infrastructure metadata with external models.
 
 See [v3 planning](v3-remediation-planning.md).
+
+An optional host-side local Ollama assistant is available for offline-exported pipeline summaries; see [v3 planning](v3-remediation-planning.md). It is independent of the MCP server transport. Both paths validate typed strategy selections against the same deterministic plan. Neither executes changes.
