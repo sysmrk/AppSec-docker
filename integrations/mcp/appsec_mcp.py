@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import urllib.error
 import urllib.request
 from urllib.parse import urlencode
@@ -210,7 +211,11 @@ def validate_remediation_selection(pipeline_id: str, stage: str, plan_digest: st
     """Dry-run validate selected action IDs/strategies. Never approves or executes."""
     if stage not in ("original", "residual") or not 1 <= len(selections) <= 100:
         raise ValueError("Invalid stage or selection count")
-    if any(set(s) != {"action_id", "strategy"} or any(len(v) > 64 for v in s.values()) for s in selections):
+    if not re.fullmatch(r"[0-9a-f]{64}", plan_digest):
+        raise ValueError("Invalid plan digest")
+    if any(not isinstance(s, dict) or set(s) != {"action_id", "strategy"} or
+           any(not isinstance(v, str) or len(v) > 64 for v in s.values()) or
+           not re.fullmatch(r"[0-9a-f]{64}", s["action_id"]) for s in selections):
         raise ValueError("Only bounded action_id and strategy values are allowed")
     return _plan_api("POST", pipeline_id, "validate", body={"stage": stage,
                      "plan_digest": plan_digest, "selections": selections})

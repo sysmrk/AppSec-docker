@@ -74,6 +74,30 @@ class WebAPIContractTests(unittest.TestCase):
                 response = client.get("/api/remediation/00000000-0000-0000-0000-000000000002/plan")
                 self.assertEqual(response.status_code,403)
 
+    def test_owner_plan_and_stale_selection(self):
+        from unittest.mock import MagicMock
+        from test_remediation_audit import payload
+        viewer = dict(ADMIN, role="viewer")
+        app.dependency_overrides[current_user] = lambda: viewer
+        conn = MagicMock()
+        with patch("appsecctl.api.db.connect") as connect, patch("appsecctl.api.db.pipeline_summary", return_value=payload()):
+            connect.return_value.__enter__.return_value = conn
+            with TestClient(app) as client:
+                conn.execute.return_value.fetchone.side_effect = [{"project_id":None}, {"project_id":None}, {"owned":1}]
+                url = "/api/remediation/00000000-0000-0000-0000-000000000002"
+                response = client.get(url + "/plan")
+                self.assertEqual(response.status_code,200)
+                self.assertEqual(response.headers["Cache-Control"],"no-store")
+                p = response.json()
+                action = p["actions"][0]
+                selection = {"stage":"original","plan_digest":p["plan_digest"],"selections":[
+                    {"action_id":action["action_id"],"strategy":action["preferred_strategy"]}]}
+                conn.execute.return_value.fetchone.side_effect = [{"project_id":None}, {"project_id":None}, {"owned":1}]
+                self.assertFalse(client.post(url+"/validate",json=selection).json()["execution_authorized"])
+                conn.execute.return_value.fetchone.side_effect = [{"project_id":None}, {"project_id":None}, {"owned":1}]
+                selection["plan_digest"] = "0"*64
+                self.assertEqual(client.post(url+"/validate",json=selection).status_code,409)
+
     def test_patching_cannot_be_queued_without_explicit_opt_in(self):
         app.dependency_overrides[current_user] = lambda: ADMIN
         with patch.dict(os.environ, {"APPSEC_PATCH_ENABLED": "false"}):

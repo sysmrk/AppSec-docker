@@ -32,6 +32,19 @@ class MCPContractTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "Unsupported"):
                 self.module._plan_api("GET", "00000000-0000-0000-0000-000000000001", "plan")
 
+    def test_plan_request_is_fixed_scope_and_bounded(self):
+        opener = MagicMock()
+        opener.open.return_value.__enter__.return_value.read.return_value = b'{"status":"planned"}'
+        pid = "00000000-0000-0000-0000-000000000001"
+        with patch.dict(os.environ, {"APPSEC_MCP_PLAN_API_KEY": "test-key", "APPSEC_MCP_PLAN_API": "http://api:8080"}), \
+             patch.object(self.module.urllib.request, "build_opener", return_value=opener):
+            result = self.module.get_remediation_plan(pid, "residual", 10, 1000)
+        self.assertEqual(result, {"status":"planned"})
+        request = opener.open.call_args.args[0]
+        self.assertEqual(request.full_url, "http://api:8080/api/remediation/"+pid+"/plan?stage=residual&offset=10&limit=100")
+        self.assertEqual(request.get_header("X-api-key"),"test-key")
+        self.assertEqual(request.get_method(),"GET")
+
     def test_readonly_session(self):
         cursor = MagicMock()
         cursor.fetchall.return_value = [{"count": 4}]

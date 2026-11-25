@@ -18,3 +18,5 @@ POST /api/remediation/{pipeline_id}/validate accepts exactly stage, plan_digest 
 Optional MCP exposes the same two interfaces using a dedicated Viewer key. Existing global SQL analytics must be explicitly configured and must not be enabled for a project-scoped client. See [MCP](mcp.md). This is a tool interface for an external AI client, not an integrated LLM provider. The platform does not send findings to any external AI service automatically.
 
 Next: isolate and benchmark comprehensive OS candidate generation; verify native package availability and version semantics; evaluate experimental Python/npm helper paths without bypassing approved source mappings. Only promote a candidate after independent frozen-DB comparison, compatibility tests and human approval. Preserve the deterministic plan contract for the Go migration.
+
+The initial isolated candidate generation CLI is now available: [Remediation lab](v3-remediation-lab.md). It is not connected to the planner or publication workflow. Actual candidate coverage and functionality are not yet measured.

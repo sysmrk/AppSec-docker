@@ -74,10 +74,8 @@ def build(payload, stage="original"):
         # Keep multiple versions separate from actionable package resolution.
         # A scan alone cannot identify the correct installation instance.
         uncertain = len(installed) != 1 or not installed[0] or not inventory.get(key) or not set(installed) <= inventory[key]
-        severity_counts = Counter(str(v.get("Severity") or "UNKNOWN").upper() for v in entries)
-        severity_counts = Counter({s: severity_counts[s] for s in RANK}) if set(severity_counts) <= RANK.keys() else Counter(
-            s if s in RANK else "UNKNOWN" for s in (str(v.get("Severity") or "UNKNOWN").upper() for v in entries))
-        severity_counts = {s: n for s, n in severity_counts.items() if n}
+        severity_counts = dict(Counter(
+            s if s in RANK else "UNKNOWN" for s in (str(v.get("Severity") or "UNKNOWN").upper() for v in entries)))
         highest = min(severity_counts, key=lambda s: RANK[s])
         options = []
         for strategy in package_options(cls, kind, known, uncertain):

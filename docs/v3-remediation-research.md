@@ -69,3 +69,5 @@ Acceptance: compare OS-known-fix cohort disappearance under identical evidence, 
 5. Regression, compatibility, security and migration acceptance before v3 release.
 
 Phase 2 initial implementation: [Remediation planning](v3-remediation-planning.md) adds read-only package-group plans, strategy classification, strict selection validation, report and workflow summaries, and scoped MCP tools. Candidate execution and actual comparative benchmark results remain outstanding.
+
+Phase 2 laboratory implementation: [Remediation lab](v3-remediation-lab.md) builds targeted and comprehensive same-release OS candidates from a pinned, approved single-platform source using exact upstream v0.15.0 behavior; real comparative runs remain outstanding.

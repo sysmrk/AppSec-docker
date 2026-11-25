@@ -57,6 +57,8 @@ async def request_logging(request: Request, call_next):
     with HTTP_LATENCY.labels(method=method, path=path).time():
         response = await call_next(request)
     response.headers["X-Request-ID"] = request_id
+    if path.startswith("/api/remediation/"):
+        response.headers["Cache-Control"] = "no-store"
     if path == "/ui" or path.startswith("/ui/"):
         response.headers["Cache-Control"] = "no-store, max-age=0"
         response.headers["X-AppSec-Build"] = BUILD_INFO["revision"]
