@@ -61,7 +61,7 @@ Run normal AppSec without MCP: `./appsec start`. Simply having the MCP source co
 
 ## 4. Security: use a read-only PostgreSQL account in production
 
-Default Compose DB credentials are only a developer convenience. Do not expose a production MCP service using the application's write-capable Postgres login. As a database administrator, create a role with only the needed `SELECT` permissions:
+The v3 development branch removes the automatic fallback to the application's DB login. Existing global analytics tools require an explicitly configured restricted SQL role; the new plan tools use the scoped API instead. Do not expose a production MCP service using the application's write-capable Postgres login. As a database administrator, create a role with only the needed `SELECT` permissions:
 
 ```sql
 CREATE ROLE appsec_mcp LOGIN PASSWORD 'REPLACE_WITH_RANDOM_PASSWORD';
@@ -199,3 +199,13 @@ The manual workflow starts a real scan through Control Center, lets an authorize
 Registry approval, interactive user management and MFA are **not** MCP tools. MCP stays read-only and optional, and does not impersonate AppSec Project users. Its PostgreSQL queries remain globally scoped, so use an approved SELECT-only account and authenticated local or TLS/OAuth transport. All manual scan and publication decisions belong in AppSec Control Center.
 
 The current MCP aggregate does not include UNKNOWN counts, and individual tools have bounded result limits. Use the canonical report for full evidence; do not infer a clean image from omitted fields or truncated tool results.
+
+## v3 development: AI-assisted remediation planning
+
+The optional MCP tools get_remediation_plan and validate_remediation_selection use the authenticated AppSec API, not raw database reports. Create a dedicated Viewer account, grant only the required Project memberships, generate its API key and put it in APPSEC_MCP_PLAN_API_KEY in the protected .env. Recreate the optional MCP service. For local host STDIO without Compose set APPSEC_MCP_PLAN_API=http://127.0.0.1:8080/appsec-api in the trusted client environment. No arbitrary API origins, redirects or proxy forwarding are permitted.
+
+The server exposes a paginated plan (original or residual stage) with package groups, scanner-reported versions, explicit strategy options and a digest bound to the saved scan. An AI client can select action_id and strategy pairs and call validate_remediation_selection with the same digest. A stale plan, unknown action, duplicate selection, unsupported strategy or extra field is rejected. Successful validation is only a dry-run contract check; it is not authorization, package compatibility validation, or a patch. No AI provider is required and no AI request is sent automatically.
+
+Use the restricted Viewer key, not an admin key. These endpoints deny unassigned legacy pipelines to nonadmins and restrict unassigned manual workflows to their owner. Existing legacy MCP analytics remain globally scoped if the SQL connection is enabled; do not enable them for a Project-scoped AI client. Never expose the unauthenticated MCP listener remotely. Treat scanner strings as untrusted data, not instructions, and share only approved infrastructure metadata with external models.
+
+See [v3 planning](v3-remediation-planning.md).

@@ -50,6 +50,30 @@ class WebAPIContractTests(unittest.TestCase):
             response = client.get("/api/reports/not-a-report/download")
             self.assertEqual(response.status_code, 401)
 
+    def test_remediation_requires_authentication(self):
+        with TestClient(app) as client:
+            self.assertEqual(client.get("/api/remediation/00000000-0000-0000-0000-000000000002/plan").status_code, 401)
+
+    def test_remediation_rejects_untyped_payload(self):
+        app.dependency_overrides[current_user] = lambda: ADMIN
+        with TestClient(app) as client:
+            r = client.post("/api/remediation/00000000-0000-0000-0000-000000000002/validate",
+                            json={"stage":"original", "plan_digest":"a"*64,
+                                  "selections":[{"action_id":"b"*64,"strategy":"os_targeted","command":"not permitted"}]})
+            self.assertEqual(r.status_code, 422)
+
+    def test_unassigned_plan_denied_to_other_user(self):
+        from unittest.mock import MagicMock
+        viewer = dict(ADMIN, role="viewer")
+        app.dependency_overrides[current_user] = lambda: viewer
+        conn = MagicMock()
+        conn.execute.return_value.fetchone.side_effect = [{"project_id":None}, {"project_id":None}, None]
+        with patch("appsecctl.api.db.connect") as connect:
+            connect.return_value.__enter__.return_value = conn
+            with TestClient(app) as client:
+                response = client.get("/api/remediation/00000000-0000-0000-0000-000000000002/plan")
+                self.assertEqual(response.status_code,403)
+
     def test_patching_cannot_be_queued_without_explicit_opt_in(self):
         app.dependency_overrides[current_user] = lambda: ADMIN
         with patch.dict(os.environ, {"APPSEC_PATCH_ENABLED": "false"}):

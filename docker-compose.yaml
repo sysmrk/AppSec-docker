@@ -90,7 +90,9 @@ services:
     entrypoint: ["python", "/app/appsec_mcp.py"]
     command: ["--transport", "http"]
     environment:
-      APPSEC_MCP_DATABASE_URL: ${APPSEC_MCP_DATABASE_URL:-postgresql://${POSTGRES_USER:-appsec}:${POSTGRES_PASSWORD:-appsec-change-me}@postgres:5432/${POSTGRES_DB:-appsec}}
+      APPSEC_MCP_DATABASE_URL: ${APPSEC_MCP_DATABASE_URL:-}
+      APPSEC_MCP_PLAN_API: http://api:8080
+      APPSEC_MCP_PLAN_API_KEY: ${APPSEC_MCP_PLAN_API_KEY:-}
     depends_on:
       postgres:
         condition: service_healthy

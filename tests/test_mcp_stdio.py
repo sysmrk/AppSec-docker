@@ -26,6 +26,8 @@ class MCPStdioHandshakeTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("get_security_overview", names)
                 self.assertIn("list_pipelines", names)
                 self.assertIn("get_secret_findings", names)
+                self.assertIn("get_remediation_plan", names)
+                self.assertIn("validate_remediation_selection", names)
                 self.assertNotIn("run_scan", names)
                 self.assertNotIn("execute_shell", names)
 

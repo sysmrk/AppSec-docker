@@ -23,6 +23,15 @@ class MCPContractTests(unittest.TestCase):
         self.assertEqual(self.module._limit(999999), 100)
         self.assertEqual(self.module._limit(-4), 1)
 
+    def test_plan_api_requires_explicit_key(self):
+        with patch.dict(os.environ, {"APPSEC_MCP_PLAN_API_KEY": "", "APPSEC_MCP_PLAN_API": "http://api:8080"}):
+            self.assertIn("error", self.module._plan_api("GET", "00000000-0000-0000-0000-000000000001", "plan"))
+
+    def test_plan_api_refuses_untrusted_origin(self):
+        with patch.dict(os.environ, {"APPSEC_MCP_PLAN_API": "https://evil.example", "APPSEC_MCP_PLAN_API_KEY": "dummy"}):
+            with self.assertRaisesRegex(RuntimeError, "Unsupported"):
+                self.module._plan_api("GET", "00000000-0000-0000-0000-000000000001", "plan")
+
     def test_readonly_session(self):
         cursor = MagicMock()
         cursor.fetchall.return_value = [{"count": 4}]

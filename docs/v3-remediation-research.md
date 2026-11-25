@@ -67,3 +67,5 @@ Acceptance: compare OS-known-fix cohort disappearance under identical evidence, 
 3. MCP read-only evidence tools, optional provider, structured validated plan, deterministic verifier and human approval. Never send repository credentials or raw secrets to AI.
 4. Port tested contracts incrementally to Go. Keep API socket-free; shared binary with separate executor role. Retain PostgreSQL and BuildKit isolation; optional S3/BI/reverse proxy profiles.
 5. Regression, compatibility, security and migration acceptance before v3 release.
+
+Phase 2 initial implementation: [Remediation planning](v3-remediation-planning.md) adds read-only package-group plans, strategy classification, strict selection validation, report and workflow summaries, and scoped MCP tools. Candidate execution and actual comparative benchmark results remain outstanding.

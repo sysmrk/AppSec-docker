@@ -10,6 +10,7 @@ from typing import Any
 from collections import defaultdict, deque, Counter
 from .scan_evidence import stable_target
 from .remediation_audit import analyze as analyze_remediation, index as remediation_index
+from .remediation_plan import build as build_remediation_plan, STRATEGIES
 
 
 SEVERITIES = (("CRITICAL", "critical_count", "#d94362"),
@@ -213,6 +214,24 @@ def remediation_section(result):
             '</tr></thead><tbody>' + ''.join(items) + '</tbody></table></div><ul class="muted">' + notes + '</ul></section>')
 
 
+def plan_section(payload, verified_pair):
+    plan = build_remediation_plan(payload, "residual" if verified_pair else "original")
+    if plan["status"] != "planned":
+        return ""
+    rows = []
+    for strategy, counts in sorted(plan["strategy_summary"].items()):
+        label, readiness, requirement = STRATEGIES[strategy]
+        rows.append("<tr>" + "".join("<td>" + e(x) + "</td>" for x in
+                    (label, counts["package_groups"], counts["findings"], counts["reported_fix_findings"], readiness))
+                    + "</tr>")
+    return ('<section><h2>Suggested next actions</h2><p class="muted">Deterministic planning from '
+            + e(plan["stage"]) + ' evidence. All severities included. Counts are not expected fixes; '
+            'experimental strategies are not enabled for execution.</p><div class="table-scroll">'
+            '<table><thead><tr><th>Strategy</th><th>Package groups</th><th>Findings</th>'
+            '<th>Reported fixes</th><th>Readiness</th></tr></thead><tbody>' + "".join(rows)
+            + '</tbody></table></div></section>')
+
+
 def render(resource_id: str, payload: dict[str, Any]) -> str:
     p = dict(payload.get("pipeline") or {})
     scans = [dict(x) for x in (payload.get("scans") or [])]
@@ -320,7 +339,7 @@ def render(resource_id: str, payload: dict[str, Any]) -> str:
         ('<p class="muted">Coverage unknown: ' + e(states["Coverage unknown"]) + ' displayed original findings; do not treat them as fixed.</p>' if states["Coverage unknown"] else "") + "</section>" +
         '<section><div class="section-title"><h2>Post-fix recommendation</h2><p>Advisory only — never a pass/fail gate</p></div>'
         + recommendation + "</section>" +
-        remediation_section(remediation) +
+        remediation_section(remediation) + plan_section(payload, verified_pair) +
         ('<section><h2>Execution diagnostics</h2>' + "".join(errors) + "</section>" if errors else "") +
         '<section><div class="section-title"><h2>Evidence, without the clutter</h2>'
         '<p>Full unified finding table. Raw Trivy JSON and SBOM retain LOW.</p></div>' +

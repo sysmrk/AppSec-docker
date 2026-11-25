@@ -624,6 +624,34 @@
         c.appendChild(node("span", "", title)); summary.appendChild(c);
       }
       root.appendChild(summary);
+      if (w.pipeline_id && ["awaiting_approval","awaiting_publication","completed","completed_without_publish","published","patch_failed","publication_blocked"].includes(w.state)) {
+        const planBox = node("div", "panel");
+        const stage = ["awaiting_publication","completed_without_publish","published","publication_blocked"].includes(w.state) ? "residual" : "original";
+        const planButton = node("button", "outline", "Review remediation plan");
+        planButton.type = "button";
+        const planResult = node("div");
+        planButton.addEventListener("click", async () => {
+          planButton.disabled = true;
+          clear(planResult);
+          try {
+            const plan = await request("/api/remediation/" + encodeURIComponent(w.pipeline_id) + "/plan?stage=" + stage + "&limit=25");
+            if (plan.status !== "planned") {
+              planResult.appendChild(node("p", "info-note", "Verified evidence is not available for this stage."));
+              return;
+            }
+            showMetrics(planResult, [["Package groups", plan.package_group_count], ["Findings (all severities)", plan.finding_count]]);
+            const strategies = Object.entries(plan.strategy_summary).map(([name, counts]) => ({name: name.replaceAll("_"," "), ...counts}));
+            detailsTable(planResult, [["Suggested strategy","name"],["Package groups","package_groups"],["Findings","findings"]], strategies);
+            planResult.appendChild(node("p", "info-note", "Planning only; reported fixes are not verified package availability. Experimental paths do not execute."));
+            const actions = plan.actions.map(x => ({package:x.package, severity:x.highest_severity, count:x.finding_count,
+                strategy:x.preferred_strategy.replaceAll("_"," ")}));
+            detailsTable(planResult, [["Priority package","package"],["Severity","severity"],["Findings","count"],["Suggested strategy","strategy"]], actions);
+            if (plan.next_offset != null) planResult.appendChild(node("p","info-note","Showing the first 25 package groups. Full paginated plan is available through the API/MCP."));
+          } catch (error) { planResult.appendChild(node("p","warning",error.message)); }
+          finally { planButton.disabled = false; }
+        });
+        planBox.appendChild(planButton); planBox.appendChild(planResult); root.appendChild(planBox);
+      }
       if (w.state === "awaiting_approval" &&
           ["admin", "operator"].includes(state.user?.role)) {
         const controls = section(root, "Your decision is required");

@@ -9,6 +9,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import urllib.error
+import urllib.request
+from urllib.parse import urlencode
 from typing import Any
 from uuid import UUID
 
@@ -156,6 +159,61 @@ def get_policy_results(pipeline_id: str, limit: int = 20) -> dict[str, Any]:
            ORDER BY created_at DESC LIMIT %s""",
         (_uuid(pipeline_id), _limit(limit)),
     )}
+
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise RuntimeError("AppSec API redirect refused")
+
+
+def _plan_api(method, pipeline_id, operation, params=None, body=None):
+    # Only an administrator-configured, explicit local service address. The
+    # caller cannot choose a URL, headers, arbitrary routes or HTTP methods.
+    base = os.getenv("APPSEC_MCP_PLAN_API", "http://api:8080").rstrip("/")
+    if base not in ("http://api:8080", "http://127.0.0.1:8080/appsec-api"):
+        raise RuntimeError("Unsupported AppSec MCP plan API origin")
+    key = os.getenv("APPSEC_MCP_PLAN_API_KEY", "")
+    if not key:
+        return {"error": "Remediation tools require a dedicated AppSec viewer API key"}
+    url = base + "/api/remediation/" + str(_uuid(pipeline_id)) + "/" + operation
+    if params:
+        url += "?" + urlencode(params)
+    request = urllib.request.Request(url, method=method,
+        headers={"X-API-Key": key, "Content-Type": "application/json", "Accept": "application/json"},
+        data=json.dumps(body).encode("utf-8") if body is not None else None)
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
+    try:
+        with opener.open(request, timeout=30) as response:
+            data = response.read(2 * 1024 * 1024 + 1)
+        if len(data) > 2 * 1024 * 1024:
+            return {"error": "Plan response exceeds limit; reduce page size"}
+        return json.loads(data)
+    except urllib.error.HTTPError as exc:
+        return {"error": "AppSec API rejected request", "status": exc.code}
+    except (OSError, ValueError, RuntimeError):
+        return {"error": "AppSec plan API unavailable or response invalid"}
+
+
+@mcp.tool()
+def get_remediation_plan(pipeline_id: str, stage: str = "original", offset: int = 0,
+                         limit: int = 25) -> dict[str, Any]:
+    """Read a scoped, paginated deterministic plan. No execution or package resolution."""
+    if stage not in ("original", "residual") or not 0 <= offset <= 1000000:
+        raise ValueError("Invalid stage or offset")
+    return _plan_api("GET", pipeline_id, "plan",
+                     {"stage": stage, "offset": offset, "limit": _limit(limit)})
+
+
+@mcp.tool()
+def validate_remediation_selection(pipeline_id: str, stage: str, plan_digest: str,
+                                   selections: list[dict[str, str]]) -> dict[str, Any]:
+    """Dry-run validate selected action IDs/strategies. Never approves or executes."""
+    if stage not in ("original", "residual") or not 1 <= len(selections) <= 100:
+        raise ValueError("Invalid stage or selection count")
+    if any(set(s) != {"action_id", "strategy"} or any(len(v) > 64 for v in s.values()) for s in selections):
+        raise ValueError("Only bounded action_id and strategy values are allowed")
+    return _plan_api("POST", pipeline_id, "validate", body={"stage": stage,
+                     "plan_digest": plan_digest, "selections": selections})
 
 
 def main() -> None:

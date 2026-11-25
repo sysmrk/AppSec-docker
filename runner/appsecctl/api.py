@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 import secrets
 
 import os
@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, RedirectResponse, Response, JSONResp
 from fastapi.exceptions import RequestValidationError
 from fastapi.staticfiles import StaticFiles
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 from . import db
 from .build_info import runtime_info
@@ -1133,6 +1133,67 @@ def ui_pipeline(
     with db.connect() as conn:
         require_resource(conn, user, "pipeline", pipeline_id)
         return pipeline_details(conn, pipeline_id)
+
+
+class RemediationSelection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    action_id: str = Field(pattern=r"^[a-f0-9]{64}$")
+    strategy: str = Field(max_length=64)
+
+
+class RemediationProposal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    stage: str = Field(pattern=r"^(original|residual)$")
+    plan_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
+    selections: list[RemediationSelection] = Field(min_length=1, max_length=100)
+
+
+def scoped_remediation_plan(pipeline_id, user, stage):
+    from .remediation_plan import build
+    try:
+        pid = str(UUID(pipeline_id))
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=404, detail="pipeline not found") from None
+    if stage not in ("original", "residual"):
+        raise HTTPException(status_code=422, detail="invalid remediation stage")
+    with db.connect() as conn:
+        require_resource(conn, user, "pipeline", pid)
+        # New AI-facing endpoints must not inherit legacy global visibility.
+        # Project access has been checked by require_resource above.
+        if user["role"] != "admin":
+            pipeline = conn.execute("SELECT project_id FROM pipeline_runs WHERE id=%s", (pid,)).fetchone()
+            if not pipeline:
+                raise HTTPException(status_code=404, detail="pipeline not found")
+            if not pipeline["project_id"]:
+                owner = conn.execute("""
+                    SELECT 1 FROM manual_workflows w JOIN pipeline_jobs j ON j.id=w.scan_job_id
+                    WHERE j.pipeline_id=%s AND w.created_by=%s AND w.project_id IS NULL
+                    LIMIT 1
+                """, (pid, str(user["id"]))).fetchone()
+                if not owner:
+                    raise HTTPException(status_code=403, detail="private or unassigned pipeline access denied")
+        payload = db.pipeline_summary(conn, pid)
+    return build(payload, stage)
+
+
+@app.get("/api/remediation/{pipeline_id}/plan")
+def get_remediation_plan(pipeline_id: str, stage: str = "original", offset: int = 0, limit: int = 25,
+                         user: dict[str, Any] = Depends(current_user)):
+    from .remediation_plan import page
+    if not 0 <= offset <= 1000000 or not 1 <= limit <= 100:
+        raise HTTPException(status_code=422, detail="invalid plan page")
+    return page(scoped_remediation_plan(pipeline_id, user, stage), offset, limit)
+
+
+@app.post("/api/remediation/{pipeline_id}/validate")
+def validate_remediation_selection(pipeline_id: str, proposal: RemediationProposal,
+                                   user: dict[str, Any] = Depends(current_user)):
+    from .remediation_plan import validate_selection
+    plan = scoped_remediation_plan(pipeline_id, user, proposal.stage)
+    try:
+        return validate_selection(plan, proposal.plan_digest, [s.model_dump() for s in proposal.selections])
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
 
 
 @app.get("/api/ui/scans/{scan_id}/vulnerabilities")
