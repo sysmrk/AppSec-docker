@@ -25,3 +25,9 @@ The digest binds the plan, not an authenticated approval identity. The local ope
 ## Remaining P0
 
 Persisted per-ecosystem approved mirror configuration and priority handling, actual Copa package-manager mirror propagation, native alternative upgrade executor, generic dependency analysis beyond nginx, integrated workflow/RBAC/approval, verified candidate ranking and report integration remain outstanding. No general automated removal policy.
+
+## Candidate security review
+
+    PYTHONPATH=runner python3 -m appsecctl.candidate_review --results /path/to/benchmark/results > review.json
+
+Recompute comparison from raw reports, cross-check saved summaries and scanner/image IDs, count per severity and package-name additions/removals/version changes. Reject candidates with unknown coverage, introduced findings, Critical/High/Unknown count regression or no net reduction from preferred-for-review selection. Rank eligible candidates by Critical, High, Unknown, Medium, Low, then fewer removed package names. This conservative order does not represent exploitability or business risk; no functional or publication authorization is inferred. Raw benchmark files are local trusted inputs, not signed attestations. Report separately findings absent on package names no longer present, not automatically fixed by a patch. The original known-fix result and 95 additional disappearances are distinct.

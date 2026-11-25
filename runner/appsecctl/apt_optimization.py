@@ -85,7 +85,9 @@ def inventory(image):
 def resolve(name, rows):
     if name in rows:
         return name
-    matches = [p for p in rows if p.split(":")[0] == name.split(":")[0]]
+    # Never resolve an explicitly different architecture by package name.
+    matches = [p for p in rows if p.split(":")[0] == name.split(":")[0]
+               and (":" not in name or (":" not in p and name.endswith(":amd64")))]
     if len(matches) != 1:
         raise ValueError("Ambiguous package in APT simulation: " + name)
     return matches[0]
@@ -114,6 +116,9 @@ def plan_removal(image, roots, report):
         raise ValueError("Only explicitly selected nginx optional modules are supported")
     if not audit.verified({"status":"success","raw_report":report}) or report["_appsec"]["image_id"]!=image:
         raise ValueError("A verified raw scan of the exact base image is required")
+    os_info = report.get("Metadata", {}).get("OS") or {}
+    if os_info.get("Family") != "debian" or str(os_info.get("Name","")).split(".")[0] not in ("12","13"):
+        raise ValueError("Only Debian 12/13 nginx images are supported")
     rows = inventory(image)
     if "nginx" not in rows or not set(roots)<=rows.keys():
         raise ValueError("Required nginx packages not present")
@@ -141,7 +146,8 @@ def plan_removal(image, roots, report):
             if len(matches)==1 and rows[matches[0]]["version"]==v["InstalledVersion"]:
                 findings[str(v.get("Severity") or "UNKNOWN").upper()]+=1
     plan={"schema":SCHEMA,"image_id":image,"roots":sorted(roots),"remove":removed,
-          "inventory":rows,"estimated_findings_by_severity":dict(findings),
+          "inventory":rows,"report_sha256":hashlib.sha256(audit.input_bytes(report)).hexdigest(),
+          "estimated_findings_by_severity":dict(findings),
           "estimated_findings":sum(findings.values()),"approval_required":True,
           "publication_authorized":False}
     plan["plan_sha256"]=plan_digest(plan)
@@ -167,8 +173,8 @@ def dockerfile(roots, closure):
         + "apt-get -s --auto-remove purge -- "+root_args+" > /tmp/appsec-plan; "
         + "actual=$(awk '/^(Purg|Remv) / {sub(/:[^ ]+$/, \"\", $2); print $2}' /tmp/appsec-plan | sort -u | paste -sd ' '); "
         + "test \"$actual\" = '"+expected+"'; "
-        + "! grep -Eq '^(Inst|Conf) ' /tmp/appsec-plan; "
-        + "apt-get -y --auto-remove purge -- "+root_args+"; "
+        + "if grep -Eq '^(Inst|Conf) ' /tmp/appsec-plan; then exit 42; fi; "
+        + "apt-get -y --no-download --auto-remove purge -- "+root_args+"; "
         + "test -z \"$(dpkg --audit)\"; nginx -t; rm -f /tmp/appsec-plan\n"
     )
 
@@ -242,10 +248,12 @@ apt-get -o Dir::Etc::sourcelist=/tmp/appsec-apt.list -o Dir::Etc::sourceparts=/t
     except (subprocess.TimeoutExpired,KeyboardInterrupt):
         subprocess.run(["docker","rm","-f",name],check=False,timeout=30,stdout=subprocess.DEVNULL)
         raise
-    if not re.search(r"^\d+ upgraded, \d+ newly installed, \d+ to remove and \d+ not upgraded\.$",out,re.M):
+    summary = re.findall(r"^(\d+) upgraded, (\d+) newly installed, (\d+) to remove and (\d+) not upgraded\.$",out,re.M)
+    if len(summary) != 1:
         raise ValueError("APT simulation summary missing")
     return {"schema":"appsec.apt-availability/v1","status":"repository_checked",
             "image_id":image,"mirror":mirror,"simulation":out,
+            "counts":dict(zip(("upgraded","newly_installed","removed","not_upgraded"),map(int,summary[0]))),
             "installed_or_upgraded":False,"publication_authorized":False}
 
 

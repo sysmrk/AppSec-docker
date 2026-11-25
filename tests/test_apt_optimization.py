@@ -32,6 +32,7 @@ class AptOptimizationTests(unittest.TestCase):
     def test_protected_package_refused(self):
         report=payload()["scans"][0]["raw_report"]
         image=report["_appsec"]["image_id"]
+        report["Metadata"]["OS"]={"Family":"debian","Name":"13.8"}
         rows={p:{"version":"1","essential":p=="libc6","protected":False,"priority":"optional"}
               for p in ("nginx","nginx-module-image-filter","libc6")}
         with patch.object(apt,"inspect"),patch.object(apt,"inventory",return_value=rows),patch.object(apt,"container",side_effect=["nginx\nnginx-module-image-filter\n","0 upgraded, 0 newly installed, 2 to remove and 0 not upgraded.\nPurg nginx-module-image-filter\nPurg libc6\n"]):
