@@ -67,8 +67,9 @@ class OnboardingTests(unittest.TestCase):
             self.assertIn(runner_build, calls)
             self.assertIn(migrate, calls)
             self.assertLess(calls.index(runner_build), calls.index(migrate))
-            platform_start = next(i for i, args in enumerate(calls) if "--build" in args and "worker" in args)
+            platform_start = next(i for i, args in enumerate(calls) if "--no-build" in args and "worker" in args)
             self.assertLess(calls.index(migrate), platform_start)
+            self.assertEqual(sum("build" in args for args in calls),1)
             verify.assert_called_once()
             self.assertEqual(cli.os.environ["APPSEC_BUILD_REVISION"], "a"*40)
 
@@ -90,7 +91,7 @@ class OnboardingTests(unittest.TestCase):
             compose_calls.side_effect = fail_migration
             with self.assertRaisesRegex(RuntimeError, "migration failed"):
                 cli.start(SimpleNamespace(analytics=False, patching=False))
-            self.assertFalse(any("--build" in call.args and "worker" in call.args
+            self.assertFalse(any("--no-build" in call.args and "worker" in call.args
                                  for call in compose_calls.call_args_list))
             run_command.assert_not_called()
             verify.assert_not_called()

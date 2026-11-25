@@ -111,3 +111,5 @@ Back up data and drain active jobs before upgrading. Preserve .env, docker-compo
 See [CHANGELOG](CHANGELOG.md). Main commits receive change-<SHA> tags; VERSION defines the semantic tag. The v2 label does not imply that external identity federation, isolated multi-host execution, high availability, or full end-to-end acceptance are complete.
 
 **v3 development:** see [planning and local AI](docs/v3-remediation-planning.md) and [isolated candidate lab](docs/v3-remediation-lab.md). Experimental OS/library candidates and dependency checks are not exposed to production workflows. Go migration is deferred.
+
+The development deployment builds one first-party runtime image for all Python execution roles. The default service count is unchanged, and existing security boundaries remain separate.

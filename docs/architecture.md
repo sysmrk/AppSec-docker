@@ -41,3 +41,7 @@ Release updates are scheduler-owned; Copa uses a shared versioned volume, while 
 ## Trust assumptions
 
 Use a dedicated host; Docker socket effectively grants host-level control. Registry and package-manager egress, redirects, image signing/pinning, external SSO, tenant-scoped BI/MCP, HA and DR require additional deployment controls. Prepared images are local to one daemon; multi-host publication needs affinity or trusted staging. See [security review](security-review.md).
+
+## v3 development: shared first-party runtime image
+
+API, Worker, Scheduler, dedicated image/security workers and migration CLI use one locally built image (`appsec-docker-runtime:local` by default). Only appsec-runner owns the build configuration; each role keeps its own entrypoint, privileges, mounts and lifecycle. Startup builds once, migrates, then recreates changed services without redundant builds. This reduces duplicate image tags/builds, not persistent container count. Docker layer deduplication already existed; do not assume a proportional disk saving. The separate MCP image, Nginx, PostgreSQL, BuildKit, MinIO and Metabase remain. Go migration is deferred.

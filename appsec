@@ -219,7 +219,7 @@ def start(args) -> None:
     print("\n[1/3] Starting database and artifact storage", flush=True)
     compose("--profile", "platform", "up", "-d", "postgres", "minio", "minio-init")
     compose("--profile", "patch", "up", "-d", "--wait", "buildkit")
-    print("\n[2/3] Building migration runner and applying database migrations", flush=True)
+    print("\n[2/3] Building shared AppSec runtime image and applying database migrations", flush=True)
     # A cached runner may contain older Alembic revisions than the checkout.
     # Always build from the current source before executing database migrations.
     compose("--profile", "tools", "build", "appsec-runner")
@@ -227,7 +227,9 @@ def start(args) -> None:
     print("\n[3/3] Starting Control Center, workers and Metabase", flush=True)
     os.environ["APPSEC_PATCH_ENABLED"] = "true"
     services = ["api", "nginx", "worker", "scheduler", "metabase-db-init", "metabase"]
-    compose("--profile", "platform", "up", "-d", "--build", *services)
+    # All first-party execution roles use the exact image built above.
+    # No implicit remote pull or second build for these roles.
+    compose("--profile", "platform", "up", "-d", "--no-build", *services)
     verify_deployment()
     verify_patch_runtime()
     run("bash", str(ROOT / "scripts/setup-metabase.sh"))

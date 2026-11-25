@@ -74,3 +74,7 @@ Also back up Metabase application DB, storage objects and local evidence, encryp
 Registry credentials must be provisioned in the worker Docker environment, not entered into registry metadata. For local export use docker save -o patched.tar EXACT_LOCAL_TAG on the same daemon. See [registry](registry.md). For tool update failures see [tool updates](tool-updates.md). The standalone Trivy DB updater uses deployment settings rather than the database-backed policy; use only if explicitly approved and configured to use the same cache.
 
 ./appsec stop preserves volumes. Never use down --volumes for routine upgrades. Production acceptance requires isolated execution, TLS, least privilege, image signing/pinning, backup/restore, full browser and registry E2E, SSO and analytics segmentation.
+
+### v3 shared runtime image
+
+Use `./appsec start` (or `make build` to build only). Only `appsec-runner` builds the local shared image, then migrations and services use the same image. Runtime service pull policy is `never`. If a local override previously defined separate API/worker/scheduler build options, move common build arguments under `appsec-runner.build.args` and preserve per-service environment/mounts. Do not run direct `docker compose up --build` on an uninitialized checkout; use the normal startup command. Do not run v2 and v3 concurrently on the same daemon; named resources can collide. Old image tags are not deleted automatically.

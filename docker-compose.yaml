@@ -1,5 +1,7 @@
 version: "2.4"
 
+x-runner-image: &runner-image ${APPSEC_RUNNER_IMAGE:-appsec-docker-runtime:local}
+
 x-runner-build: &runner-build
   context: .
   dockerfile: runner/Dockerfile
@@ -191,6 +193,8 @@ services:
       - platform
 
   appsec-runner:
+    image: *runner-image
+    pull_policy: never
     build: *runner-build
     depends_on:
       postgres:
@@ -203,7 +207,8 @@ services:
       - tools
 
   api:
-    build: *runner-build
+    image: *runner-image
+    pull_policy: never
     restart: unless-stopped
     entrypoint: ["uvicorn", "appsecctl.api:app", "--host", "0.0.0.0", "--port", "8080"]
     depends_on:
@@ -304,7 +309,8 @@ services:
       - production
 
   worker:
-    build: *runner-build
+    image: *runner-image
+    pull_policy: never
     restart: unless-stopped
     entrypoint: ["python", "-m", "appsecctl.worker"]
     depends_on:
@@ -327,7 +333,8 @@ services:
       - platform
 
   image-worker:
-    build: *runner-build
+    image: *runner-image
+    pull_policy: never
     restart: unless-stopped
     entrypoint: ["python", "-m", "appsecctl.worker"]
     depends_on:
@@ -350,7 +357,8 @@ services:
       - production
 
   security-worker:
-    build: *runner-build
+    image: *runner-image
+    pull_policy: never
     restart: unless-stopped
     entrypoint: ["python", "-m", "appsecctl.worker"]
     depends_on:
@@ -373,7 +381,8 @@ services:
       - production
 
   scheduler:
-    build: *runner-build
+    image: *runner-image
+    pull_policy: never
     restart: unless-stopped
     entrypoint: ["python", "-m", "appsecctl.scheduler"]
     depends_on:

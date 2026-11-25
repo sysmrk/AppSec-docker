@@ -20,7 +20,7 @@ help:
 		'  make restart          Restart platform services' \
 		'  make ps               Show service status' \
 		'  make logs             Tail service logs' \
-		'  make build            Build runner/API images' \
+		'  make build            Build shared AppSec runtime image' \
 		'  make harbor-install   Install/start local Harbor and generate its compose stack' \
 		'  make harbor-login     Login Docker to local Harbor' \
 		'  make harbor-status    Show Harbor containers' \
@@ -66,7 +66,7 @@ logs:
 	$(COMPOSE) -f $(COMPOSE_FILE) logs -f --tail=200
 
 build:
-	$(COMPOSE) -f $(COMPOSE_FILE) build api appsec-runner worker scheduler
+	$(COMPOSE) -f $(COMPOSE_FILE) $(if $(wildcard docker-compose.override.yaml),-f docker-compose.override.yaml) --profile tools build appsec-runner
 
 harbor-install:
 	./scripts/harbor.sh install

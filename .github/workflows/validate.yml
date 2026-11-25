@@ -11,6 +11,19 @@ jobs:
       - uses: actions/checkout@v4
       - name: Validate compose
         run: docker compose -f docker-compose.yaml config >/tmp/appsec-compose.yaml
+      - name: Verify shared runtime image and separated service privileges
+        run: |
+          docker compose -f docker-compose.yaml --profile '*' config --format json >/tmp/appsec-compose.json
+          python - <<'PY'
+          import json
+          s = json.load(open('/tmp/appsec-compose.json'))['services']
+          names = ('api','worker','scheduler','image-worker','security-worker','appsec-runner')
+          assert len({s[n]['image'] for n in names}) == 1
+          assert all(s[n]['pull_policy'] == 'never' for n in names)
+          assert [n for n in names if 'build' in s[n]] == ['appsec-runner']
+          assert not any('/var/run/docker.sock' in str(v) for v in s['api'].get('volumes',[]))
+          assert any('/var/run/docker.sock' in str(v) for v in s['worker'].get('volumes',[]))
+          PY
       - name: Compile Python
         run: python -m py_compile runner/appsecctl/*.py scripts/setup-metabase.py scripts/v3-benchmark.py
       - uses: actions/setup-python@v5
