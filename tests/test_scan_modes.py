@@ -106,7 +106,7 @@ class ScanModeTests(unittest.TestCase):
              patch.object(cli.patch_sources, "policy_environment") as source_policy, \
              patch.object(cli.scan_evidence, "local_image_id", side_effect=["sha256:original", "sha256:patched"]), \
              patch.object(cli.scan_evidence, "patch_eligibility", return_value={"code":"PATCH_CANDIDATES_AVAILABLE","eligible":True}), \
-             patch.object(cli.scan_evidence, "copa_report", return_value={}), \
+             patch.object(cli.scan_evidence, "copa_report", return_value={"Results": []}), \
              patch("pathlib.Path.write_bytes"):
             source_policy.return_value.__enter__.return_value = None
             database.get_scan.return_value = scan
@@ -127,7 +127,7 @@ class ScanModeTests(unittest.TestCase):
              patch.object(cli.patch_sources, "policy_environment") as source_policy, \
              patch.object(cli.scan_evidence, "local_image_id", side_effect=["sha256:original", "sha256:patched"]), \
              patch.object(cli.scan_evidence, "patch_eligibility", return_value={"code":"PATCH_CANDIDATES_AVAILABLE","eligible":True}), \
-             patch.object(cli.scan_evidence, "copa_report", return_value={}), \
+             patch.object(cli.scan_evidence, "copa_report", return_value={"Results": []}), \
              patch("pathlib.Path.write_bytes"):
             source_policy.return_value.__enter__.return_value = None
             database.get_scan.return_value = scan

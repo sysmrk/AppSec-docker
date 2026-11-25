@@ -12,7 +12,7 @@ jobs:
       - name: Validate compose
         run: docker compose -f docker-compose.yaml config >/tmp/appsec-compose.yaml
       - name: Compile Python
-        run: python -m py_compile runner/appsecctl/*.py scripts/setup-metabase.py
+        run: python -m py_compile runner/appsecctl/*.py scripts/setup-metabase.py scripts/v3-benchmark.py
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'

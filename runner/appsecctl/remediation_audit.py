@@ -42,7 +42,7 @@ def verified(scan):
             return False
         scan_evidence.validate_report(report, image_id)
         for target in report["Results"]:
-            if not isinstance(target.get("Type"), str):
+            if any(not isinstance(target.get(k), str) or not target[k] for k in ("Class", "Type", "Target")):
                 return False
             if any(not isinstance(v.get(k), str) for v in (target.get("Vulnerabilities") or [])
                    for k in ("PkgName", "VulnerabilityID", "InstalledVersion")):
@@ -74,18 +74,21 @@ def index(report):
     for target in report["Results"]:
         tk = target_key(target)
         packages = target.get("Packages") or []
-        if packages:
-            covered.add(tk)
         for pkg in packages:
-            if isinstance(pkg, dict) and isinstance(pkg.get("Name"), str) and isinstance(pkg.get("Version"), str):
+            if isinstance(pkg, dict) and isinstance(pkg.get("Name"), str) and pkg["Name"] and isinstance(pkg.get("Version"), str) and pkg["Version"]:
+                covered.add(tk)
                 inventory[tk + (pkg["Name"],)].add(pkg["Version"])
         for v in target.get("Vulnerabilities") or []:
             findings[tk + (v["PkgName"], v["VulnerabilityID"])].append(v)
     return findings, inventory, covered
 
 
-def analyze(payload: dict) -> dict:
-    """Summarize only evidence linked to this pipeline, including historical scans."""
+def analyze(payload: dict, *, benchmark: bool = False) -> dict:
+    """Summarize linked pipeline evidence, or independently supplied benchmark scans.
+
+    benchmark=True is only for the separate offline harness, never the live report.
+    It describes a comparison of candidates, not proof of their build lineage.
+    """
     result = {"schema": SCHEMA, "status": "original_unverified",
               "comparison": "unavailable", "input_status": "not_recorded",
               "cohorts": {}, "groups": [], "introduced": None,
@@ -97,7 +100,7 @@ def analyze(payload: dict) -> dict:
         return result
     result["status"] = "original_verified"
     a = original["raw_report"]
-    before, old_inventory, _ = index(a)
+    before, _, _ = index(a)
     result["original_scan_id"] = str(original["id"])
     result["original_image_id"] = a["_appsec"]["image_id"]
     result["original_findings"] = sum(len(v) for v in before.values())
@@ -108,9 +111,10 @@ def analyze(payload: dict) -> dict:
         pass
     result["expected_v2_input"] = expected
     patches = payload.get("patches") or []
+    patched_verified = verified(patched)
     patch = next((p for p in reversed(patches) if p.get("status") == "success"
-                  and patched and p.get("local_image_ref") == patched.get("image_ref")
-                  and p.get("local_image_id") == (patched.get("raw_report") or {}).get("_appsec", {}).get("image_id")), None)
+                  and patched_verified and p.get("local_image_ref") == patched.get("image_ref")
+                  and p.get("local_image_id") == patched["raw_report"]["_appsec"]["image_id"]), None)
     attempt = patch or (patches[-1] if patches else {})
     recorded = (attempt.get("execution_evidence") or {}).get("remediation_input")
     if recorded is not None:
@@ -121,13 +125,13 @@ def analyze(payload: dict) -> dict:
     linked = bool(patch and any(str(d.get("original_scan_id")) == str(original["id"])
                   and patched and str(d.get("patched_scan_id")) == str(patched["id"])
                   for d in payload.get("diffs") or []))
-    pair = bool(linked and verified(patched)
+    pair = bool((linked or benchmark) and patched_verified
                 and a["_appsec"]["image_id"] != patched["raw_report"]["_appsec"]["image_id"])
     after, new_inventory, coverage = {}, {}, set()
     if pair:
         b = patched["raw_report"]
         after, new_inventory, coverage = index(b)
-        result["comparison"] = "observed"
+        result["comparison"] = "benchmark_observed" if benchmark else "observed"
         result["patched_scan_id"] = str(patched["id"])
         result["patched_image_id"] = b["_appsec"]["image_id"]
         result["patched_findings"] = sum(len(v) for v in after.values())
@@ -135,6 +139,8 @@ def analyze(payload: dict) -> dict:
         ae, be = a["_appsec"], b["_appsec"]
         same = all(ae.get(k) and ae.get(k) == be.get(k) for k in ("trivy_version", "trivy_info", "scanner_image"))
         result["scanner_metadata_match"] = bool(same)
+        if benchmark:
+            result["warnings"].append("Independent candidate comparison only; build lineage and application compatibility are not established.")
         result["warnings"].append("Scanner/DB metadata matches, but immutable DB content was not verified."
                                   if same else "Scanner/DB metadata differs or is missing; feed drift may explain differences.")
     else:

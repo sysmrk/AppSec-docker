@@ -22,6 +22,19 @@ The output is a versioned structured contract, appsec.remediation-audit/v1, usab
 
 New patch attempts record the SHA256 and count of the canonical exact input written to disk; historical attempts report not_recorded. The expected input is derived from the original evidence. A mismatch is a diagnostic, not evidence that the backend executed any particular update. Rescan attribution requires a successful patch, matching local image identity and linked diff. Missing target inventory gives coverage_unknown rather than no_longer_detected. A changed severity does not count as disappearance. Mixed-eligibility duplicate groups are kept separate. Rates are observational; matching scanner metadata is not proof of identical database content. Package version equality/change is evidence, not a distro version comparison or dependency conflict diagnosis.
 
+## Offline candidate comparison harness
+
+On an isolated host with a prepared, quiescent Trivy cache and already-loaded image candidates:
+
+    python3 scripts/v3-benchmark.py --scanner APPROVED_TRIVY_REF \
+      --db-cache /absolute/path/to/trivy-cache \
+      --original ORIGINAL_LOCAL_TAG \
+      --candidate APPSEC_PATCHED_LOCAL_TAG \
+      --candidate UPSTREAM_PATCHED_LOCAL_TAG \
+      --output ./benchmark-result
+
+The harness resolves immutable local image IDs, copies and hashes vulnerability/Java DB files, uses separate temporary Docker save archives and per-scan cache copies, and runs a network-disabled scanner without Docker socket access or implicit pulls. It verifies DB hashes before and after scans. No image build, push, deletion, application execution or registry credential is performed. Use an approved trusted scanner already loaded locally; this tool intentionally does not replace the runtime source resolver. Prepare the candidate images separately with the existing guarded workflow or a controlled upstream experiment. The frozen offline scan may have less coverage than online scans; missing Java DB or unsupported targets fail rather than fabricate evidence. Archive ImageID must match Docker's config ID or comparison is rejected. Outputs are private local JSON (raw reports, manifest, per-candidate comparisons, summary); ensure sufficient disk space. On failure, partial outputs may exist but no final summary is written. Application compatibility and candidate lineage need separate tests.
+
 ## Controlled benchmark protocol (not run automatically)
 
 Use a dedicated isolated test host. Never benchmark on production images or push the outputs. Select and record exact immutable image digests, exact scanner and Copa versions, platform, BuildKit version, package repository snapshots and scanner DB snapshot hashes. Preserve originals and repeat with the same Trivy cache snapshot and scan settings; disable DB updates only in this explicitly frozen experiment. Separate from the regular production refresh. Record Java DB presence/absence and scanner coverage, do not equate missing inventory with zero findings.
@@ -39,7 +52,7 @@ Acceptance: compare OS-known-fix cohort disappearance under identical evidence, 
 
 ## Next phases (not implemented)
 
-1. Reproducible benchmark harness with frozen database and controlled upstream comparison; investigate actual residual groups.
+1. Run the new frozen-DB candidate comparison harness on real images; implement controlled candidate generation and investigate actual residual groups.
 2. Typed remediation planner and backend strategy interface. Separate OS, language, base migration and source rebuild. AI proposals never execute arbitrary commands.
 3. MCP read-only evidence tools, optional provider, structured validated plan, deterministic verifier and human approval. Never send repository credentials or raw secrets to AI.
 4. Port tested contracts incrementally to Go. Keep API socket-free; shared binary with separate executor role. Retain PostgreSQL and BuildKit isolation; optional S3/BI/reverse proxy profiles.

@@ -67,7 +67,10 @@ class RemediationAuditTests(unittest.TestCase):
         r = audit.analyze(p)
         self.assertEqual(r["cohorts"]["ambiguous"]["original"], 2)
         self.assertEqual(r["cohorts"]["os_known_fix"]["original"], 1)
-        self.assertEqual(r["input_status"], "mismatch")
+        # An excluded duplicate does not alter the actual filtered input.
+        self.assertEqual(r["input_status"], "matches_expected")
+        p["patches"][0]["execution_evidence"]["remediation_input"]["sha256"] = "0" * 64
+        self.assertEqual(audit.analyze(p)["input_status"], "mismatch")
 
     def test_manifest_stable_and_report_unmodified(self):
         p = payload()
