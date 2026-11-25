@@ -118,7 +118,7 @@
             <button id="pipeline-export" class="outline small" type="button" disabled>Export selected</button>
             <button id="pipeline-delete" class="danger-button small" type="button" disabled>Delete selected</button>
           </div>
-          <p class="hint">Select finished or failed image workflows on this page. Export downloads one HTML report or a ZIP of selected reports. Delete permanently removes workflow evidence and history; remote registry images and audit records are preserved.</p>
+          <p class="hint">Select any idle image workflow with a completed or failed pipeline, including those awaiting approval. Queued/running jobs and jobs without a pipeline cannot be selected. Export downloads one HTML report or a ZIP. Admin deletion discards pending approvals and permanently removes workflow history/evidence; remote images and audit records are preserved.</p>
           <div class="table-wrap"><table><thead><tr><th><input type="checkbox" id="pipeline-select-all" aria-label="Select all eligible workflows on this page"></th><th>Image</th><th>Current step</th><th>Policy</th><th>Created</th><th></th></tr></thead><tbody id="guided-list"></tbody></table></div>
           <div class="row-controls" id="guided-pagination" aria-label="Workflow history pages"></div>
           <div id="guided-detail" class="panel result-panel"><div class="empty-state">Select a workflow to see progress, results and approval controls.</div></div>

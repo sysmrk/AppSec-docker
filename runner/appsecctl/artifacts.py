@@ -40,7 +40,7 @@ def upload_artifact(path: str, key_prefix: str = "reports") -> str:
         return path
 
 
-def presigned_download_url(s3_uri: str, expires_in: int = 900) -> str:
+def presigned_download_url(s3_uri: str, expires_in: int = 900, filename: str | None = None) -> str:
     if not s3_uri.startswith("s3://"):
         raise ValueError("not an s3 uri")
     bucket_key = s3_uri.removeprefix("s3://")
@@ -61,7 +61,7 @@ def presigned_download_url(s3_uri: str, expires_in: int = 900) -> str:
     )
     return client.generate_presigned_url(
         "get_object",
-        Params={"Bucket": bucket, "Key": key},
+        Params={"Bucket": bucket, "Key": key, **({"ResponseContentDisposition": f'attachment; filename="{filename}"'} if filename else {})},
         ExpiresIn=expires_in,
     )
 

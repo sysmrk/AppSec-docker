@@ -13,6 +13,7 @@ class HistoryPurgeTests(unittest.TestCase):
     def test_active_jobs_block_deletion(self):
         conn = MagicMock()
         conn.execute.side_effect = [
+            MagicMock(fetchall=lambda: []),
             MagicMock(fetchone=lambda: {"id": "existing"}),
             MagicMock(fetchall=lambda: [{"status": "running"}]),
         ]

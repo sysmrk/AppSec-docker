@@ -935,15 +935,22 @@ def download_report(report_id: str, request: Request):
     if not report:
         raise HTTPException(status_code=404, detail="report not found")
     if report["resource_type"] == "pipeline" and report["format"] == "html":
-        from .reports import pipeline_report_html, ensure_report_ready
+        from .reports import pipeline_report_html, ensure_report_ready, report_filename
         with db.connect() as conn:
             payload = db.pipeline_summary(conn, str(report["resource_id"]))
         try:
             ensure_report_ready("pipeline", payload)
         except RuntimeError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from None
+        name = report_filename("pipeline", str(report["resource_id"]), payload)
         return Response(content=pipeline_report_html(str(report["resource_id"]), payload), media_type="application/octet-stream",
-                        headers={"Content-Disposition": 'attachment; filename="appsec-pipeline.html"', "Cache-Control":"no-store"})
+                        headers={"Content-Disposition": f'attachment; filename="{name}"', "Cache-Control":"no-store"})
+    if report["resource_type"] == "security_job":
+        from .reports import report_filename
+        with db.connect() as conn:
+            detail = db.security_job_detail(conn, str(report["resource_id"])) or {}
+        name = report_filename("security_job", str(report["resource_id"]), detail, str(report["format"]))
+        return download_path(str(report["path"]), filename=name)
     return download_path(str(report["path"]))
 
 
@@ -987,9 +994,9 @@ def report_response(report: dict[str, Any] | None, path: str) -> dict[str, str]:
     }
 
 
-def download_path(path: str):
+def download_path(path: str, filename: str | None = None):
     if path.startswith("s3://"):
-        return RedirectResponse(presigned_download_url(path))
+        return RedirectResponse(presigned_download_url(path, filename=filename))
     report_file = Path(path)
     reports_root = Path("/reports").resolve()
     try:
@@ -998,7 +1005,7 @@ def download_path(path: str):
         raise HTTPException(status_code=404, detail="file not found") from None
     if not resolved.is_file() or not resolved.is_relative_to(reports_root):
         raise HTTPException(status_code=404, detail="file not found")
-    return FileResponse(str(resolved), filename=resolved.name, media_type="application/octet-stream")
+    return FileResponse(str(resolved), filename=filename or resolved.name, media_type="application/octet-stream")
 
 
 def external_api_path(path: str) -> str:
@@ -1080,13 +1087,14 @@ def export_selected_pipelines(request: PipelineExportRequest, user: dict[str, An
     import io
     import zipfile
     from uuid import UUID
-    from .reports import ensure_report_ready, pipeline_report_html
+    from .reports import ensure_report_ready, pipeline_report_html, report_filename, export_archive_filename
 
     try:
         ids = list(dict.fromkeys(str(UUID(value)) for value in request.pipeline_ids))
     except ValueError:
         raise HTTPException(status_code=422, detail="Invalid pipeline ID") from None
     documents = []
+    exported_at = datetime.now(timezone.utc)
     total_bytes = 0
     with db.connect() as conn:
         # Authorize the entire batch before returning any data.
@@ -1102,7 +1110,7 @@ def export_selected_pipelines(request: PipelineExportRequest, user: dict[str, An
             total_bytes += len(document)
             if total_bytes > 50 * 1024 * 1024:
                 raise HTTPException(status_code=413, detail="Export too large; select fewer reports")
-            documents.append((f"appsec-{identifier}.html", document))
+            documents.append((report_filename("pipeline", identifier, payload, when=exported_at), document))
     if len(documents) == 1:
         name, document = documents[0]
         return Response(content=document, media_type="application/octet-stream",
@@ -1112,7 +1120,7 @@ def export_selected_pipelines(request: PipelineExportRequest, user: dict[str, An
         for name, document in documents:
             archive.writestr(name, document)
     return Response(content=output.getvalue(), media_type="application/zip",
-                    headers={"Content-Disposition": 'attachment; filename="appsec-selected-reports.zip"', "Cache-Control": "no-store"})
+                    headers={"Content-Disposition": f'attachment; filename="{export_archive_filename(exported_at)}"', "Cache-Control": "no-store"})
 
 
 @app.get("/api/ui/pipelines/{pipeline_id}")

@@ -3,6 +3,7 @@ from __future__ import annotations
 import html
 import json
 import os
+import re
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
@@ -17,6 +18,25 @@ def reports_dir() -> Path:
     path = Path(os.environ.get("REPORTS_DIR", "/reports"))
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def report_filename(resource_type: str, resource_id: str, payload: dict[str, Any],
+                    extension: str = "html", when: datetime | None = None) -> str:
+    """Portable download name; UTC and full ID prevent ambiguity across runs."""
+    record = row_dict(payload.get("pipeline") if resource_type == "pipeline" else payload.get("job"))
+    target = str(record.get("requested_image") or record.get("target") or resource_type)
+    target = re.sub(r"^https?://", "", target, flags=re.I)
+    slug = re.sub(r"[^A-Za-z0-9._-]+", "-", target).strip(".-")[:90] or "report"
+    identifier = re.sub(r"[^A-Za-z0-9-]+", "-", str(resource_id)).strip("-")[:80] or "unknown"
+    stamp = (when or datetime.now(timezone.utc)).astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    suffix = extension if extension in ("html", "sarif", "json") else "report"
+    kind = "image" if resource_type == "pipeline" else "repository"
+    return f"appsec-{kind}-{slug}-{stamp}-{identifier}.{suffix}"
+
+
+def export_archive_filename(when: datetime | None = None) -> str:
+    stamp = (when or datetime.now(timezone.utc)).astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return f"appsec-selected-reports-{stamp}.zip"
 
 
 def write_html_report(resource_type: str, resource_id: str, payload: dict[str, Any]) -> str:

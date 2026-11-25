@@ -68,6 +68,12 @@ def remove_evidence(paths: set[str], pipeline_id: str) -> int:
 
 def purge_pipeline(conn, pipeline_id: str) -> dict:
     pid = UUID(pipeline_id)
+    # Same lock order as workflow decisions. No patch/publication approval can
+    # enqueue a job after our active-job check while evidence is being removed.
+    conn.execute("""
+        SELECT w.id FROM manual_workflows w JOIN pipeline_jobs j ON j.id=w.scan_job_id
+        WHERE j.pipeline_id=%s ORDER BY w.id FOR UPDATE OF w
+    """, (pid,)).fetchall()
     pipeline = conn.execute("SELECT id, status FROM pipeline_runs WHERE id=%s FOR UPDATE", (pid,)).fetchone()
     if not pipeline:
         raise LookupError("Pipeline does not exist")

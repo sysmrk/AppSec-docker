@@ -178,7 +178,11 @@
         throw new Error(typeof err.detail==="string"?err.detail:"Export failed ("+result.status+")");
       }
       const url=URL.createObjectURL(await result.blob());
-      const link=node("a");link.href=url;link.download=ids.length===1?"appsec-"+ids[0]+".html":"appsec-selected-reports.zip";
+      const link=node("a");link.href=url;
+      const disposition = result.headers.get("Content-Disposition") || "";
+      const match = disposition.match(/filename="([A-Za-z0-9._-]+)"/i);
+      const stamp = new Date().toISOString().replace(/[-:]/g,"").replace(/\.\d+Z$/,"Z");
+      link.download=match ? match[1] : "appsec-reports-"+stamp+(ids.length===1?".html":".zip");
       document.body.appendChild(link);link.click();link.remove();
       setTimeout(()=>URL.revokeObjectURL(url),30000);
       notification(ids.length+" report(s) exported.");
@@ -188,7 +192,7 @@
   $("pipeline-delete").addEventListener("click",async()=>{
     const ids=[...selectedPipelines];
     if (!ids.length || bulkBusy || state.user?.role!=="admin") return;
-    if(window.prompt("Permanently delete "+ids.length+" selected image workflow(s), DB history and report evidence?\nPublished registry images and audit records stay.\nType DELETE to confirm:")!=="DELETE")return;
+    if(window.prompt("Permanently delete "+ids.length+" selected image workflow(s), DB history and report evidence?\nPending approvals for selected workflows will be discarded. Published registry images and audit records stay.\nType DELETE to confirm:")!=="DELETE")return;
     bulkBusy=true;updateBulkControls();
     const failed=[];let deleted=0,queued=0;
     try {
@@ -520,6 +524,12 @@
       checkbox.type = "checkbox";
       checkbox.value = String(w.pipeline_id || "");
       checkbox.setAttribute("aria-label", "Select " + w.requested_image);
+      if (!eligiblePipeline(w)) {
+        const reason = w.bulk_disabled_reason || "Workflow is not ready for bulk actions.";
+        checkbox.title = reason;
+        choose.title = reason;
+        choose.appendChild(node("span", "small-text muted", " · " + reason));
+      }
       checkbox.addEventListener("change", () => {
         if (checkbox.checked) selectedPipelines.add(checkbox.value);
         else selectedPipelines.delete(checkbox.value);

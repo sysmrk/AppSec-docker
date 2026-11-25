@@ -105,6 +105,8 @@ jobs:
               db.finish_pipeline(conn, pipeline_id, 'success')
               conn.execute("UPDATE pipeline_jobs SET status='success', pipeline_id=%s WHERE id=%s", (pipeline_id, session['scan_job_id']))
               assert mw.get_workflow(conn, session['id'], user)['state'] == 'awaiting_approval'
+              awaiting = next(w for w in ui_queries.image_workflow_history(conn, user)['items'] if str(w['id']) == session['id'])
+              assert awaiting['bulk_eligible'] and awaiting['bulk_disabled_reason'] is None
               try:
                   mw.decide(conn, session['id'], user, 'approve_patch', True)
                   raise AssertionError('unverified original scan was approved')

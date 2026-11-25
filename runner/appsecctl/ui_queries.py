@@ -145,15 +145,19 @@ def image_workflow_history(conn, user: dict[str, Any], page: int = 1, limit: int
       ) s ON true
       ORDER BY h.created_at DESC, h.kind, h.id DESC LIMIT %s OFFSET %s
     """, params + (limit, (page - 1) * limit))
-    terminal = {"completed", "completed_without_publish", "published", "failed",
-                "patch_failed", "publish_failed", "canceled"}
     items = []
     for row in rows:
         state = _state(row) if row["kind"] == "manual" else row["legacy_state"]
-        eligible = bool(row["pipeline_id"] and not row["active"]
-                        and row["pipeline_status"] in ("success", "failed", "policy_failed")
-                        and (row["kind"] != "manual" or state in terminal))
-        items.append({**row, "state": state, "bulk_eligible": eligible})
+        if row["active"] or state in ("queued", "scanning", "patch_queued", "patch_running", "publish_queued", "publishing", "running"):
+            reason = "Job is queued or running; wait until it finishes."
+        elif not row["pipeline_id"]:
+            reason = "No pipeline/report was created for this job."
+        elif row["pipeline_status"] not in ("success", "failed", "policy_failed"):
+            reason = "Pipeline has not finished executing."
+        else:
+            reason = None
+        items.append({**row, "state": state, "bulk_eligible": reason is None,
+                      "bulk_disabled_reason": reason})
     return {"items": items, "total": total, "page": page, "total_pages": total_pages, "limit": limit}
 
 
