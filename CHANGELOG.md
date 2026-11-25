@@ -1,5 +1,18 @@
 # Changelog
 
+## v2.0.0 — 2026-11-25
+
+- Full patch-enabled startup with deployment fingerprints and BuildKit/worker capability checks; MCP remains optional.
+- Verified OS and application scan evidence, full SBOM, known-fix OS eligibility, independent patched-image rescan and unified finding comparison.
+- Separate advisory recommendation and publication approval with documented risk reason; complete destination, remote manifest digest and identity verification.
+- Strict ordered runtime registry sources and scoped helper mappings, explicit scanner DB preparation and bounded stage diagnostics.
+- Private HTTPS Git scans with short-lived encrypted credentials and redacted findings.
+- Settings navigation, idle workflow bulk export/purge, timestamped HTML/SARIF and ZIP downloads.
+- Admin tool update management, cached official metadata, verified archive staging, HTTPS proxy and CA support.
+- Migrations 0014–0018, independent CI image severity gate, executable maintenance scripts, revised English documentation and least-privilege MCP role guidance.
+- Production gates remain: isolated execution, external SSO, multi-host affinity, immutable tool/DB evidence, tenant-aware analytics, reliable interrupted-job recovery and full infrastructure acceptance.
+
+
 ## v0.9.0 — 2026-11-22 — Guided UX, inventory and enterprise account foundation
 
 - Added interactive first-run wizard and modular Control Center pages for image inventory, scan history, CVE comparison, approvals, Registry management and account security.

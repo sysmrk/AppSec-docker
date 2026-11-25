@@ -1,72 +1,30 @@
-# AppSec-docker static security review (2026-11-22)
+# Security review and release acceptance — v2
 
-Scope: default branch code, Compose config, API, DB, secret scanning, CI and MCP design. Static review only: no Docker runtime or live Postgres/Harbor/BuildKit tests performed.
+Scope: tracked source, deployment configuration, operational scripts, API contracts, workflow and documentation. Static review and repository CI evidence; not a penetration test or production certification.
 
-## Implemented changes on main
+| Control | Implemented | Residual exposure / required acceptance |
+| --- | --- | --- |
+| Image identity | Validate original and patched Docker IDs and independent rescan; pull published manifest by digest | Mutable tags and different DB snapshots; signatures/provenance not enforced |
+| Remediation scope | Only known OS fixes; no automatic application-dependency remediation | Unsupported OS and incomplete coverage fail visibly; validate supported base images |
+| Authorization | Role/Project checks, explicit human decisions, optional distinct publication reviewer, risk reason | Legacy unassigned data, full tenant/authorization and race testing |
+| Execution | API socket-free; worker and scheduler own execution; stage timeouts | Docker socket and privileged BuildKit are high trust; separate hosts, leases and recovery needed |
+| Registry | Ordered approved pull sources; helper LLB mapping and deny policy; publication recheck | Not a firewall; package egress, auth realms, redirects, daemon configuration and tag immutability remain independent |
+| Secrets | Gitleaks redaction, HTTPS Git host restrictions, expiring encrypted credentials | Historical disk/S3/backups, DNS/egress controls, private Git acceptance |
+| Identity | PBKDF2, hashed sessions/keys, local lifecycle, TOTP encryption/replay prevention, recovery codes | No corporate SSO/SCIM; verify CSRF, rate limits, secrets manager and recovery |
+| Artifacts | Authenticated per-resource downloads, bounded export and admin cleanup | Presigned URL scope/expiry, backup retention, object versioning, partial deletion |
+| Updates | Admin approval, SHA256 archive check, stable tag/version verification, TLS | Not independent signatures; tag pinning, compatibility and rollback rehearsal |
+| Analytics | Metabase and optional read-only MCP | Global scope, separate authorization; restrict SQL columns/roles and remote gateway |
+| CI | Explicit image threshold gate independent of manual advisory; secret gate fails closed | Full real scanner/registry/browser E2E remains required |
 
-| Severity | Finding | Remediation | Verification |
-| --- | --- | --- | --- |
-| Critical | Gitleaks match/secret/line stored in raw JSON, DB and findings | Request scanner redaction, strip sensitive fields again before saving, hide legacy raw fields in API, irreversible Alembic cleanup | Unit tests + migrate; old disk/S3/backups need manual removal |
-| High | Reports downloadable with UUID by default | Force authenticated downloads and per-resource project checks | Negative API tests required |
-| High | Project-sensitive jobs and findings retrievable by arbitrary authenticated user | Enforce project membership for scoped detail/report/write/download endpoints; filter lists in SQL | Multi-tenant integration tests still required |
-| High | Arbitrary git clone target enables network reach to internal hosts | HTTPS and exact hostname allowlist; no embedded credentials or raw IP URLs | Unit tests; enforce DNS/egress ACLs too |
-| Medium | Session cookie sent without Secure | Set configurable Secure cookie, default true | Browser HTTPS validation |
-| Medium | Risk acceptance expiry optional | Enforce future timezone-aware expiry | API validation |
-| High | API/worker image privileges and Docker socket | API remains socket-free, workers still need dedicated isolation | Open item |
-| High | Privileged BuildKit, unpinned scanner images, network access, static default credentials | Operational guardrails; pin digests/rotate secrets before production | Open item |
-| Medium | No meaningful runtime integration tests | Add unit tests; Docker Compose validation exists | Open item |
+## Acceptance checklist
 
-## Residual risk and production gates
+- Verify clean install and migration on a copy of existing data; check deployed revision and full patch runtime.
+- Exercise cross-project access and direct report/artifact IDs with Admin, Operator and Viewer accounts.
+- Verify MFA recovery, temporary password enforcement, key revocation, CSRF and HTTPS cookies.
+- Test successful, failed, no-fix and unsupported image scans; verify actual post-patch image and digest.
+- Test source fallback, all-disabled fail-closed mode, permission revocation before publication, and uncertain push handling.
+- Test public and private repository scans, credential expiry and absence of raw secrets in reports/logs.
+- Validate release transport, checksum rejection, prior active version retention and timeout cleanup.
+- Validate history purge, restore, retention and independent Metabase/MCP authorization.
 
-- Worker socket gives broad access to host. Use isolated build hosts or remote BuildKit with restricted credentials; never co-locate with sensitive production workloads.
-- Review and pin release digests for Trivy, Gitleaks and BuildKit; validate patches in a staging registry before promotion.
-- Do not expose HTTP MCP directly to Internet: it is read-only but has organizational vulnerability data. Place it behind HTTPS, identity-aware OAuth proxy and least-privilege Postgres role.
-- DB cleanup does **not** scrub old report files, S3 objects or backups. Rotate secrets and purge/expire those copies under retention policy.
-- Existing global jobs remain shared across authenticated users; assign a Project for tenant isolation.
-- RBAC, CSRF, brute-force throttling, email/webhook SSRF, disaster recovery, vulnerability DB freshness and image signature verification require dedicated end-to-end review.
-- CI applies migrations to actual PostgreSQL and validates Metabase card SQL with EXPLAIN. Full image scan, Copa patch, registry push, browser interaction and upgrade against production datasets still require staging verification.
-
-## Review checklist
-
-```bash
-docker compose -f docker-compose.yaml config
-PYTHONPATH=runner python3 -m unittest discover -s tests -v
-./scripts/appsecctl.sh migrate
-docker compose --profile platform up -d postgres api nginx
-# Verify unknown user -> 401; cross-project user -> 403; approved user -> success.
-```
-
-
-## Optional MCP review
-
-The new `integrations/mcp/` service has no Docker socket, report volumes or write tools, uses a read-only PostgreSQL transaction, and has an opt-in Compose profile. It still exposes cross-project aggregates to whoever can connect: do not expose it outside the trusted Docker network or publicly without OAuth/TLS and a least-privilege DB account. `docs/mcp.md` provides deployment and AI client instructions. Unit tests verify SQL transaction read-only configuration, input caps and UUID validation.
-
-
-Additional follow-up: unscoped dashboard/history/teams/audit logs are admin-only; a source scan now cleans up the cloned workspace and Git no longer follows cross-host redirects. The `ci security` command is fail-closed when the scanner returns a non-success status. Legacy `DOWNLOADS_REQUIRE_AUTH=false` is ignored intentionally; authentication is always required.
-
-
-Scanner failure handling: Gitleaks uses an explicit detection exit code (17). Only 0 (no leaks) and 17 (leaks found) count as an executed scan; all other exit codes fail the job. The script also removes the temporary cloned repository in a finally block. `make down` now includes the optional MCP profile when shutting down the full stack.
-
-The CI test suite includes a real MCP STDIO tools/list handshake (no Postgres required). It verifies the expected read-only tool catalogue is discoverable by an official MCP client. HTTP transport, live SQL data, auth gateway and production scanning still require runtime tests.
-
-
-System Health records DB heartbeats (migration 0008), not OS or Docker Socket access. Worker heartbeats can be stale while a scan is busy. The UI avoids declaring a worker down based solely on this information. Operational monitoring and alerting remain separate production concerns.
-
-
-## Manual UI and sole Metabase analytics (2026-11-22)
-
-Grafana has been removed from Compose, Nginx and tracked provisioning. Its old named Docker volume is intentionally preserved to avoid data loss. Metabase is the only dashboard system, with Security Overview, Manual Operations and Vulnerability Trends dashboards. The cards are SQL-checked in CI, but Metabase's independent authentication and global database visibility require a restricted account and ideally a SELECT-only database role for production.
-
-Manual workflows persist a scan-only job, user/Project identity, human finish or approve-patch decision, approving user/time and optional **single-attempt** patch/push continuation. Original scan and policy status must be completed before approval. Backend requires role/Project write authorization, explicit confirmation and active patch setting; Worker also checks the feature flag. Project access is rechecked against current team membership, and unassigned manual runs are private to creator/admin.
-
-**Remaining production risks:** scanning Worker Docker Socket privilege, privileged BuildKit isolation, missing corporate OIDC integration and full CSRF/session assurance, cross-Project analytics access, image signing and digest pinning, full real Docker/Harbor/Copa/browser E2E tests and backup/restore validation. No demos or fake findings are created.
-
-
-## v0.9 — User safety and manual approvals
-
-- Separate **local image patch preparation** from **Registry publication**; original and patched scans have their own policies, and a second explicit human approval is required before Push. The destination must be registered with `allow_push`. Optional two-person separation is controlled by `APPSEC_REQUIRE_SECOND_APPROVER`.
-- User lifecycle now handles first-login password change, account disabling and role changes, safe last-admin protection, session revocation, API key rotation and failed-password lockout. User actions are audited.
-- Optional TOTP Authenticator MFA uses encrypted secrets (operator-managed Fernet key), replay-resistant one-time steps and hashed one-use recovery codes. This is **not** OIDC/SAML/LDAP or enterprise IdP integration.
-- Browser writes using session cookies require a custom first-party request header. Invalid API keys cannot fall back to existing cookies. More comprehensive CSRF/session penetration testing remains necessary.
-- Structured, secret-safe operation errors show codes, hints and request IDs rather than raw command output. Inventory and CVE comparison use real scoped PostgreSQL data; Registry Manager stores host metadata, not passwords.
-- **Remaining risks:** privileged Worker Docker Socket/BuildKit, multi-host local patch artifact portability, cross-Project global analytics, remote SSO/SCIM, full browser/Trivy/Copa/Registry E2E, backup/restore and dependency digest pinning. No production readiness signoff has been issued.
+CI covers Python/JS/Compose, automated tests, PostgreSQL migrations/SQL, selected real BuildKit source-policy and repository-scanner smoke tests and MCP STDIO handshake. It does not establish production security, all supported image families, remote OAuth, multi-host affinity or disaster recovery. Do not claim production signoff from CI alone.

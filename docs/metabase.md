@@ -17,9 +17,9 @@ The `start` command initializes the Metabase database (when necessary), starts i
 
 | Metabase dashboard | What you see |
 | --- | --- |
-| **AppSec Security Overview** | Pipeline status, CVEs by severity and phase, Copa reduction, recent pipelines, top vulnerable packages, policy status and report links |
+| **AppSec Security Overview** | Pipeline status, CVEs by severity and phase, Copa reduction, recent pipelines, top vulnerable packages, recorded policy status and report links |
 | **AppSec Manual Operations** | Workflow stages, approvals waiting for an operator, recorded decisions, scan/patch queue states and patch outcomes |
-| **AppSec Vulnerability Trends** | Severity counts by scan date, most frequent CVEs by image and recent failed policy gates |
+| **AppSec Vulnerability Trends** | Severity counts by scan date, most frequent CVEs by image and recorded policy outcomes and execution failures |
 
 Every card is a real SQL query against the AppSec database. An empty dashboard means you have not yet performed that operation. **No demo or mock data** is seeded.
 
@@ -54,3 +54,7 @@ The Control Center remains the place for human actions: manual scans, cancellati
 ## New Image Inventory vs Metabase
 
 The **Images & scans** view in Control Center offers searchable individual image history and a two-scan CVE comparison. Metabase remains the **single business intelligence dashboard** for cross-image aggregated metrics, waiting approvals, policy and vulnerability trends. No Grafana and no synthetic data. Metabase is **not** a human approval system. Its independent accounts and global SQL access require a trusted network, limited users and a SELECT-only DB role before enterprise deployment.
+
+## Interpretation in v2
+
+Initial manual scans do not create a policy verdict. Post-patch recommendations are advisory; explicit CI gates may return passed/failed. Existing cards may retain legacy labels or filters after reprovisioning, because provisioning does not overwrite customized existing cards. Review those filters against the current schema and distinguish execution status from a security recommendation. The canonical per-image evidence is the Control Center report.

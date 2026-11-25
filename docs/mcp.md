@@ -14,7 +14,7 @@ MCP tools (no mutation / scan / patch / push / shell execution):
 | `list_image_vulnerabilities` | `pipeline_id`, optional `phase`, `limit` | CVEs and versions; defaults to `original`, use `patched` only if a patch scan exists |
 | `list_secret_scan_jobs` | optional `limit` | Secret scan job summary |
 | `get_secret_findings` | `job_id`, optional `limit` | Rule, severity and file/line; **never secret value or evidence** |
-| `get_policy_results` | `pipeline_id`, `limit` | Policy pass/fail + violations |
+| `get_policy_results` | `pipeline_id`, `limit` | Recorded advisory or CI policy outcomes and violations |
 
 Responses are JSON-compatible. Each query is a bounded, parameterized `SELECT`. The Python/PostgreSQL session sets `default_transaction_read_only=on` as a defense in depth. MCP tools operate over the existing database, so if no scans have run, their output is empty; MCP does not create scans for you.
 
@@ -67,8 +67,12 @@ Default Compose DB credentials are only a developer convenience. Do not expose a
 CREATE ROLE appsec_mcp LOGIN PASSWORD 'REPLACE_WITH_RANDOM_PASSWORD';
 GRANT CONNECT ON DATABASE appsec TO appsec_mcp;
 GRANT USAGE ON SCHEMA public TO appsec_mcp;
-GRANT SELECT ON ALL TABLES IN SCHEMA public TO appsec_mcp;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO appsec_mcp;
+GRANT SELECT (id, project_id, requested_image, status, started_at, finished_at) ON pipeline_runs TO appsec_mcp;
+GRANT SELECT (id, pipeline_id, image_ref, phase, status, critical_count, high_count, medium_count, low_count, started_at, finished_at) ON scan_runs TO appsec_mcp;
+GRANT SELECT (scan_id, vulnerability_id, pkg_name, installed_version, fixed_version, severity, title, primary_url) ON vulnerabilities TO appsec_mcp;
+GRANT SELECT (id, project_id, kind, target, status, finding_count, high_count, medium_count, started_at, finished_at) ON security_jobs TO appsec_mcp;
+GRANT SELECT (id, job_id, rule_id, severity, title, description, location, created_at) ON security_findings TO appsec_mcp;
+GRANT SELECT (id, pipeline_id, scan_id, status, violations, created_at) ON policy_results TO appsec_mcp;
 ```
 
 In `.env` (URL-encode special characters in the password):
@@ -78,7 +82,7 @@ APPSEC_MCP_DATABASE_URL=postgresql://appsec_mcp:URL_ENCODED_PASSWORD@postgres:54
 APPSEC_MCP_HOST_PORT=8091
 ```
 
-Keep this file out of Git. Production should use a Docker/Kubernetes secret solution rather than an environment variable where supported. The MCP container has no Docker socket, no report volume, no privileged mode, no Linux capabilities and a read-only filesystem. The local HTTP port does **not** implement OAuth or API-key authorization: its only ingress safety boundary is the loopback binding. Externalize it only through a TLS termination and proper identity-aware OAuth 2.0 gateway with per-user access policy, or use the local STDIO option below.
+Do not grant access to credential, user, session, raw report or audit tables. If an older installation used broad grants, revoke them and verify effective privileges before applying the narrower grants above. Keep this file out of Git. Production should use a Docker/Kubernetes secret solution rather than an environment variable where supported. The MCP container has no Docker socket, no report volume, no privileged mode, no Linux capabilities and a read-only filesystem. The local HTTP port does **not** implement OAuth or API-key authorization: its only ingress safety boundary is the loopback binding. Externalize it only through a TLS termination and proper identity-aware OAuth 2.0 gateway with per-user access policy, or use the local STDIO option below.
 
 ## 5. Connect a local AI — Claude Desktop via STDIO
 
@@ -183,13 +187,15 @@ Never paste production credentials into AI prompts. Do not enable unrestricted s
 
 ## Control Center vs MCP
 
-The Control Center is a real, authenticated, Project-aware browser interface for scan-only jobs, vulnerabilities and report downloads. MCP remains an optional read-only analytics integration; it creates no scans, enables no patching, and returns empty results until real scans run. See [user guide](user-guide.md).
+The Control Center is a real, authenticated, Project-aware browser interface for guided scan and remediation workflows, vulnerabilities and report downloads. MCP remains an optional read-only analytics integration; it creates no scans, enables no patching, and returns empty results until real scans run. See [user guide](user-guide.md).
 
 
 ## Human approvals and AI boundaries
 
 The manual workflow starts a real scan through Control Center, lets an authorized person inspect findings and requires explicit consent for optional patch/push. Metabase is the only analytics dashboard. MCP stays read-only: it cannot create manual workflows, approve registry writes, run arbitrary SQL or launch Docker. See [manual workflow](workflow.md).
 
-## v0.9 human workflow safety
+## v2 human workflow safety
 
 Registry approval, interactive user management and MFA are **not** MCP tools. MCP stays read-only and optional, and does not impersonate AppSec Project users. Its PostgreSQL queries remain globally scoped, so use an approved SELECT-only account and authenticated local or TLS/OAuth transport. All manual scan and publication decisions belong in AppSec Control Center.
+
+The current MCP aggregate does not include UNKNOWN counts, and individual tools have bounded result limits. Use the canonical report for full evidence; do not infer a clean image from omitted fields or truncated tool results.

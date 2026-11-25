@@ -4,7 +4,7 @@ The built-in authentication model is intended for a self-hosted tool and an incr
 
 ## User lifecycle
 
-Admins can use **Users & access** to inspect a user, roles, disabled/locked state, last login, password update, API key rotation, MFA status, Team memberships and recent web sessions. Actions include:
+Admins can use **Settings → Users & access** to inspect a user, roles, disabled/locked state, last login, password update, API key rotation, MFA status, Team memberships and recent web sessions. Actions include:
 - Create account with a temporary password requiring first-login change
 - Set display name or global role (`admin`, `operator`, `viewer`)
 - Disable/re-enable an account; disabled accounts lose login and old API access
@@ -29,7 +29,7 @@ A Team owns zero or more Projects, and users have membership roles `owner`, `mai
 
 ## Human approval / Registry governance
 
-Manual scan starts Trivy/SBOM/Policy read-only. A human approves **local** Copa preparation and scanning; a **separate** human publication approval requires passed final Policy, registered `allow_push` Registry destination and patch-enabled Worker. Setting `APPSEC_REQUIRE_SECOND_APPROVER=true` requires another authorized reviewer. Both decisions are persisted. Ambiguous Registry Push is single-attempt and must be reconciled manually.
+Manual scan starts Trivy/SBOM without an initial policy verdict. A human approves **local** Copa preparation and scanning only when verified OS fixes exist. A **separate** human publication approval requires a successful verified rescan, a post-patch advisory recommendation and a registered `allow_push` destination; not-recommended images require a documented risk reason. Setting `APPSEC_REQUIRE_SECOND_APPROVER=true` requires another authorized reviewer. Both decisions are persisted. Ambiguous Registry Push is single-attempt and must be reconciled manually.
 
 ## Metabase / MCP boundaries
 
@@ -45,3 +45,5 @@ Metabase is the only visualization/BI integration, with distinct logins and **gl
 - Per-Project Metabase/analytics segregation rather than global shared dashboards
 
 Treat the current release as a functional upgrade requiring staging validation, not a fully certified Enterprise product.
+
+Private repository credentials are encrypted for the specific job, expire after one hour, and are consumed once by the worker. The same MFA encryption key is required for this feature. This is separate from Registry credentials and is not an enterprise secrets vault.
