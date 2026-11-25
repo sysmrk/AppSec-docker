@@ -81,3 +81,17 @@ class HistoryPaginationTests(unittest.TestCase):
         self.assertEqual(conn.calls[-1][1][-2:], (20, 40))
         self.assertIn("w.created_by", conn.calls[0][0])
         self.assertIn("NOT EXISTS", conn.calls[0][0])
+
+class SettingsNavigationTests(unittest.TestCase):
+    def test_sidebar_only_workspace_and_settings(self):
+        root = Path(__file__).resolve().parents[1] / "runner/appsecctl/webui"
+        html = (root / "index.html").read_text()
+        nav = html.split('aria-label="Main navigation"',1)[1].split('</nav>',1)[0]
+        self.assertIn('data-view="settings"',nav)
+        for name in ("results","tools","registries","users","projects","health","integrations","profile"):
+            self.assertNotIn('data-view="'+name+'"',nav)
+        self.assertIn('id="view-results"',html)
+        self.assertIn('id="report-back"',html)
+        tabs = html.split('aria-label="Settings categories"',1)[1].split('</nav>',1)[0]
+        for name in ("tools","registries","users","projects","health","integrations","profile"):
+            self.assertIn('data-view="'+name+'"',tabs)

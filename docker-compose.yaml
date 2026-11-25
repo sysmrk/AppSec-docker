@@ -377,6 +377,8 @@ services:
     environment:
       <<: *runner-env
       SCHEDULER_POLL_SECONDS: ${SCHEDULER_POLL_SECONDS:-60}
+      APPSEC_TOOL_HTTPS_PROXY: ${APPSEC_TOOL_HTTPS_PROXY:-}
+      APPSEC_TOOL_CA_FILE: ${APPSEC_TOOL_CA_FILE:-}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /usr/bin/docker:/usr/local/bin/docker:ro

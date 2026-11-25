@@ -35,3 +35,17 @@ Administration → Tool updates checks official stable GitHub releases every six
 
 ### Patch eligibility
 The full original Trivy evidence determines whether Copa has any OS findings with a known fix (all severities). Application dependencies are counted separately. Invalid evidence blocks approval; a valid zero-candidate scan offers Finish without patching and does not create a patch job. Direct patch mode skips Copa and records an audit event in this case. Older failed runs are retained as historical evidence; start a new scan-only workflow, never blindly retry a patch or publication. A skipped patch is not proof of a secure image.
+
+### Settings and release connectivity
+Settings groups Tool updates, Registries, Users & access, Projects & policies, System health, Integrations and My profile/MFA. Reports are opened from a selected scan/workflow, not an empty sidebar page. The HTML finding table omits Triage; UNKNOWN rating evidence stays in the severity cell and raw data.
+
+Release checks retry transient HTTPS errors and show the failing stage/host and reason without disclosing proxy credentials or signed URLs. If checks fail, last-known release metadata is not presented as freshly checked. Official release metadata is cached for the exact approved version in the scheduler's tool-updates volume. Scanner updates use the previously approved version and configured OCI registry priority without a redundant GitHub check. Copa checks SHA256 against official cached metadata before installation. For restricted networks set APPSEC_TOOL_HTTPS_PROXY in .env and restart using ./appsec start --patching. APPSEC_TOOL_CA_FILE optionally points to a mounted enterprise CA file inside scheduler; normal TLS verification remains enabled.
+
+For offline Copa asset transfer, first obtain a successful official release check (or use its previously cached metadata), download the exact official archive on a trusted connected host, then stage it with:
+
+```bash
+docker compose exec -T scheduler mkdir -p /tool-updates/inbox
+docker compose cp copa_0.15.0_linux_amd64.tar.gz scheduler:/tool-updates/inbox/
+````
+
+Then choose Settings → Tool updates → Apply/Retry update. The scheduler refuses a mismatched digest or an unknown release. Do not upload arbitrary binaries or disable TLS. If the API itself is unreachable and no trusted metadata has been cached, use approved network/proxy access first. A failed download does not replace the active binary.

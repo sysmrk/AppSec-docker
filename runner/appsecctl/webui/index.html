@@ -34,19 +34,15 @@
     <aside class="sidebar">
       <div class="brand"><div class="mark">◆</div><div><strong>APPSEC</strong><span>CONTROL CENTER</span></div></div>
       <nav aria-label="Main navigation">
+        <div class="nav-group-label">WORKSPACE</div>
         <button class="nav-item active" data-view="overview"><span>▦</span> Overview</button>
-        <button class="nav-item" data-view="scan"><span>⊕</span> New manual scan</button>
+        <button class="nav-item" data-view="scan"><span>⊕</span> Image scan</button>
+        <button class="nav-item" data-view="secrets"><span>⌘</span> Repository scan</button>
         <button class="nav-item" data-view="guided"><span>▤</span> My workflows</button>
-        <button class="nav-item" data-view="inventory"><span>▣</span> Images & scans</button>
+        <button class="nav-item" data-view="inventory"><span>▣</span> Images &amp; scans</button>
         <button class="nav-item" data-view="approvals"><span>✓</span> Approvals</button>
-        <button class="nav-item" data-view="secrets"><span>⌘</span> Scan repository</button>
-        <button class="nav-item" data-view="results"><span>≡</span> Results</button>
-        <button class="nav-item" data-view="settings"><span>⚙</span> Administration <span id="tool-update-count" hidden></span></button>
-        <button class="nav-item" data-view="users"><span>♙</span> Users & access</button>
-        <button class="nav-item" data-view="registries"><span>▥</span> Registries</button>
-        <button class="nav-item" data-view="health"><span>♡</span> System health</button>
-        <button class="nav-item" data-view="integrations"><span>⬡</span> Integrations</button>
-        <button class="nav-item" data-view="profile"><span>◉</span> My profile</button>
+        <div class="nav-group-label">MANAGEMENT</div>
+        <button class="nav-item" data-view="settings"><span>⚙</span> Settings <span id="tool-update-count" hidden></span></button>
       </nav>
       <div class="sidebar-foot">
         <a id="metabase-link" href="#" target="_blank" rel="noopener">Metabase ↗</a>
@@ -66,6 +62,18 @@
       </header>
       <main id="main" tabindex="-1">
         <div id="global-notice" class="notice" role="status" aria-live="polite" hidden></div>
+        <div id="settings-navigation" class="settings-navigation" hidden>
+          <div class="settings-heading"><p class="eyebrow">MANAGEMENT</p><h1>Settings</h1></div>
+          <nav aria-label="Settings categories" class="settings-tabs">
+            <button type="button" data-view="tools" data-admin-setting>Tool updates</button>
+            <button type="button" data-view="registries" data-admin-setting>Registries</button>
+            <button type="button" data-view="users" data-admin-setting>Users &amp; access</button>
+            <button type="button" data-view="projects" data-admin-setting>Projects &amp; policies</button>
+            <button type="button" data-view="health" data-admin-setting>System health</button>
+            <button type="button" data-view="integrations">Integrations</button>
+            <button type="button" data-view="profile">My profile &amp; MFA</button>
+          </nav>
+        </div>
         <section id="view-overview" class="view">
           <div class="page-heading"><div><p class="eyebrow">SECURITY OPERATIONS</p><h1>Overview</h1><p class="muted">Live data from your AppSec PostgreSQL database.</p></div><button id="refresh-button" class="outline">↻ Refresh</button></div>
           <div class="stats">
@@ -148,7 +156,7 @@
           </form>
         </section>
         <section id="view-results" class="view" hidden>
-          <div class="page-heading"><div><p class="eyebrow">FINDINGS & REPORTS</p><h1>One clear report</h1><p class="muted">Initial scan, post-fix scan, changes and recommendation — all in one view with optional raw evidence.</p></div></div>
+          <div class="page-heading"><div><p class="eyebrow">FINDINGS & REPORTS</p><h1>Scan report</h1><p class="muted">Initial scan, post-fix scan, changes and recommendation — all in one view with optional raw evidence.</p></div><button id="report-back" type="button" class="outline">← Back</button></div>
           <div id="result-detail" class="panel"><div class="empty-state">No result selected yet. Open a scan from Overview or My workflows.</div></div>
         </section>
         <section id="view-health" class="view" hidden>
@@ -166,7 +174,16 @@
         <section id="view-users" class="view" hidden>
           <div class="page-heading"><div><p class="eyebrow">IDENTITY GOVERNANCE</p><h1>Users & access</h1><p class="muted">Account lifecycle, roles, active sessions and one-time API keys.</p></div><button id="users-refresh" class="outline">↻ Refresh</button></div>
           <div class="table-wrap"><table><thead><tr><th>User</th><th>Role</th><th>Status</th><th>Last login</th><th></th></tr></thead><tbody id="users-body"></tbody></table></div>
-          <div id="user-detail" class="panel result-panel"><div class="empty-state">Select a user to review access and security actions. Create new users in Administration.</div></div>
+          <div id="user-detail" class="panel result-panel"><div class="empty-state">Select a user to review access and security actions.</div></div>
+            <form id="user-form" class="panel form-panel"><h2>Create a user</h2>
+              <label for="new-username">Username</label><input id="new-username" autocomplete="off" required minlength="3">
+              <label for="new-displayname">Display name</label><input id="new-displayname" required>
+              <label for="new-user-role">Role</label><select id="new-user-role"><option value="operator">Operator</option><option value="viewer">Viewer</option><option value="admin">Administrator</option></select>
+              <label for="new-user-password">Temporary password (12+ characters)</label><input id="new-user-password" type="password" required minlength="12" autocomplete="new-password">
+              <p class="hint">New human users must change their temporary password at first login. API keys are disabled by default and can be issued later under Users & access.</p>
+              <button type="submit" class="primary">Create user</button>
+              <div id="new-user-result" class="info-note" role="status" aria-live="polite"></div>
+            </form>
         </section>
         <section id="view-registries" class="view" hidden>
           <div class="page-heading"><div><p class="eyebrow">REGISTRY GOVERNANCE</p><h1>Registries</h1><p class="muted">Configure trusted HTTPS registries and approved publishing scope. Credentials stay on the worker or Secret Manager.</p></div></div>
@@ -238,12 +255,17 @@
             <button type="submit" class="danger-button">Disable MFA and revoke sessions</button>
           </form>
         </section>
-        <section id="view-settings" class="view" hidden>
-          <div class="page-heading"><div><p class="eyebrow">ADMINISTRATION</p><h1>Projects & policies</h1><p class="muted">Configure Project ownership and security gates without editing raw database records.</p></div></div>
-          <section class="panel form-panel"><div class="section-heading"><h2>Tool updates</h2><button type="button" id="tool-check" class="outline">Check now</button></div>
+        <section id="view-tools" class="view" hidden>
+          <div class="page-heading"><div><h1>Tool updates</h1><p class="muted">Manage scanner and patch engine releases.</p></div></div>
+          <section class="panel tool-update-panel"><div class="section-heading"><h2>Installed tools</h2><button type="button" id="tool-check" class="outline">Check now</button></div>
             <p class="hint">Checks stable official releases every six hours. Admin approval applies verified updates to future jobs. Scanner pulls use approved registry priority; Copa uses its official release SHA256.</p>
             <div class="table-wrap"><table><thead><tr><th>Tool</th><th>Installed</th><th>Latest stable</th><th>State</th><th>Checked</th><th>Action</th></tr></thead><tbody id="tool-updates-body"></tbody></table></div>
+          <p class="hint">If GitHub is unreachable, verify the scheduler's DNS, HTTPS egress, proxy and CA trust. A cached release may be applied using the official SHA256-verified Copa archive staged by an administrator; see deployment documentation.</p>
           </section>
+        </section>
+        <section id="view-projects" class="view" hidden>
+          <div class="page-heading"><div><p class="eyebrow">ADMINISTRATION</p><h1>Projects & policies</h1><p class="muted">Configure Project ownership and security gates without editing raw database records.</p></div></div>
+
           <div class="integration-grid">
             <form id="team-form" class="panel form-panel"><h2>Create team</h2>
               <label for="team-name">Team name</label><input id="team-name" required minlength="2">
@@ -270,15 +292,7 @@
               <p class="hint">Evaluated after the second scan only. Results are Recommended / Not recommended; human approval decides publication.</p>
               <button type="submit" class="primary">Save policy</button>
             </form>
-            <form id="user-form" class="panel form-panel"><h2>Create a user</h2>
-              <label for="new-username">Username</label><input id="new-username" autocomplete="off" required minlength="3">
-              <label for="new-displayname">Display name</label><input id="new-displayname" required>
-              <label for="new-user-role">Role</label><select id="new-user-role"><option value="operator">Operator</option><option value="viewer">Viewer</option><option value="admin">Administrator</option></select>
-              <label for="new-user-password">Temporary password (12+ characters)</label><input id="new-user-password" type="password" required minlength="12" autocomplete="new-password">
-              <p class="hint">New human users must change their temporary password at first login. API keys are disabled by default and can be issued later under Users & access.</p>
-              <button type="submit" class="primary">Create user</button>
-              <div id="new-user-result" class="info-note" role="status" aria-live="polite"></div>
-            </form>
+
             <div class="panel"><h2>Team membership</h2>
               <p class="muted">Review users and grant Project access through team membership.</p>
               <form id="team-member-form" class="form-panel flat-form">

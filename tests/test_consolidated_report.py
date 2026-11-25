@@ -12,7 +12,7 @@ class ConsolidatedReportTests(unittest.TestCase):
         }
         text = render("pipeline", payload)
         self.assertIn("Initial scan", text)
-        self.assertIn("No patched scan yet", text)
+        self.assertIn("No patched scan.", text)
         self.assertIn("Recommendation pending", text)
         self.assertIn("After patch", text)
 
@@ -66,5 +66,7 @@ class UnifiedFindingTests(unittest.TestCase):
         self.assertIn("CVE-test-299", html)
         self.assertIn('finding-state fixed', html)
         self.assertIn("vendor: HIGH", html)
+        self.assertNotIn("<th>Triage</th>", html)
+        self.assertEqual(html.count("<th>"), 8)
         self.assertNotIn("LOW-1", html)
         self.assertNotIn('finding-state fixed', comparison_table(compare_findings(a, None, False), False))

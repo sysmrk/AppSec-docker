@@ -125,7 +125,7 @@ def unknown_detail(v):
         for name, data in v["cvss"].items():
             if isinstance(data, dict):
                 scores.extend(str(name) + " " + key + "=" + str(data[key]) for key in ("V3Score", "V2Score", "V40Score") if key in data)
-    return "Trivy severity unavailable; manual triage. " + ("Vendor: " + ratings + ". " if ratings else "") + ("CVSS: " + ", ".join(scores) if scores else "No CVSS in scan evidence.")
+    return "Unrated by Trivy. " + ("Vendor: " + ratings + ". " if ratings else "") + ("CVSS: " + ", ".join(scores) if scores else "No CVSS in scan evidence.")
 
 
 def comparison_table(rows, verified, patched=None):
@@ -144,14 +144,16 @@ def comparison_table(rows, verified, patched=None):
         key = (v["class"], v["type"], stable_target(str(v["target"] or "")), v["package"])
         installed_after = new["installed"] if new else ", ".join(sorted(versions.get(key, []))) or None
         body.append("<tr>" + "".join("<td>" + e(x) + "</td>" for x in (
-            v["cve"], sev, v["package"], old["installed"] if old else None,
-            installed_after, v["fixed"] or "No known fix", v["target"]))
+            v["cve"],))
+            + "<td>" + e(sev) + ("<small class=\"unknown-evidence\">" + e(details) + "</small>" if details else "") + "</td>"
+            + "".join("<td>" + e(x) + "</td>" for x in (v["package"], old["installed"] if old else None,
+                installed_after, v["fixed"] or "No known fix", v["target"]))
             + '<td><span class="finding-state ' + ("fixed" if state == "Fixed" else "pending-state") + '">' + e(state)
-            + '</span></td><td>' + e(details or v["status"] or "—") + "</td></tr>")
+            + '</span></td></tr>")
     return ('<p class="muted">Fixed = no longer detected in a verified comparable rescan; not proof of remediation. '
             'LOW-only findings are excluded from this report view; raw evidence and policy counts are retained.</p>'
             '<div class="table-scroll"><table><thead><tr><th>CVE / ID</th><th>Severity</th><th>Package</th>'
-            '<th>Before</th><th>After</th><th>Vendor fix version</th><th>Target</th><th>Status</th><th>Triage</th>'
+            '<th>Before</th><th>After</th><th>Vendor fix version</th><th>Target</th><th>Status</th>'
             '</tr></thead><tbody>' + "".join(body) + "</tbody></table></div>")
 
 
@@ -332,7 +334,7 @@ details{border:1px solid #e2eaf3;border-radius:12px;margin:10px 0;padding:16px}
 summary{cursor:pointer;font-weight:750}details[open] summary{margin-bottom:12px}
 .table-scroll{overflow:auto}table{border-collapse:collapse;width:100%;font-size:12px}
 th,td{padding:9px 11px;border-bottom:1px solid #edf1f5;text-align:left}th{background:#f6f9fc;white-space:nowrap}
-.finding-state{display:inline-block;padding:5px 9px;border-radius:5px;font-weight:750;white-space:nowrap}.finding-state.fixed{color:#116142;background:#e6f8f0;border:1px solid #8fcea9}.finding-state.pending-state{color:#934a13;background:#fff1dd;border:1px solid #eec98e}
+.unknown-evidence{display:block;font-size:11px;color:#69788b;max-width:260px;overflow-wrap:anywhere;margin-top:4px}.finding-state{display:inline-block;padding:5px 9px;border-radius:5px;font-weight:750;white-space:nowrap}.finding-state.fixed{color:#116142;background:#e6f8f0;border:1px solid #8fcea9}.finding-state.pending-state{color:#934a13;background:#fff1dd;border:1px solid #eec98e}
 .muted,footer{font-size:12px;color:#6a788e;line-height:1.65}footer{padding:18px 8px}
 @media(max-width:750px){.summary{grid-template-columns:repeat(2,minmax(0,1fr))}.severity-row{grid-template-columns:75px 1fr 80px}.report-top{flex-direction:column}.section-title{display:block}}
 @media print{body{background:white}main{margin:0;max-width:none}section,.metric{break-inside:avoid}}

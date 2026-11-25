@@ -58,10 +58,9 @@
   function showApp(user) {
     state.user = user;
     $("current-user").textContent = user.username + " · " + user.role;
-    document.querySelector('[data-view="health"]').hidden = user.role !== "admin";
-    document.querySelector('[data-view="settings"]').hidden = user.role !== "admin";
-    document.querySelector('[data-view="registries"]').hidden = user.role !== "admin";
-    document.querySelector('[data-view="users"]').hidden = user.role !== "admin";
+    document.querySelectorAll(".nav-item").forEach(n => { n.hidden = false; });
+    document.querySelectorAll("[data-admin-setting]").forEach(n => { n.hidden = user.role !== "admin"; });
+    $("tool-update-count").hidden = true;
     const readOnly = user.role === "viewer";
     document.querySelector('[data-view="scan"]').hidden = readOnly;
     document.querySelector('[data-view="secrets"]').hidden = readOnly;
@@ -70,20 +69,35 @@
     }
     loginScreen.hidden = true; app.hidden = false;
   }
+  const settingViews = new Set(["tools","registries","users","projects","health","integrations","profile"]);
+  const adminSettings = new Set(["tools","registries","users","projects","health"]);
+  let reportReturnView = "overview";
   function selectView(view) {
+    if (state.user?.must_change_password) view = "profile";
+    else if (view === "settings") view = state.user?.role === "admin" ? "tools" : "profile";
+    if (adminSettings.has(view) && state.user?.role !== "admin") view = "profile";
+    if (view === "results" && state.view !== "results") reportReturnView = state.view;
     state.view = view;
+    const inSettings = settingViews.has(view);
+    $("settings-navigation").hidden = !inSettings || Boolean(state.user?.must_change_password);
+    document.querySelectorAll(".settings-tabs [data-view]").forEach(n => {
+      n.classList.toggle("active", n.dataset.view === view || (inSettings && n.dataset.view === "settings") || (view === "results" && n.dataset.view === reportReturnView));
+      if (n.dataset.view === view) n.setAttribute("aria-current","page");
+      else n.removeAttribute("aria-current");
+    });
     document.querySelectorAll(".view").forEach(v => v.hidden = v.id !== "view-" + view);
     document.querySelectorAll(".nav-item").forEach(n => n.classList.toggle("active", n.dataset.view === view));
     $("breadcrumb").textContent = ({
       overview: "Overview", scan: "New scan", secrets: "Repository scan",
       results: "Results", guided: "My workflows", inventory: "Images & scans",
       approvals: "Approvals", users: "Users & access", registries: "Registries",
-      profile: "My profile", settings: "Administration", health: "System health",
+      profile: "Settings / My profile", tools: "Settings / Tool updates", projects: "Settings / Projects & policies", health: "Settings / System health",
       integrations: "Integrations"
     })[view] || "AppSec";
     if (view === "health") refreshSystemHealth().catch(error => notification(error.message, true));
     if (view === "guided") refreshGuided().catch(error => notification(error.message, true));
-    if (view === "settings" && state.user?.role === "admin") loadAdminData().catch(error => notification(error.message, true));
+    if (view === "projects" && state.user?.role === "admin") loadAdminData().catch(error => notification(error.message, true));
+    if (view === "tools" && state.user?.role === "admin") loadToolUpdates().catch(error => notification(error.message, true));
     quiet();
     document.dispatchEvent(new CustomEvent("appsec:view", { detail: { view } }));
   }
@@ -781,11 +795,14 @@
     for (const item of items) {
       const row = node("tr");
       cell(row, item.tool); cell(row, item.current_version || "Not detected"); cell(row, item.latest_version || "Not checked");
-      const status = cell(row, item.status); if(item.last_error) status.appendChild(node("p","small-text",item.last_error));
+      const names = {current:"Current",available:"Update available",failed:"Update failed",check_failed:"Release check failed",queued:"Queued",applying:"Applying",unchecked:"Not checked"};
+      const status = cell(row, ""); status.appendChild(statusPill(names[item.status] || item.status));
+      if(item.last_error) status.appendChild(node("p","small-text",item.last_error));
+      if(item.status === "check_failed" && item.latest_version) status.appendChild(node("p","info-note","Latest stable is the last known release, not a fresh check."));
       cell(row, date(item.checked_at));
       const action=cell(row,"");
       if(item.update_available && !["queued","applying"].includes(item.status)) {
-        action.appendChild(button("Apply update", async () => {
+        action.appendChild(button(item.status === "failed" ? "Retry update" : "Apply update", async () => {
           if(!window.confirm("Apply "+item.tool+" "+item.latest_version+" to future jobs?"))return;
           try { await request("/api/tool-updates/"+encodeURIComponent(item.tool)+"/apply",{method:"POST"});
             await loadToolUpdates();notification("Update queued; watch the state here.");
@@ -853,6 +870,7 @@
         ". Temporary password must be changed at first login. API access is NOT issued automatically; an admin can issue a key in Users & access.";
       notification("New user created.");
       await loadAdminData();
+      document.dispatchEvent(new CustomEvent("appsec:view", {detail:{view:"users"}}));
     } catch (error) {
       $("new-user-result").textContent = "";
       notification(error.message, true);
@@ -912,6 +930,7 @@
     showLogin();
   });
   document.querySelectorAll("[data-view]").forEach(button => button.addEventListener("click", () => selectView(button.dataset.view)));
+  $("report-back").addEventListener("click", () => selectView(reportReturnView === "results" ? "overview" : reportReturnView));
   document.addEventListener("appsec:open-workflow", event => openGuided(event.detail.id));
   document.addEventListener("appsec:open-pipeline", event => openPipeline(event.detail.id));
   $("refresh-button").addEventListener("click", async () => { quiet(); try { await refreshOverview(); } catch (e) { notification(e.message, true); } });
