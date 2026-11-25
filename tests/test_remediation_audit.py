@@ -80,3 +80,24 @@ class RemediationAuditTests(unittest.TestCase):
         report = p["scans"][0]["raw_report"]
         expected = scan_evidence.copa_report(report)
         self.assertEqual(audit.input_manifest(expected), audit.input_manifest(dict(reversed(list(expected.items())))))
+
+    def test_benchmark_has_no_fabricated_patch_provenance(self):
+        p = payload()
+        r = audit.analyze({"scans":p["scans"]}, benchmark=True)
+        self.assertEqual(r["comparison"], "benchmark_observed")
+        self.assertEqual(r["input_status"], "not_recorded")
+        self.assertIsNone(r["recorded_input"])
+
+    def test_offline_summary_cli(self):
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+        from contextlib import redirect_stdout
+        import io
+        import json
+        with TemporaryDirectory() as d:
+            path = Path(d)/"summary.json"
+            path.write_text(json.dumps(payload()))
+            out = io.StringIO()
+            with redirect_stdout(out):
+                self.assertEqual(audit.main(["--summary",str(path)]),0)
+            self.assertEqual(json.loads(out.getvalue())["comparison"],"observed")

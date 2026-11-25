@@ -17,16 +17,11 @@ class ConsolidatedReportTests(unittest.TestCase):
         self.assertIn("After patch", text)
 
     def test_two_phases_and_advisory(self):
-        payload = {
-            "pipeline": {"requested_image": "<script>alert(1)</script>", "status": "success"},
-            "scans": [
-                {"id": "s1", "phase": "original", "status": "success", "critical_count": 4, "high_count": 0, "raw_report": {"_appsec": {"verified": True, "image_id": "original", "scope": "full"}}},
-                {"id": "s2", "phase": "patched", "status": "success", "critical_count": 1, "high_count": 0, "raw_report": {"_appsec": {"verified": True, "image_id": "patched", "scope": "full"}}},
-            ],
-            "diffs": [{"original_scan_id": "s1", "patched_scan_id": "s2", "fixed_count": 3, "remaining_count": 1, "introduced_count": 0}],
-            "policies": [{"scan_id": "s2", "status": "not_recommended",
-                          "violations": [{"severity": "CRITICAL", "count": 1, "limit": 0}]}],
-        }
+        from test_remediation_audit import payload as verified_payload
+        payload = verified_payload()
+        payload["pipeline"] = {"requested_image": "<script>alert(1)</script>", "status": "success"}
+        payload["policies"] = [{"scan_id": "patched", "status": "not_recommended",
+                                "violations": [{"severity": "CRITICAL", "count": 1, "limit": 0}]}]
         text = render("pipeline", payload)
         self.assertIn("Publication not recommended", text)
         self.assertIn("Full unified finding table", text)
@@ -53,7 +48,7 @@ class UnifiedFindingTests(unittest.TestCase):
         from appsecctl.consolidated_report import compare_findings, comparison_table
         def scan(tag, entries):
             return {"raw_report": {"Results": [{"Class": "os-pkgs", "Type": "debian",
-                "Target": tag + " (debian 13.7)", "Vulnerabilities": entries}]}}
+                "Target": tag + " (debian 13.7)", "Packages": [{"Name":"p","Version":"1"}], "Vulnerabilities": entries}]}}
         items = [{"VulnerabilityID": "CVE-test-" + str(i), "PkgName": "p", "Severity": "HIGH",
                   "InstalledVersion": "1", "FixedVersion": "2"} for i in range(300)]
         unknown = {"VulnerabilityID": "TEMP-1", "PkgName": "p", "Severity": "UNKNOWN", "VendorSeverity": {"vendor": 3}}
@@ -70,3 +65,15 @@ class UnifiedFindingTests(unittest.TestCase):
         self.assertEqual(html.count("<th>"), 8)
         self.assertNotIn("LOW-1", html)
         self.assertNotIn('finding-state fixed', comparison_table(compare_findings(a, None, False), False))
+
+    def test_missing_target_not_fixed_and_unlinked_rescan_not_verified(self):
+        from test_remediation_audit import payload
+        from appsecctl.consolidated_report import compare_findings
+        p = payload()
+        rows = compare_findings(*p["scans"], True)
+        self.assertEqual([r[2] for r in rows if r[0] and r[0]["cve"] == "CVE-4"], ["Coverage unknown"])
+        text = render("pipeline", p)
+        self.assertIn("Coverage unknown", text)
+        p["patches"] = []
+        text = render("pipeline", p)
+        self.assertNotIn('finding-state fixed', text)

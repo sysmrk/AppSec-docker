@@ -18,6 +18,16 @@ Run on a staging deployment of develop/v3:
 
     docker compose exec -T worker python -m appsecctl.cli remediation-audit --pipeline-id PIPELINE_UUID > remediation-audit.json
 
+Existing v2 deployments can be analyzed without starting or installing v3. From the running v2 checkout, create a detached v3 worktree (choose an unused path) and export a full summary on a trusted terminal:
+
+    git fetch origin develop/v3 --tags
+    git worktree add --detach ../AppSec-v3 origin/develop/v3
+    umask 077
+    docker compose exec -T -e APPSEC_SUMMARY_COMPACT=false worker python -m appsecctl.cli summary --pipeline-id PIPELINE_UUID > pipeline-summary.json
+    PYTHONPATH=../AppSec-v3/runner python3 -m appsecctl.remediation_audit --summary pipeline-summary.json > remediation-audit.json
+
+This is read-only with respect to the v2 application and DB. Do not run the second Compose project beside v2 on the same daemon: existing static names/volumes can collide. Summary files contain security and infrastructure data; keep them private and share only approved/redacted diagnostics.
+
 The output is a versioned structured contract, appsec.remediation-audit/v1, usable by a future Go module or MCP tool. It reports all finding occurrences, not unique CVEs, even LOW. Original OS-known-fix, OS-no-reported-fix, application-known-fix, application-no-reported-fix, other, and ambiguous identity are separate cohorts. The report also displays a small coverage summary. No new database tables.
 
 New patch attempts record the SHA256 and count of the canonical exact input written to disk; historical attempts report not_recorded. The expected input is derived from the original evidence. A mismatch is a diagnostic, not evidence that the backend executed any particular update. Rescan attribution requires a successful patch, matching local image identity and linked diff. Missing target inventory gives coverage_unknown rather than no_longer_detected. A changed severity does not count as disappearance. Mixed-eligibility duplicate groups are kept separate. Rates are observational; matching scanner metadata is not proof of identical database content. Package version equality/change is evidence, not a distro version comparison or dependency conflict diagnosis.

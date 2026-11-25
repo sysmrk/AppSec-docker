@@ -150,6 +150,7 @@ def main(argv=None):
             if result["comparison"] != "benchmark_observed":
                 raise RuntimeError("Benchmark comparison evidence unavailable")
             result["frozen_db_content_verified"] = True
+            result["warnings"].append("Frozen DB files matched before and after each offline scan; offline coverage and candidate provenance remain limited.")
             result["scanner_image_id"] = scanner_id
             write_json(output / (label + "-comparison.json"), result)
             comparisons.append({"candidate": ref, "comparison_file": label + "-comparison.json",

@@ -47,7 +47,7 @@ def verified(scan):
             if any(not isinstance(v.get(k), str) for v in (target.get("Vulnerabilities") or [])
                    for k in ("PkgName", "VulnerabilityID", "InstalledVersion")):
                 return False
-            if not isinstance(target.get("Packages", []), list):
+            if target.get("Packages") is not None and not isinstance(target["Packages"], list):
                 return False
         return True
     except (KeyError, TypeError, AttributeError, ValueError, RuntimeError):
@@ -141,8 +141,9 @@ def analyze(payload: dict, *, benchmark: bool = False) -> dict:
         result["scanner_metadata_match"] = bool(same)
         if benchmark:
             result["warnings"].append("Independent candidate comparison only; build lineage and application compatibility are not established.")
-        result["warnings"].append("Scanner/DB metadata matches, but immutable DB content was not verified."
-                                  if same else "Scanner/DB metadata differs or is missing; feed drift may explain differences.")
+        if not benchmark:
+            result["warnings"].append("Scanner/DB metadata matches, but immutable DB content was not verified."
+                                      if same else "Scanner/DB metadata differs or is missing; feed drift may explain differences.")
     else:
         result["warnings"].append("No linked, independently verified patched rescan; no disappearance rate.")
     stats = {k: {"original": 0, "remaining": 0 if pair else None,
@@ -189,3 +190,22 @@ def analyze(payload: dict, *, benchmark: bool = False) -> dict:
     result["cohorts"] = stats
     result["warnings"] = list(dict.fromkeys(result["warnings"]))
     return result
+
+
+def main(argv=None):
+    import argparse
+    from pathlib import Path
+    parser = argparse.ArgumentParser(description="Analyze an exported AppSec pipeline summary offline")
+    parser.add_argument("--summary", type=Path, required=True)
+    args = parser.parse_args(argv)
+    with args.summary.open(encoding="utf-8") as stream:
+        payload = json.load(stream)
+    if not isinstance(payload, dict) or not isinstance(payload.get("scans"), list):
+        parser.error("Expected the full AppSec pipeline summary JSON")
+    result = analyze(payload)
+    print(json.dumps(result, indent=2, ensure_ascii=True))
+    return 0 if result["status"] == "original_verified" else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

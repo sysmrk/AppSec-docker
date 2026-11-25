@@ -9,7 +9,7 @@ from html import escape
 from typing import Any
 from collections import defaultdict, deque, Counter
 from .scan_evidence import stable_target
-from .remediation_audit import analyze as analyze_remediation
+from .remediation_audit import analyze as analyze_remediation, index as remediation_index
 
 
 SEVERITIES = (("CRITICAL", "critical_count", "#d94362"),
@@ -88,14 +88,17 @@ def bars(scans: list[dict], original: dict | None, patched: dict | None) -> str:
     return '<div class="legend"><span class="legend-before">■ Initial</span><span class="legend-after">■ After patch</span></div>' + "".join(body)
 
 
+def normalized_target(cls, name):
+    return stable_target(str(name or "")) if cls == "os-pkgs" else str(name or "")
+
+
 def finding_key(v: dict) -> tuple:
     return (v["cve"], v["package"], v["class"], v["type"],
-            stable_target(str(v["target"] or "")))
+            normalized_target(v["class"], v["target"]))
 
 
 def compare_findings(original, patched, verified):
-    before = [v for v in findings(original) if v["severity"] != "LOW"]
-    after = [v for v in findings(patched) if v["severity"] != "LOW"] if verified else []
+    coverage = remediation_index(patched["raw_report"])[2] if verified else set()
     # Match using all severities, so a severity change to LOW is not a fix.
     pending = defaultdict(deque)
     for v in findings(patched) if verified else []:
@@ -106,7 +109,10 @@ def compare_findings(original, patched, verified):
         new = bucket.popleft() if verified and bucket else None
         if v["severity"] == "LOW" and (not new or new["severity"] == "LOW"):
             continue
-        rows.append((v, new, "Remaining" if new else "Fixed" if verified else "Not rescanned"))
+        target = (v["class"], v["type"], normalized_target(v["class"], v["target"]))
+        state = ("Remaining" if new else "Not rescanned" if not verified else
+                 "Fixed" if target in coverage else "Coverage unknown")
+        rows.append((v, new, state))
     if verified:
         rows.extend((None, v, "Introduced") for bucket in pending.values() for v in bucket if v["severity"] != "LOW")
     order = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "UNKNOWN": 3, "LOW": 4}
@@ -142,7 +148,7 @@ def comparison_table(rows, verified, patched=None):
             details += " Source: " + str(v.get("severity_source") or "not supplied") + ". " + str(v.get("url") or "Advisory URL unavailable")
             if str(v["cve"]).startswith("TEMP-"):
                 details += ". Temporary vendor/advisory ID, not an assigned CVE ID."
-        key = (v["class"], v["type"], stable_target(str(v["target"] or "")), v["package"])
+        key = (v["class"], v["type"], normalized_target(v["class"], v["target"]), v["package"])
         installed_after = new["installed"] if new else ", ".join(sorted(versions.get(key, []))) or None
         body.append("<tr>" + "".join("<td>" + e(x) + "</td>" for x in (
             v["cve"],))
@@ -151,7 +157,7 @@ def comparison_table(rows, verified, patched=None):
                 installed_after, v["fixed"] or "No known fix", v["target"]))
             + '<td><span class="finding-state ' + ("fixed" if state == "Fixed" else "pending-state") + '">' + e(state)
             + '</span></td></tr>')
-    return ('<p class="muted">Fixed = no longer detected in a verified comparable rescan; not proof of remediation. '
+    return ('<p class="muted">Fixed = no longer detected in a linked rescan with target inventory; not proof of remediation. Coverage unknown = target inventory missing. '
             'LOW-only findings are excluded from this report view; raw evidence and policy counts are retained.</p>'
             '<div class="table-scroll"><table><thead><tr><th>CVE / ID</th><th>Severity</th><th>Package</th>'
             '<th>Before</th><th>After</th><th>Vendor fix version</th><th>Target</th><th>Status</th>'
@@ -163,7 +169,7 @@ def package_inventory(scan):
     for target in ((scan or {}).get("raw_report") or {}).get("Results", []):
         for pkg in target.get("Packages") or []:
             if pkg.get("Name") and pkg.get("Version"):
-                data[(target.get("Class") or "", target.get("Type") or "", stable_target(str(target.get("Target") or "")), pkg["Name"])].add(str(pkg["Version"]))
+                data[(target.get("Class") or "", target.get("Type") or "", normalized_target(target.get("Class"), target.get("Target")), pkg["Name"])].add(str(pkg["Version"]))
     return data
 
 
@@ -173,7 +179,7 @@ def package_upgrades(original, patched, verified, finding_rows=()):
     before, after = package_inventory(original), package_inventory(patched)
     if not before or not after:
         return '<p class="muted">Full package inventories not available in this historical scan.</p>'
-    removed = Counter((v["class"], v["type"], stable_target(str(v["target"] or "")), v["package"])
+    removed = Counter((v["class"], v["type"], normalized_target(v["class"], v["target"]), v["package"])
                       for v, new, state in finding_rows if v and state == "Fixed")
     rows = []
     for key in sorted(before.keys() & after.keys(), key=str):
@@ -183,8 +189,7 @@ def package_upgrades(original, patched, verified, finding_rows=()):
 
 
 
-def remediation_section(payload):
-    result = analyze_remediation(payload)
+def remediation_section(result):
     if result["status"] != "original_verified":
         return '<section><h2>Remediation coverage</h2><p class="muted">Verified original evidence unavailable; coverage cannot be measured.</p></section>'
     labels = {"os_known_fix": "OS — known fix", "os_no_reported_fix": "OS — no reported fix",
@@ -221,10 +226,8 @@ def render(resource_id: str, payload: dict[str, Any]) -> str:
         final_policy = None
     a = (original.get("raw_report") or {}).get("_appsec") or {} if original else {}
     b = (patched.get("raw_report") or {}).get("_appsec") or {} if patched else {}
-    verified_pair = bool(original and patched and original.get("status") == "success" and
-                         patched.get("status") == "success" and a.get("verified") and b.get("verified") and
-                         a.get("image_id") and b.get("image_id") and a["image_id"] != b["image_id"] and
-                         a.get("scope") == b.get("scope"))
+    remediation = analyze_remediation(payload)
+    verified_pair = remediation["comparison"] == "observed"
     if not verified_pair:
         final_policy = None
         latest_diff = None
@@ -266,8 +269,8 @@ def render(resource_id: str, payload: dict[str, Any]) -> str:
     changes = ""
     if latest_diff:
         changes = ('<div class="changes">' +
-                   metric("Remaining", patched_total, "In-scope post-patch findings") +
-                   metric("Net reduction", (original_total - patched_total) if original_total is not None and patched_total is not None else None,
+                   metric("Post-scan total", patched_total, "In-scope post-patch findings") +
+                   metric("Net count difference", (original_total - patched_total) if original_total is not None and patched_total is not None else None,
                           "Initial minus final, LOW excluded") + "</div>")
     elif not patched:
         from .scan_evidence import patch_eligibility
@@ -313,17 +316,18 @@ def render(resource_id: str, payload: dict[str, Any]) -> str:
         banner + publication +
         '<div class="summary">' + cards + "</div>" +
         '<section><div class="section-title"><h2>What changed?</h2><p>Same image pipeline · initial scan vs patched rescan</p></div>'
-        + bars(scans, original, patched) + changes + comparison_warning + "</section>" +
+        + bars(scans, original, patched) + changes + comparison_warning +
+        ('<p class="muted">Coverage unknown: ' + e(states["Coverage unknown"]) + ' displayed original findings; do not treat them as fixed.</p>' if states["Coverage unknown"] else "") + "</section>" +
         '<section><div class="section-title"><h2>Post-fix recommendation</h2><p>Advisory only — never a pass/fail gate</p></div>'
         + recommendation + "</section>" +
-        remediation_section(payload) +
+        remediation_section(remediation) +
         ('<section><h2>Execution diagnostics</h2>' + "".join(errors) + "</section>" if errors else "") +
         '<section><div class="section-title"><h2>Evidence, without the clutter</h2>'
         '<p>Full unified finding table. Raw Trivy JSON and SBOM retain LOW.</p></div>' +
         eligibility_html + '<p>Known fix before: ' + e(initial_fixable) + ' · No known fix before: ' + e(len(initial_rows)-initial_fixable) +
         ' · Known-fix findings no longer detected: ' + e(removed_fixable if verified_pair else None) +
         ' · Remaining with a known fix: ' + e(sum(bool(v["fixed"]) for v in final_rows) if verified_pair else None) +
-        ' · Known-fix disappearance rate: ' + e(round(removed_fixable/initial_fixable*100, 2) if verified_pair and initial_fixable else None) + '%</p>' +
+        ' · Known-fix disappearance rate: ' + e(str(round(removed_fixable/initial_fixable*100, 2)) + "%" if verified_pair and initial_fixable and not states["Coverage unknown"] else None) + '</p>' +
         '<p class="muted">UNKNOWN means Trivy did not assign a severity, not that the finding is harmless. Review vendor ratings/CVSS and advisory IDs; no automatic downgrade.</p>' +
         comparison_table(rows, verified_pair, patched) + "</section>" +
         '<section><h2>Package Upgrade Summary</h2>' + package_upgrades(original, patched, verified_pair, rows) + '</section>' +
