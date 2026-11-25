@@ -43,7 +43,9 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-compose_args=(-f docker-compose.yaml --profile platform --profile production --profile storage --profile tools --profile maintenance --profile mcp --profile patch down --remove-orphans)
+files=(-f docker-compose.yaml)
+if [[ -f docker-compose.override.yaml ]]; then files+=(-f docker-compose.override.yaml); fi
+compose_args=("${files[@]}" --profile platform --profile production --profile storage --profile tools --profile maintenance --profile mcp --profile patch down --remove-orphans)
 if [[ "${remove_volumes}" == "true" ]]; then
   compose_args+=(-v)
 fi

@@ -660,8 +660,24 @@ def ci_image(image_ref: str, mode: str = "scan") -> int:
     with db.connect() as conn:
         summary = db.pipeline_summary(conn, pipeline_id)
     status = summary["pipeline"]["status"]
-    print(json.dumps({"pipeline_id": pipeline_id, "status": status}, indent=2))
-    return 0 if status == "success" else 1
+    # Execution success is not a security verdict. Keep manual policy advisory,
+    # but enforce the explicit CI environment thresholds on verified evidence.
+    scans = summary.get("scans", [])
+    patched = [s for s in scans if s.get("phase") == "patched"]
+    candidates = patched if patched else [s for s in scans if s.get("phase") == "original"]
+    scan = candidates[-1] if candidates else None
+    gate = "invalid_evidence"
+    if status == "success" and scan and scan.get("status") == "success":
+        evidence = (scan.get("raw_report") or {}).get("_appsec") or {}
+        if evidence.get("verified") and evidence.get("image_id"):
+            gate, rules, violations = policy.evaluate(scan, policy.rules_from_env())
+            with db.connect() as conn:
+                db.insert_policy_result(conn, pipeline_id, str(scan["id"]), gate, rules, violations)
+                if gate != "passed":
+                    db.finish_pipeline(conn, pipeline_id, "policy_failed", "CI severity thresholds exceeded")
+            write_pipeline_report_if_ready(pipeline_id)
+    print(json.dumps({"pipeline_id": pipeline_id, "execution_status": status, "ci_gate": gate}, indent=2))
+    return 0 if status == "success" and gate == "passed" else 1
 
 
 def ci_security(kind: str, target: str, profile: str) -> int:
