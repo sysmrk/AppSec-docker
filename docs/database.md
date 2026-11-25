@@ -1,30 +1,29 @@
-# AppSec Database Schema and Migrations
+# Database and migrations — v2
 
-PostgreSQL stores source image references, `images`, `pipeline_runs`, `scan_runs`, `vulnerabilities`, `artifacts`, `policy_results`, `patch_runs`, `scan_diffs`, `pipeline_jobs`, `manual_workflows`, `users`, `teams`, `team_members`, `projects`, `service_heartbeats`, `registry_connections`, `mfa_recovery_codes`, audit logs and generated reports.
+PostgreSQL is the authoritative state store. Alembic migrations are applied before API/worker startup; the migration runner is built from the current checkout. Latest schema revision: 0018_tool_updates.
 
-## Recent Alembic revisions
-
-| Revision | Change |
+| Revision | Purpose |
 | --- | --- |
-| 0006 | Redact historical Gitleaks secrets in **DB** (does not purge files/S3/backups) |
-| 0007 | Scan-only default for new jobs, preserve old queued patch instructions |
-| 0008 | Worker/Scheduler heartbeat table |
-| 0009 | Manual workflow approval and one-time patch continuation |
-| 0010 | User lifecycle: lockout, password rotation, disable and session/API key audit |
-| 0011 | Separate prepared patch from final Registry publication approval and job |
-| 0012 | Registry metadata and image inventory indexes |
-| 0013 | Encrypted TOTP MFA and hashed single-use recovery codes |
+| 0001–0005 | Baseline, enterprise scope, sessions/report access, secret-only scans, indexes |
+| 0006 | Redact historical secret data in DB only |
+| 0007–0009 | Scan-default jobs, heartbeats, manual approval workflow |
+| 0010–0013 | User lifecycle, separate publication, inventory/registry, MFA |
+| 0014 | Approved ordered image pull sources |
+| 0015 | History purge / asynchronous local image removal |
+| 0016 | Verified scan/publication evidence |
+| 0017 | Encrypted expiring repository job credentials and publication risk reason |
+| 0018 | Tool release/update state and patch execution evidence |
 
-The baseline `db/schema.sql` and versioned Alembic upgrades aim to support fresh installs and existing DBs; test the exact old schema state in staging. `./appsec start` runs `alembic upgrade head` through the standard runner.
+Core tables: images, pipeline_runs, pipeline_jobs, scan_runs, vulnerabilities, patch_runs, scan_diffs, policy_results, artifacts, generated_reports, manual_workflows, security_jobs, security_findings, repository_job_credentials, image_pull_sources, registry_connections, tool_updates, users, teams, team_members, projects, service_heartbeats and audit_logs.
 
-## Manual workflow transactions
+Workflow approval locks serialize decisions. A successful execution is not a security recommendation. The initial scan stores findings without a policy decision; post-patch recommendations and explicit CI gate results are persisted separately by execution path. Publication records prepared/publishing/published/uncertain state, destination and digest.
 
-`manual_workflows` binds creator, Project scope, initial scan job, optional patch preparation job and separate publish job. Decisions and approving identity/time are persisted. Final publication is permitted only with prepared image, final passed Policy and registered authorized destination, and only a one-attempt publication job is queued. Optimistic UI state is not authorization; the backend locks the workflow and checks membership/role at the time of approval.
+Sessions/API keys and recovery codes are hashed, passwords salted PBKDF2, MFA secrets and transient repository credentials encrypted. Preserve APPSEC_MFA_ENCRYPTION_KEY separately; the derived repository credential key depends on it. Expired/consumed credentials are removed, not stored as findings. Backups can retain historical values.
 
-`patch_runs` records local image reference, publication state and timestamp. States may be `prepared`, `publishing`, `published`, or `uncertain`; ambiguous Push failures must be reconciled outside automatic retries.
+Check revision without mutating data:
 
-## Security / backup
+```bash
+docker compose exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT version_num FROM alembic_version;"'
+```
 
-Session tokens and API keys are hashed in the DB. Passwords use salted PBKDF2. TOTP secrets are Fernet-encrypted with a separate operator-managed environment key, while backup/recovery codes are hashed. Back up that encryption key separately from PostgreSQL and test full restore. Account revocation, Team membership and role changes are audited and should be monitored.
-
-Metabase's own application DB is separate; it uses a distinct login and global analytics view. Use a dedicated SELECT-only role for application data access in sensitive deployments.
+Back up PostgreSQL, object storage, report volume and encryption key together; preserve tool-updates volume and Docker local prepared images if needed. Restore into staging first. Metabase application database is separate; analytics access is not project-scoped.

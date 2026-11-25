@@ -1,44 +1,43 @@
-# AppSec Architecture
+# Architecture — v2
 
-```text
-Users + browser                           CI / API or authorized MCP AI
-       |                                            |
-Nginx (local 8080)                     Optional read-only MCP (separate)
-       |
-FastAPI + session/RBAC + first-party UI
-       |
-PostgreSQL: Users, Teams, Projects, Workflows, Scan Jobs, Approvals, Results
-       |
-Worker (high-trust Docker Socket)
-       |
-Trivy original -> SBOM -> Policy -> Review (human decision)
-       |
-Optional approved local Copa + privileged BuildKit
-       |
-Trivy patched -> SBOM -> CVE diff -> final Policy
-       |
-Human Registry publication approval (+ optional second approver)
-       |
-Approved Registry destination -> single-attempt Docker push
-       |
-Persisted status and authenticated reports
-       |
-Metabase: aggregated real SQL dashboards (separate login, read-only recommended)
+AppSec separates authorization, execution, evidence and analytics.
+
+```mermaid
+flowchart TD
+    U[Browser / API client] --> N[Nginx]
+    N --> A[FastAPI: authentication, RBAC, decisions]
+    A --> P[(PostgreSQL)]
+    S[Scheduler: schedules and tool releases] --> P
+    P --> W[Worker: image and repository queues]
+    W --> T[Trivy: scan and SBOM]
+    W --> G[Gitleaks: redacted repository scan]
+    W --> B[Copa / privileged BuildKit]
+    W --> R[Approved registry]
+    W --> O[Reports volume / MinIO]
+    W --> P
+    M[Metabase] --> P
+    X[Optional read-only MCP] --> P
 ```
 
-## Domain boundaries
+| Component | Role / boundary |
+| --- | --- |
+| Nginx / FastAPI | Local browser, REST, scoped resources; no Docker socket |
+| PostgreSQL | Durable jobs, workflow state, decisions, findings, credentials ciphertext, audit and tool metadata |
+| Worker | Claims image/security jobs; Docker socket; local image and artifact operations |
+| BuildKit | Privileged local patch executor; source policy is not a firewall |
+| Scheduler | Recurring image scans, credential expiry, release discovery/install; Docker socket for scanner updates |
+| Reports / MinIO | Raw evidence and generated HTML/SARIF; authenticated access or scoped presigned URLs |
+| Metabase | Independent login and global analytics; use restricted SQL role |
+| MCP | Optional globally scoped bounded read-only analytics; no execution |
 
-- **Human UI:** static HTML/CSS/JS served through FastAPI at local `/ui`. `app.js` handles core scan flow, `workspace.js` handles inventory, approvals, Registry and identity. No external JS CDN or fake data.
-- **API:** FastAPI enforces roles, Project membership, human approval, new-user password rotation and optional MFA login. Cookie browser writes require a same-origin custom header; server errors include request IDs and safe repair hints.
-- **Core:** PostgreSQL is the source of truth for jobs, scan results, approvals, audit and image inventory. Workers claim queued jobs and use explicit `scan`, `continue_patch`, `publish_patch` modes. Legacy advanced automated `patch` remains privileged and separately opt-in.
-- **Image inventory:** read-only, scoped SQL queries; scan history and CVE difference, not direct registry crawling.
-- **Registry metadata:** HTTPS hostname, Project scope, allow_push flag; no Registry secrets, passwords or arbitrary URL probes stored.
-- **Identity:** local users, Team membership, lifecycle, API-key rotation, audit, lockout, encrypted TOTP MFA and recovery codes. Corporate OIDC/SAML/LDAP is not yet implemented.
-- **Analytics:** Metabase only, with Security Overview, Manual Operations and Vulnerability Trends dashboards; account and data authorization are **independent** of AppSec's Project RBAC.
-- **AI:** optional read-only MCP, not an approval/execution path.
+Normal startup uses a combined worker (image before security); production Compose also defines dedicated image/security workers, not a validated multi-host pool. A stalled job can delay subsequent jobs. Scanner stages have configurable timeouts; process interruption recovery and robust distributed leases are open work.
 
-## Scale and safety limitations
+The manual path creates verified initial evidence, awaits approval, prepares a local image, rescans, produces a comparison and an advisory recommendation, then awaits separate publication or keep-local decision. No initial policy gate. CI has an independent explicit severity gate.
 
-The current Worker needs Docker Socket access even for scanning; patching additionally relies on privileged BuildKit. Separate hosts, restricted service accounts and network isolation are required before sensitive Enterprise deployments. **Local prepared patch images are not portable between Docker hosts**. A horizontally scaled workflow requires fixed Worker affinity or an approved staging registry promotion model; these are not yet solved by the UI.
+Runtime images are selected by approved source priority. The verified local Docker image ID and remote manifest digest are different identities. Publication pulls the resulting digest and compares its local config ID with the verified patched image. Tags alone do not establish immutable content.
 
-MFA encryption key is configured using `APPSEC_MFA_ENCRYPTION_KEY`. Recovery codes are hashes; one-time TOTP secrets are Fernet-encrypted. Back up the encryption key for recoverability. Current Metabase and MCP SQL access is global; a SELECT-only DB user and trusted network are required for production.
+Release updates are scheduler-owned; Copa uses a shared versioned volume, while scanners use selected version tags via approved sources. Tool release changes and database refresh are separate. Source fingerprints detect stale API/worker/scheduler deployments.
+
+## Trust assumptions
+
+Use a dedicated host; Docker socket effectively grants host-level control. Registry and package-manager egress, redirects, image signing/pinning, external SSO, tenant-scoped BI/MCP, HA and DR require additional deployment controls. Prepared images are local to one daemon; multi-host publication needs affinity or trusted staging. See [security review](security-review.md).
