@@ -149,7 +149,7 @@ def comparison_table(rows, verified, patched=None):
             + "".join("<td>" + e(x) + "</td>" for x in (v["package"], old["installed"] if old else None,
                 installed_after, v["fixed"] or "No known fix", v["target"]))
             + '<td><span class="finding-state ' + ("fixed" if state == "Fixed" else "pending-state") + '">' + e(state)
-            + '</span></td></tr>")
+            + '</span></td></tr>')
     return ('<p class="muted">Fixed = no longer detected in a verified comparable rescan; not proof of remediation. '
             'LOW-only findings are excluded from this report view; raw evidence and policy counts are retained.</p>'
             '<div class="table-scroll"><table><thead><tr><th>CVE / ID</th><th>Severity</th><th>Package</th>'
