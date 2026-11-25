@@ -31,3 +31,13 @@ Persisted per-ecosystem approved mirror configuration and priority handling, act
     PYTHONPATH=runner python3 -m appsecctl.candidate_review --results /path/to/benchmark/results > review.json
 
 Recompute comparison from raw reports, cross-check saved summaries and scanner/image IDs, count per severity and package-name additions/removals/version changes. Reject candidates with unknown coverage, introduced findings, Critical/High/Unknown count regression or no net reduction from preferred-for-review selection. Rank eligible candidates by Critical, High, Unknown, Medium, Low, then fewer removed package names. This conservative order does not represent exploitability or business risk; no functional or publication authorization is inferred. Raw benchmark files are local trusted inputs, not signed attestations. Report separately findings absent on package names no longer present, not automatically fixed by a patch. The original known-fix result and 95 additional disappearances are distinct.
+
+## Ordered repository and inventory review
+
+    PYTHONPATH=runner python3 -m appsecctl.apt_repository_review availability --image sha256:CONFIG_ID --mirror tuna --confirm-isolated-lab
+
+Repeat --mirror debian only if official Debian egress is explicitly approved. Known metadata transport errors can advance to the next explicit mirror; signature, TLS, unexpected errors and timeout stop the probe. All mirrors unavailable returns counts=null and nonzero exit. This is a lab priority list using built-in endpoints, not persisted enterprise configuration or a Copa egress policy.
+
+    PYTHONPATH=runner python3 -m appsecctl.apt_repository_review inventory --image sha256:CONFIG_ID --report candidate-1.json --confirm-isolated-lab
+
+Compare native dpkg inventory with scanner inventory and finding versions without altering evidence. The approved 43-package removal plan built successfully on the user lab (candidate f93c13782f1ee44008ffd566f34bfae885664e54e8f788515cff3d89dec4c12a). Its independent rescan and runtime smoke test are still pending. No automatic publication.
