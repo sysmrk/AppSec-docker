@@ -14,7 +14,7 @@ from uuid import uuid4
 from alembic import command as alembic_command
 from alembic.config import Config as AlembicConfig
 
-from . import db, policy, image_sources, patch_sources, scan_evidence, tool_updates
+from . import db, policy, image_sources, patch_sources, scan_evidence, tool_updates, remediation_audit
 from .errors import safe_message, safe_detail
 from .reports import write_html_report, write_security_sarif
 from .security import enqueue_security_job, run_security_job
@@ -348,7 +348,7 @@ def patch_from_scan(scan_id: str) -> tuple[str, str]:
     try:
         # Keep the full report intact. Copa receives only fixable OS findings.
         copa_path = report_path.parent / f"copa-input-{patch_id}.json"
-        copa_path.write_text(json.dumps(filtered_report), encoding="utf-8")
+        copa_path.write_bytes(remediation_audit.input_bytes(filtered_report))
         with db.connect() as conn:
             db.insert_artifact(conn, pipeline_id, scan_id, source_image_ref, "copa-input", "json", str(copa_path))
         command[command.index("-r") + 1] = str(copa_path)
@@ -360,7 +360,8 @@ def patch_from_scan(scan_id: str) -> tuple[str, str]:
         with db.connect() as conn:
             conn.execute("UPDATE patch_runs SET execution_evidence=%s WHERE id=%s",
                          (Jsonb({"copa_version": copa_version, "buildkit_version": buildkit_info,
-                                 "source_image": source_image_ref}), patch_id))
+                                 "source_image": source_image_ref,
+                                 "remediation_input": remediation_audit.input_manifest(filtered_report)}), patch_id))
         with patch_sources.policy_environment(source_image_ref, copa_path) as environment:
             if environment and environment.get("EXPERIMENTAL_BUILDKIT_SOURCE_POLICY"):
                 source_rules = json.loads(Path(environment["EXPERIMENTAL_BUILDKIT_SOURCE_POLICY"]).read_text())["rules"]
@@ -748,6 +749,9 @@ def main(argv: list[str] | None = None) -> int:
     summary_parser = subparsers.add_parser("summary")
     summary_parser.add_argument("--pipeline-id", required=True)
 
+    audit_parser = subparsers.add_parser("remediation-audit", help="Read-only finding scope and rescan diagnostics")
+    audit_parser.add_argument("--pipeline-id", required=True)
+
     args = parser.parse_args(argv)
 
     if args.command == "init-db":
@@ -819,6 +823,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "summary":
         print_summary(args.pipeline_id)
         return 0
+    if args.command == "remediation-audit":
+        with db.connect() as conn:
+            payload = db.pipeline_summary(conn, args.pipeline_id)
+        if not payload or not payload.get("pipeline"):
+            raise RuntimeError("Pipeline not found")
+        result = remediation_audit.analyze(payload)
+        print(json.dumps(result, indent=2, ensure_ascii=True))
+        return 0 if result["status"] == "original_verified" else 1
 
     return 2
 

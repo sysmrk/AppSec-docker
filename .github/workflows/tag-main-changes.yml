@@ -1,7 +1,7 @@
 name: tag-main-changes
 on:
   push:
-    branches: [main]
+    branches: [main, develop/v3]
 
 permissions:
   contents: write
@@ -18,7 +18,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: true
-      - name: Annotated tag for every main commit
+      - name: Annotated tag for every tracked commit
         shell: bash
         run: |
           set -euo pipefail
@@ -27,10 +27,11 @@ jobs:
           short_sha="$(git rev-parse --short=12 HEAD)"
           tag="change-${short_sha}"
           if ! git ls-remote --tags --exit-code origin "refs/tags/${tag}" >/dev/null 2>&1; then
-            git tag -a "${tag}" -m "AppSec main change ${short_sha}"
+            git tag -a "${tag}" -m "AppSec development change ${short_sha}"
             git push origin "refs/tags/${tag}"
           fi
       - name: Semantic release tag from VERSION
+        if: github.ref == 'refs/heads/main'
         shell: bash
         run: |
           set -euo pipefail

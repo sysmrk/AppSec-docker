@@ -1,4 +1,8 @@
-# AppSec Control Center v2
+# AppSec Control Center — v3 development branch
+
+This branch starts from the stable v2.0.0 release. Development changes are not a v3 release. See [remediation research and acceptance plan](docs/v3-remediation-research.md).
+
+## Stable baseline: AppSec Control Center v2
 
 Self-hosted container vulnerability management and repository secret scanning, with evidence-driven image remediation and human-controlled publication. The browser is a first-class operational interface: no CI/CD system is required. CLI and REST interfaces support automation separately.
 

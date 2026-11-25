@@ -9,6 +9,7 @@ from html import escape
 from typing import Any
 from collections import defaultdict, deque, Counter
 from .scan_evidence import stable_target
+from .remediation_audit import analyze as analyze_remediation
 
 
 SEVERITIES = (("CRITICAL", "critical_count", "#d94362"),
@@ -182,6 +183,31 @@ def package_upgrades(original, patched, verified, finding_rows=()):
 
 
 
+def remediation_section(payload):
+    result = analyze_remediation(payload)
+    if result["status"] != "original_verified":
+        return '<section><h2>Remediation coverage</h2><p class="muted">Verified original evidence unavailable; coverage cannot be measured.</p></section>'
+    labels = {"os_known_fix": "OS — known fix", "os_no_reported_fix": "OS — no reported fix",
+              "application_known_fix": "Application — known fix", "application_no_reported_fix": "Application — no reported fix",
+              "other": "Other scope", "ambiguous": "Ambiguous identity"}
+    items = []
+    for key, label in labels.items():
+        row = result["cohorts"][key]
+        rate = row["disappearance_rate_pct"]
+        items.append('<tr>' + ''.join('<td>' + e(x) + '</td>' for x in
+            (label, row["original"], row["remaining"], row["no_longer_detected"],
+             row["coverage_unknown"], str(rate) + "%" if rate is not None else None)) + '</tr>')
+    expected = (result["expected_v2_input"] or {}).get("finding_count", 0)
+    notes = ''.join('<li>' + e(w) + '</li>' for w in result["warnings"])
+    return ('<section><h2>Remediation coverage</h2><p>Expected OS backend input: ' + e(expected) +
+            ' findings · Recorded input: ' + e(result["input_status"]) + '</p>'
+            '<p class="muted">Counts include all severities, including LOW; application fixes are not attempted by the current backend. '
+            'A reported fix is not a guarantee that a compatible package is available.</p>'
+            '<div class="table-scroll"><table><thead><tr><th>Scope</th><th>Initial</th><th>Still detected</th>'
+            '<th>No longer detected</th><th>Coverage unknown</th><th>Disappearance rate</th>'
+            '</tr></thead><tbody>' + ''.join(items) + '</tbody></table></div><ul class="muted">' + notes + '</ul></section>')
+
+
 def render(resource_id: str, payload: dict[str, Any]) -> str:
     p = dict(payload.get("pipeline") or {})
     scans = [dict(x) for x in (payload.get("scans") or [])]
@@ -290,6 +316,7 @@ def render(resource_id: str, payload: dict[str, Any]) -> str:
         + bars(scans, original, patched) + changes + comparison_warning + "</section>" +
         '<section><div class="section-title"><h2>Post-fix recommendation</h2><p>Advisory only — never a pass/fail gate</p></div>'
         + recommendation + "</section>" +
+        remediation_section(payload) +
         ('<section><h2>Execution diagnostics</h2>' + "".join(errors) + "</section>" if errors else "") +
         '<section><div class="section-title"><h2>Evidence, without the clutter</h2>'
         '<p>Full unified finding table. Raw Trivy JSON and SBOM retain LOW.</p></div>' +
