@@ -17,11 +17,11 @@ import sys
 import tempfile
 from uuid import UUID, uuid4
 
-from . import db, image_sources, patch_sources, scan_evidence, remediation_audit, tool_updates
+from . import db, image_sources, patch_sources, scan_evidence, remediation_audit, tool_updates, library_remediation
 from .errors import safe_detail
 
 SUPPORTED_COPA = "0.15.0"
-STRATEGIES = ("os_targeted", "os_comprehensive")
+STRATEGIES = ("os_targeted", "os_comprehensive", *library_remediation.TYPES)
 CONFIG_KEYS = ("Entrypoint", "Cmd", "User", "WorkingDir", "Env", "ExposedPorts",
                "Healthcheck", "Volumes", "StopSignal")
 DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
@@ -76,7 +76,9 @@ def config_changes(before, after):
     return [key for key in CONFIG_KEYS if a.get(key) != b.get(key)]
 
 
-def command_for(binary, source, tag, strategy, report_path, timeout, buildkit):
+def command_for(binary, source, tag, strategy, report_path, timeout, buildkit, level="patch"):
+    if level not in ("patch", "minor"):
+        raise ValueError("Invalid library version bump limit")
     if strategy not in STRATEGIES or not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.-]*", buildkit):
         raise ValueError("Invalid lab strategy or executor name")
     if not re.fullmatch(r"v3-lab-[a-f0-9]{32}", tag):
@@ -84,18 +86,22 @@ def command_for(binary, source, tag, strategy, report_path, timeout, buildkit):
     args = [binary, "patch", "-i", source, "-t", tag,
             "--addr", "docker-container://" + buildkit, "--platform", "linux/amd64",
             "--timeout", str(timeout) + "s", "--loader", "docker"]
-    if strategy == "os_targeted":
+    if strategy != "os_comprehensive":
         args.extend(["--report", str(report_path)])
+    if strategy in library_remediation.TYPES:
+        args.extend(["--pkg-types", "library", "--library-patch-level", level])
     # No report means comprehensive OS update. Never append user/AI CLI args.
-    # No --push, --ignore-errors, --config or experimental application flags.
+    # No --push, --ignore-errors, --config or other experimental flags.
     return args
 
 
-def run_candidate(scan_id, source, strategy, timeout):
+def run_candidate(scan_id, source, strategy, timeout, level="patch"):
     if os.getenv("APPSEC_ENABLE_REMEDIATION_LAB", "") != "true":
         raise RuntimeError("Lab disabled: use a dedicated isolated host and explicit APPSEC_ENABLE_REMEDIATION_LAB=true")
-    if strategy not in STRATEGIES or not 60 <= timeout <= 7200:
+    if strategy not in STRATEGIES or not 60 <= timeout <= 7200 or level not in ("patch", "minor"):
         raise ValueError("Invalid strategy or timeout")
+    if strategy in library_remediation.TYPES and os.getenv("APPSEC_ENABLE_LIBRARY_LAB") != "true":
+        raise RuntimeError("Experimental library lab requires explicit APPSEC_ENABLE_LIBRARY_LAB=true; public package egress must be approved")
     with db.connect() as conn:
         scan = db.get_scan(conn, str(UUID(scan_id)))
         sources = image_sources.configured_sources(conn)
@@ -129,20 +135,26 @@ def run_candidate(scan_id, source, strategy, timeout):
         policy_report = Path(tmp)/"source-metadata.json"
         policy_report.write_bytes(remediation_audit.input_bytes(report))
         input_path = Path(tmp)/"targeted-input.json"
-        manifest_input = None
+        manifest_input, library_selection = None, None
+        extra_groups = []
         if strategy == "os_targeted":
             filtered = scan_evidence.copa_report(report)
             input_path.write_bytes(remediation_audit.input_bytes(filtered))
             manifest_input = remediation_audit.input_manifest(filtered)
-        args = command_for(binary,source,tag,strategy,input_path,timeout,buildkit)
-        with redirect_stdout(sys.stderr), patch_sources.policy_environment(source, policy_report) as env:
+        elif strategy in library_remediation.TYPES:
+            filtered, library_selection = library_remediation.prepare(scan,strategy,level,original.get("Config"))
+            input_path.write_bytes(remediation_audit.input_bytes(filtered))
+            manifest_input = remediation_audit.input_manifest(filtered)
+            extra_groups = [[x] for x in library_selection["helper_refs"]]
+        args = command_for(binary,source,tag,strategy,input_path,timeout,buildkit,level)
+        with redirect_stdout(sys.stderr), patch_sources.policy_environment(source, policy_report, extra_groups=extra_groups) as env:
             if not env or not env.get("EXPERIMENTAL_BUILDKIT_SOURCE_POLICY"):
                 raise RuntimeError("No approved BuildKit source policy; candidate generation refused")
             # A pinned, same-repository input and known OS helper mapping.
             # Source policy is not a network firewall; isolation is mandatory.
             policy_bytes = Path(env["EXPERIMENTAL_BUILDKIT_SOURCE_POLICY"]).read_bytes()
             policy_hash = hashlib.sha256(policy_bytes).hexdigest()
-            env = {**env, "COPA_EXPERIMENTAL":"0"}
+            env = {**env, "COPA_EXPERIMENTAL":"1" if strategy in library_remediation.TYPES else "0"}
             try:
                 subprocess.run(args, check=True, env=env, capture_output=True,
                                text=True, timeout=timeout+60)
@@ -156,6 +168,7 @@ def run_candidate(scan_id, source, strategy, timeout):
             "strategy":strategy, "source_scan_id":scan_id, "source":source, "source_image_id":expected_id,
             "candidate":destination, "candidate_image_id":candidate["Id"],
             "source_policy_sha256":policy_hash, "targeted_input":manifest_input,
+            "library_selection":library_selection,
             "copa_version":version, "buildkit_version":buildkit_version,
             "changed_config_fields":changes, "verification_required":True,
             "functional_test_passed":False, "publication_authorized":False}
@@ -167,10 +180,11 @@ def main(argv=None):
     parser.add_argument("--source",required=True)
     parser.add_argument("--strategy",required=True,choices=STRATEGIES)
     parser.add_argument("--timeout",type=int,default=1800)
+    parser.add_argument("--library-level",choices=("patch","minor"),default="patch")
     parser.add_argument("--confirm-isolated-lab",action="store_true",required=True)
     args = parser.parse_args(argv)
     try:
-        result = run_candidate(args.scan_id,args.source,args.strategy,args.timeout)
+        result = run_candidate(args.scan_id,args.source,args.strategy,args.timeout,args.library_level)
     except (RuntimeError,ValueError,OSError,subprocess.SubprocessError) as exc:
         # Do not print raw subprocess stderr or credentials. A timed-out
         # BuildKit job may require manual reconciliation on the isolated host.

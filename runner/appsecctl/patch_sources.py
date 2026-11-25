@@ -90,7 +90,7 @@ def source_policy(source: str, mappings: dict[str, str]) -> dict:
 
 
 @contextmanager
-def policy_environment(source: str, report_path: Path):
+def policy_environment(source: str, report_path: Path, *, extra_groups=()):
     with db.connect() as conn:
         sources = image_sources.configured_sources(conn)
     if sources is None:
@@ -103,9 +103,16 @@ def policy_environment(source: str, report_path: Path):
         raise RuntimeError("PATCH_SOURCE_POLICY: Previously scanned source is no longer approved; create a new scan")
     report = json.loads(report_path.read_text(encoding="utf-8"))
     mappings = {}
-    for group in helper_groups(report):
+    groups = [(group, helper_aliases(report, group)) for group in helper_groups(report)]
+    # Explicit language helpers are exact references derived by the lab,
+    # not arbitrary inputs from AI or a web request. No wildcard fallback.
+    for group in extra_groups:
+        if len(group) != 1 or not re.fullmatch(r"docker\.io/library/(?:python:3\.[0-9]{1,2}-slim|node:[0-9]{1,3}-alpine)", group[0]):
+            raise RuntimeError("PATCH_SOURCE_POLICY: Invalid experimental language helper")
+        groups.append((group, group))
+    for group, aliases in groups:
         chosen = image_sources.pull_ordered(image_sources.ordered_candidates(sources, group))
-        for reference in helper_aliases(report, group):
+        for reference in aliases:
             mappings[reference] = chosen
             print("COPA_HELPER_MAPPING " + reference + " -> " + chosen, flush=True)
     policy = source_policy(source, mappings)

@@ -29,7 +29,10 @@ class RemediationLabTests(unittest.TestCase):
         tag = "v3-lab-"+"b"*32
         for strategy in lab.STRATEGIES:
             cmd = lab.command_for("copa",ref,tag,strategy,Path("/tmp/report.json"),1800,"appsec-buildkit")
-            self.assertEqual("--report" in cmd,strategy=="os_targeted")
+            self.assertEqual("--report" in cmd,strategy!="os_comprehensive")
+            self.assertEqual("--pkg-types" in cmd,strategy in lab.library_remediation.TYPES)
+            if strategy in lab.library_remediation.TYPES:
+                self.assertEqual(cmd[cmd.index("--pkg-types")+1],"library")
             self.assertNotIn("--push",cmd)
             self.assertNotIn("--ignore-errors",cmd)
             self.assertEqual(cmd[cmd.index("-i")+1],ref)
