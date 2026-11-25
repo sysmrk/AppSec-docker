@@ -1,89 +1,76 @@
-# Operations Runbook — installation and recovery
+# Operations runbook — v2
 
-## Start without CI/CD
+## Installation
 
-Prerequisites: Linux/WSL2, Docker Engine/Desktop with Compose v2, Git, Python 3.10+, registry image reachability and Trivy DB/mirror access.
+Use a dedicated trusted Linux/WSL2 host with Python 3.10+, Git, Docker Engine and Compose v2 or later compatible plugin. Ensure sufficient storage and access to approved runtime and bootstrap images, scanner DBs, package repositories and release endpoints. Do not run a Docker-socket worker beside sensitive production workloads.
 
 ```bash
 git clone https://github.com/sysmrk/AppSec-docker.git
 cd AppSec-docker
-./appsec wizard
-```
-
-The wizard confirms a full startup including BuildKit, generates credentials and Fernet MFA key if `.env` is missing, then starts PostgreSQL, MinIO, API, Worker, Scheduler, Nginx and Metabase. **It never overwrites `.env`.** Alternative individual commands:
-
-```bash
 ./appsec setup
 ./appsec start
 ./appsec doctor
 ./appsec credentials
 ```
 
-AppSec UI: `http://127.0.0.1:8080`. Metabase: `http://127.0.0.1:3001`. Normal startup does not launch privileged BuildKit or the read-only MCP integration.
+Alternatively ./appsec wizard prompts for confirmation. Setup preserves existing .env; use chmod 600 .env and retain the encryption key. Full startup always includes BuildKit, builds the migration runner, applies schema upgrades, starts API/worker/scheduler/Nginx/Metabase, verifies runtime source fingerprints and patch flags. Optional MCP and Harbor are separate. The local UI is http://127.0.0.1:8080 and Metabase http://127.0.0.1:3001. For remote deployment configure TLS and APPSEC_SESSION_COOKIE_SECURE=true; local HTTP is not a production endpoint.
 
-## Everyday operations
+## Configuration
+
+Use .env.example for supported variables and .env.production.example as a hardened starting point, not an automatic production deployment. Never overwrite an existing .env with a template. Bootstrap image variables and docker-compose.override.yaml handle restricted networks; database-backed pull sources cannot resolve images before PostgreSQL exists. For strict runtime source enforcement set APPSEC_REQUIRE_IMAGE_SOURCES=true only after configuring suitable sources. Set SECURITY_ALLOWED_GIT_HOSTS for approved private Git hosts. Configure valid package sources and signing keys separately.
+
+## Upgrade
+
+1. Drain active image/security jobs and reconcile uncertain publications. Stop services; do not remove volumes.
+2. Back up PostgreSQL, report volume, MinIO/S3, .env and override, encryption key and tool-updates volume. Preserve required local Docker images.
+3. Fetch and fast-forward the tested revision (or use the release tag). Preserve uncommitted local changes; never reset blindly.
+
+```bash
+./appsec stop
+git fetch origin main --tags
+git merge --ff-only origin/main &&
+  ./appsec start &&
+  ./appsec doctor
+curl -fsS http://127.0.0.1:8080/appsec-api/ui/build-info
+```
+
+Check Alembic 0018_tool_updates and actual browser build. The CLI verifies the source of API, worker and scheduler; browser assets are fingerprinted. If a merge fails, stop and resolve it. If migration fails, inspect the migration runner and database before restarting; do not drop data.
+
+## Diagnose
 
 ```bash
 ./appsec status
 ./appsec doctor
-./appsec logs worker
-./appsec logs api
-./appsec logs scheduler
-./appsec logs metabase
-./appsec stop
+docker compose logs --since=30m --tail=100 worker
+docker compose logs --since=30m --tail=100 scheduler
+docker compose top worker
+docker compose exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
 ```
 
-Use Control Center **System health** to inspect live PostgreSQL heartbeat/queue information. A busy worker can have a stale heartbeat; use Docker `ps` and logs for deeper diagnostics. Error codes and corrective hints are described in [User Guide](user-guide.md).
+```sql
+SELECT id, requested_image, mode, status, attempts, started_at, finished_at,
+       COALESCE(finished_at, now()) - started_at AS elapsed, last_error
+FROM pipeline_jobs ORDER BY created_at DESC LIMIT 10;
+SELECT image_ref, phase, status, started_at, finished_at, error_message
+FROM scan_runs ORDER BY started_at DESC LIMIT 10;
+SELECT version_num FROM alembic_version;
+```
 
-## Prepare patch and publish
+Use finished_at - started_at for completed duration; now() - started_at overstates elapsed after completion. Log events IMAGE_SOURCE_TRY/SELECTED/FAILED and SCAN_STAGE_START/DONE/FAILED distinguish pull, DB, scan and SBOM. Default pull timeout is 180s per source; APPSEC_TRIVY_DB_TIMEOUT_SECONDS=180 per DB repository, APPSEC_TRIVY_SCAN_TIMEOUT_SECONDS=900, APPSEC_SBOM_TIMEOUT_SECONDS=600. Scanner timeout cleanup targets its uniquely named container. Inspect SCAN_CLEANUP_FAILED manually. Worker processes queues serially in default topology; stale heartbeats may mean busy, and interrupted jobs can require manual reconciliation. Never force retry a patch/push.
+
+## Backups and recovery
+
+Use pg_dump and an approved consistent object-storage/volume backup. Example database export (protect file permissions):
 
 ```bash
-./appsec start --patching
+umask 077
+docker compose exec -T postgres sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' > appsec-db.dump
 ```
 
-Only run privileged BuildKit on isolated trusted workers. An Admin must register the exact destination HTTPS hostname in **Registries**, mark `allow_push` and separately configure Registry credentials on the Worker. The first approval creates a local prepared image and rescans; second approval publishes only after passing policy. To require distinct reviewers in an organization:
+Also back up Metabase application DB, storage objects and local evidence, encryption key, config, and tool-updates metadata/binaries. Store backups encrypted; test restore into an isolated staging environment. Restore against compatible release/schema; do not downgrade migrations blindly. Old Gitleaks copies may contain raw secrets; rotate and purge under retention policy.
 
-```env
-APPSEC_REQUIRE_SECOND_APPROVER=true
-```
+## Publication and maintenance
 
-If push fails, check Registry for a partially published tag/digest. Do not automatically retry. Local prepared images can be lost if the Docker host changes: a multi-host architecture needs worker affinity or a controlled staging registry and promotion.
+Registry credentials must be provisioned in the worker Docker environment, not entered into registry metadata. For local export use docker save -o patched.tar EXACT_LOCAL_TAG on the same daemon. See [registry](registry.md). For tool update failures see [tool updates](tool-updates.md). The standalone Trivy DB updater uses deployment settings rather than the database-backed policy; use only if explicitly approved and configured to use the same cache.
 
-## Identity and encryption
-
-Human users can be disabled, reset, rotated or revoked in **Users & access**. New human users must change temporary passwords at first login. Optional MFA TOTP secrets are encrypted with `APPSEC_MFA_ENCRYPTION_KEY` (created on new `./appsec setup`). Back up this key separately from the DB; losing it makes existing enrolled TOTP secrets undecryptable. Existing installations upgrading from older versions must provision a Fernet key (32 random bytes base64 URL-safe) if enabling MFA.
-
-Built-in MFA is not a replacement for enterprise OIDC/SSO. Metabase accounts and the optional MCP DB role are independent of AppSec user sessions.
-
-## Upgrade / migration
-
-1. Back up PostgreSQL, MinIO/S3 data, reports, credentials, MFA key and Docker volumes; test restore in staging.
-2. Review old queued `patch` jobs; with patching disabled Worker refuses them, but enabling it later may allow historical jobs.
-3. Update the tested version of `main` or checkout a release tag; run `./appsec start` to apply Alembic migrations.
-4. Check schema revisions 0010 (user lifecycle), 0011 (separate publication), 0012 (registries/inventory), 0013 (MFA) and review the approved policy.
-5. Verify login, first-password-change path, MFA enrollment/recovery, user disabling, Registry registration, manual scan, final publication approval and downloads in a staging environment.
-6. Metabase is the only dashboard (Grafana removed previously). Existing Grafana volumes are preserved for manual cleanup if needed.
-7. Old Gitleaks reports/S3/backups may contain secrets that DB migrations cannot remove. Rotate exposed credentials, purge old copies.
-
-## Production limitations
-
-- Worker mounts Docker Socket and optional BuildKit is privileged; isolate these workloads.
-- Current built-in account management, TOTP and lockout are not external OIDC/LDAP/SAML federation.
-- Metabase has a separate authentication model and global analytics; use a dedicated SELECT-only PostgreSQL role and restrict its network/user access.
-- CSRF browser-write protection uses a custom header and SameSite cookies. Review full CSRF/session protection and rate limiting during security acceptance.
-- Full Docker/Trivy/Copa/Harbor/browser E2E testing, backup/restore, HA and image digest/signature verification remain production gates.
-- Browser GUI does not upload Docker TAR archives; it accepts Registry image references only.
-
-
-## Trusted mirrors, operator reports and erasure
-
-Open Registries to add approved mirror hostnames in numeric priority order. Test from the Docker daemon and from the separate Copa BuildKit execution context. A successful Docker pull is not proof that BuildKit can fetch the same reference. Use the consolidated Before/After report for actual scan comparison and post-fix recommendation. The initial scan never blocks on policy. For a local output choose Keep patched image locally; to export a tar on the same Docker host, run docker save -o patched.tar IMAGE_REF with the exact local tag shown in UI. For registry output enter the full registry/repository:tag and approve publication separately. Admin history deletion is irreversible for live DB and evidence but intentionally preserves audit logs, remote published images and backups.
-
-
-## Upgrade: build the migration runner before applying Alembic revisions
-
-The start command rebuilds appsec-runner from the current checkout before invoking migrate, then starts the API and workers. This prevents an existing cached runner from using stale migration files. Stop the previous platform and back up the database and evidence before upgrading. If a worker reports UndefinedTable for pending_image_removals, check the PostgreSQL alembic_version: revision 0015_history_purge must be present for this release. Rebuild the runner and run migrate before restarting the worker. Keep all data volumes. A restarting or stopped required worker is a doctor failure, not a healthy deployment.
-
-Copa patch failures capture stderr and persist a bounded, sanitized diagnostic in the patch and job error. Existing historical failures are unchanged. Inspect worker and BuildKit logs and validate the executor, registry access and package repositories before submitting a new approved workflow; never retry an uncertain publication automatically.
-
-Image pull attempts and scanner stage starts/finishes are logged without dumping full raw Trivy reports in the worker. Trivy DB prefetch attempts default to 180s per repository, scans to 900s and SBOM generation to 600s. Set APPSEC_TRIVY_DB_TIMEOUT_SECONDS, APPSEC_TRIVY_SCAN_TIMEOUT_SECONDS or APPSEC_SBOM_TIMEOUT_SECONDS in .env for large workloads. A timed-out scanner is removed by its unique container name; if cleanup fails, inspect that named container. No stale vulnerability database fallback is introduced. Existing strict registry order and evidence verification are unchanged.
+./appsec stop preserves volumes. Never use down --volumes for routine upgrades. Production acceptance requires isolated execution, TLS, least privilege, image signing/pinning, backup/restore, full browser and registry E2E, SSO and analytics segmentation.

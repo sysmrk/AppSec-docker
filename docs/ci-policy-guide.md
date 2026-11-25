@@ -1,187 +1,49 @@
-# CI/CD و Policy Gate
+# CI/CD security gates — v2
 
-این داکیومنت نشان می‌دهد چطور AppSec Image Pipeline را در CI/CD استفاده کنید و با policy جلوی ادامه pipeline را بگیرید.
+Manual workflows and CI gates serve different purposes. The browser original scan does not enforce thresholds; post-patch recommendation is advisory, with documented risk acceptance for publication. Explicit CI commands enforce thresholds and return nonzero on failure. A successful scan is not necessarily a successful security gate.
 
-## رفتار اصلی policy
+## Image gate
 
-در اجرای پیش‌فرض Policy روی اسکن اولیه اجرا می‌شود و هیچ Patch یا Push انجام نمی‌شود. در حالت پیشرفته `--patch`، Policy روی اسکن Image اصلاح‌شده اجرا می‌شود.
+On an initialized trusted AppSec execution host:
 
-مقادیر پیش‌فرض:
+```bash
+./scripts/appsecctl.sh ci image nginx:latest
+```
 
-```env
+To evaluate a local patched image, add --patch. This does not push. If no OS fix is known, the original verified evidence is evaluated. If a patch scan exists, the final patched evidence is evaluated, not an earlier successful original. Invalid/missing verification and execution failure fail closed.
+
+Set the CI environment thresholds in the deployment .env (runner receives these via Compose):
+
+```dotenv
 POLICY_MAX_CRITICAL=0
 POLICY_MAX_HIGH=0
 POLICY_MAX_MEDIUM=999999
 POLICY_MAX_LOW=999999
+POLICY_MAX_UNKNOWN=0
+CI_MAX_HIGH=0
 ```
 
-اگر تعداد CVEهای Critical یا High در اسکن نهایی از حد مجاز بیشتر باشد، Pipeline با وضعیت `policy_failed` پایان می‌یابد.
+The explicit image gate uses POLICY_MAX_* from the runtime environment independently of UI advisory policy. Secret CI uses CI_MAX_HIGH. LOW remains in evidence and counts despite the standard report display filter.
 
-## اجرای ساده در CI
+## Repository gate
 
 ```bash
-./scripts/appsecctl.sh ci image "$IMAGE_REF"
+./scripts/appsecctl.sh ci security secrets https://github.com/example/repo.git --profile strict
 ```
 
-این command وقتی policy پاس شود exit code برابر `0` می‌دهد و وقتی policy fail شود یا اجرای pipeline خطا بخورد exit code غیر صفر می‌دهد. همین رفتار برای متوقف کردن pipeline کافی است.
+Returns nonzero on scan failure or excessive high findings. Use approved hosts and scoped credentials via the supported repository workflow when private; the direct CLI does not accept the browser's transient credential parameters.
 
-مثال:
+## CI integration
 
-```bash
-IMAGE_REF="alpine:3.19"
-./scripts/appsecctl.sh ci image "${IMAGE_REF}"
-```
-
-## GitLab CI
+Run from a trusted self-hosted runner with access to the initialized AppSec Compose project. Do not give an untrusted pull request Docker socket access. Example GitHub Actions step, applicable equally as a shell stage in GitLab or Jenkins:
 
 ```yaml
-stages:
-  - security
-
-image_security:
-  stage: security
-  script:
-    - docker compose -f docker-compose.yaml up -d postgres
-    - ./scripts/appsecctl.sh migrate
-    - ./scripts/appsecctl.sh ci image "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA"
-  rules:
-    - if: $CI_COMMIT_BRANCH
+- name: AppSec image gate
+  run: |
+    cd /opt/appsec/AppSec-docker
+    ./scripts/appsecctl.sh ci image "$IMAGE_REF"
 ```
 
-اگر command آخر fail شود، job و کل stage fail می‌شود.
+A central REST integration may enqueue POST /pipelines and poll job/pipeline state, but that reports execution only; it is not equivalent to the explicit CI severity gate. Integrate policy evaluation deliberately rather than treating HTTP/job success as approval. Never automatically retry ambiguous publication; registry publication uses the separate human workflow.
 
-## GitHub Actions
-
-```yaml
-name: image-security
-
-on:
-  pull_request:
-  push:
-    branches: [main]
-
-jobs:
-  scan-image:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Start AppSec services
-        run: |
-          docker compose -f docker-compose.yaml up -d postgres
-          ./scripts/appsecctl.sh migrate
-      - name: Run policy gate
-        run: ./scripts/appsecctl.sh ci image "alpine:3.19"
-```
-
-## Jenkins Pipeline
-
-```groovy
-pipeline {
-  agent any
-  stages {
-    stage('Image Security') {
-      steps {
-        sh 'docker compose -f docker-compose.yaml up -d postgres'
-        sh './scripts/appsecctl.sh migrate'
-        sh './scripts/appsecctl.sh ci image "$IMAGE_REF"'
-      }
-    }
-  }
-}
-```
-
-## استفاده async از API در CI
-
-اگر می‌خواهید job را در platform مشترک ثبت کنید:
-
-```bash
-response="$(
-  curl -sS -X POST http://127.0.0.1:8080/appsec-api/pipelines \
-    -H "X-API-Key: ${APPSEC_API_KEY}" \
-    -H 'Content-Type: application/json' \
-    -d "{\"image\":\"${IMAGE_REF}\"}"
-)"
-
-job_id="$(printf '%s' "$response" | jq -r '.job_id')"
-```
-
-بعد polling کنید تا job تمام شود:
-
-```bash
-while true; do
-  jobs="$(curl -sS -H "X-API-Key: ${APPSEC_API_KEY}" http://127.0.0.1:8080/appsec-api/jobs)"
-  status="$(printf '%s' "$jobs" | jq -r --arg id "$job_id" '.[] | select(.id == $id) | .status')"
-  pipeline_id="$(printf '%s' "$jobs" | jq -r --arg id "$job_id" '.[] | select(.id == $id) | .pipeline_id // empty')"
-
-  case "$status" in
-    success|failed|canceled) break ;;
-    *) sleep 10 ;;
-  esac
-done
-
-summary="$(curl -sS -H "X-API-Key: ${APPSEC_API_KEY}" "http://127.0.0.1:8080/appsec-api/pipelines/${pipeline_id}")"
-pipeline_status="$(printf '%s' "$summary" | jq -r '.pipeline.status')"
-
-test "$pipeline_status" = "success"
-```
-
-## تنظیم policy با API
-
-Policy عمومی:
-
-```bash
-curl -X POST http://127.0.0.1:8080/appsec-api/api/policies \
-  -H "X-API-Key: ${APPSEC_API_KEY}" \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "name":"default",
-    "rules":{
-      "max_critical":0,
-      "max_high":0,
-      "max_medium":20,
-      "max_low":100
-    }
-  }'
-```
-
-Policy مخصوص project:
-
-```bash
-curl -X POST http://127.0.0.1:8080/appsec-api/api/policies \
-  -H "X-API-Key: ${APPSEC_API_KEY}" \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "name":"payment-service-strict",
-    "project_id":"<project-id>",
-    "rules":{
-      "max_critical":0,
-      "max_high":0,
-      "max_medium":5,
-      "max_low":50
-    }
-  }'
-```
-
-## پیشنهاد برای production
-
-- برای branchهای feature فقط `CRITICAL` و `HIGH` را gate کنید.
-- برای release branch مقدار `MEDIUM` را هم محدود کنید.
-- برای imageهای base و public policy سخت‌گیرانه‌تر بگذارید.
-- برای موارد پذیرفته‌شده، accepted risk با owner و تاریخ انقضا ثبت کنید.
-- خروجی HTML تجمیعی را به عنوان artifact همان CI job ذخیره کنید.
-- اگر platform مرکزی دارید، CI فقط job ثبت کند و نتیجه را poll کند؛ اجرای Copa و Trivy روی runner مشترک CI انجام نشود.
-
-
-### Secret scanning: fail closed
-
-`./scripts/appsecctl.sh ci security secrets https://github.com/example/repo.git` returns a non-zero exit code if the security job is not `success`, OR if high findings exceed `CI_MAX_HIGH`. This prevents an unsuccessful scanner run from reporting a green CI gate. Repo HTTPS hostnames must be allowed by `SECURITY_ALLOWED_GIT_HOSTS`.
-
-
-## Optional patch mode in CI
-
-Use `./scripts/appsecctl.sh ci image "$IMAGE_REF" --patch` when BuildKit is running under the `patch` profile and local patch evaluation is required. The job prepares and rescans a local image.
-
-
-## Manual approval vs CI automation
-
-Normal CI remains scan-only. The Control Center's guided workflow uses two separate approvals: first local patch preparation/scan, then publishing the policy-passed image to an explicitly approved Registry. The advanced CLI `--patch` stops after evaluating the local patch. Configure isolated executors and scoped credentials, review final policy and sign/promote images through approved enterprise controls.
+Pin tool/image references for sensitive pipelines and preserve raw evidence. CI tests in this repository validate contracts and selected real components; do not infer full infrastructure acceptance.
