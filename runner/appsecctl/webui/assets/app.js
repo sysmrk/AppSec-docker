@@ -81,18 +81,23 @@
     const inSettings = settingViews.has(view);
     $("settings-navigation").hidden = !inSettings || Boolean(state.user?.must_change_password);
     document.querySelectorAll(".settings-tabs [data-view]").forEach(n => {
-      n.classList.toggle("active", n.dataset.view === view || (inSettings && n.dataset.view === "settings") || (view === "results" && n.dataset.view === reportReturnView));
+      n.classList.toggle("active", n.dataset.view === view);
       if (n.dataset.view === view) n.setAttribute("aria-current","page");
       else n.removeAttribute("aria-current");
     });
     document.querySelectorAll(".view").forEach(v => v.hidden = v.id !== "view-" + view);
-    document.querySelectorAll(".nav-item").forEach(n => n.classList.toggle("active", n.dataset.view === view));
+    document.querySelectorAll(".nav-item").forEach(n => {
+      const active = n.dataset.view === view || (inSettings && n.dataset.view === "settings") ||
+        (view === "results" && n.dataset.view === reportReturnView);
+      n.classList.toggle("active", active);
+      if (active) n.setAttribute("aria-current","page"); else n.removeAttribute("aria-current");
+    });
     $("breadcrumb").textContent = ({
       overview: "Overview", scan: "New scan", secrets: "Repository scan",
-      results: "Results", guided: "My workflows", inventory: "Images & scans",
-      approvals: "Approvals", users: "Users & access", registries: "Registries",
+      results: "Scan report", guided: "My workflows", inventory: "Images & scans",
+      approvals: "Approvals", users: "Settings / Users & access", registries: "Settings / Registries",
       profile: "Settings / My profile", tools: "Settings / Tool updates", projects: "Settings / Projects & policies", health: "Settings / System health",
-      integrations: "Integrations"
+      integrations: "Settings / Integrations"
     })[view] || "AppSec";
     if (view === "health") refreshSystemHealth().catch(error => notification(error.message, true));
     if (view === "guided") refreshGuided().catch(error => notification(error.message, true));
@@ -796,7 +801,7 @@
       const row = node("tr");
       cell(row, item.tool); cell(row, item.current_version || "Not detected"); cell(row, item.latest_version || "Not checked");
       const names = {current:"Current",available:"Update available",failed:"Update failed",check_failed:"Release check failed",queued:"Queued",applying:"Applying",unchecked:"Not checked"};
-      const status = cell(row, ""); status.appendChild(statusPill(names[item.status] || item.status));
+      const status = cell(row, ""); status.appendChild(node("span", "pill " + (item.status === "current" ? "success" : item.status.includes("failed") ? "failed" : item.status === "available" ? "patch" : item.status === "applying" ? "running" : item.status), names[item.status] || item.status));
       if(item.last_error) status.appendChild(node("p","small-text",item.last_error));
       if(item.status === "check_failed" && item.latest_version) status.appendChild(node("p","info-note","Latest stable is the last known release, not a fresh check."));
       cell(row, date(item.checked_at));

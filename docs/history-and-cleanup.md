@@ -49,3 +49,5 @@ docker compose cp copa_0.15.0_linux_amd64.tar.gz scheduler:/tool-updates/inbox/
 ````
 
 Then choose Settings → Tool updates → Apply/Retry update. The scheduler refuses a mismatched digest or an unknown release. Do not upload arbitrary binaries or disable TLS. If the API itself is unreachable and no trusted metadata has been cached, use approved network/proxy access first. A failed download does not replace the active binary.
+
+If only the scheduler lacks Internet access, a trusted connected host may also obtain the exact official tag metadata from `https://api.github.com/repos/project-copacetic/copacetic/releases/tags/v0.15.0` using normal TLS validation and stage that JSON as `/tool-updates/release-metadata/copa/0.15.0.json` with `docker compose cp`. Do not construct metadata or replace its published digest manually. Only an already discovered and admin-approved version can be queued through the UI. Use `docker compose exec -T scheduler mkdir -p /tool-updates/release-metadata/copa` before copying. This is an administrator-controlled offline transfer, not a new source of release trust.

@@ -50,3 +50,35 @@ class ToolUpdateTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError,"SHA256 mismatch"):
                 tool_updates.install_copa("0.15.0",item)
             network.assert_not_called()
+
+    def test_http_rate_limit_is_not_blindly_retried(self):
+        import urllib.error
+        error = urllib.error.HTTPError("https://api.github.com",403,"Forbidden",{"X-RateLimit-Remaining":"0"},None)
+        self.assertEqual(tool_updates.network_reason(error),("HTTP 403 (GitHub API rate limit; try a later check)",False))
+
+    def test_staged_verified_copa_can_install_without_network(self):
+        import io
+        import tarfile
+        import hashlib
+        import platform
+        from tempfile import TemporaryDirectory
+        from pathlib import Path
+        from unittest.mock import MagicMock
+        architecture = {"x86_64":"amd64","aarch64":"arm64"}[platform.machine()]
+        filename = "copa_0.15.0_linux_"+architecture+".tar.gz"
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf,mode="w:gz") as tar:
+            content = b"test fixture, never executed"
+            member = tarfile.TarInfo("copa")
+            member.size = len(content)
+            tar.addfile(member,io.BytesIO(content))
+        data = buf.getvalue()
+        item = {"assets":[{"name":filename,"digest":"sha256:"+hashlib.sha256(data).hexdigest(),
+                 "browser_download_url":"https://github.com/project-copacetic/copacetic/releases/download/v0.15.0/"+filename}]}
+        with TemporaryDirectory() as d, patch.object(tool_updates,"ROOT",Path(d)), patch.object(tool_updates,"read_url") as network, patch.object(tool_updates,"command_version",return_value=("0.15.0","")), patch.object(tool_updates.subprocess,"run",return_value=MagicMock(stdout="--addr --timeout")):
+            inbox = Path(d)/"inbox"
+            inbox.mkdir()
+            (inbox/filename).write_bytes(data)
+            tool_updates.install_copa("0.15.0",item)
+            self.assertEqual((Path(d)/"0.15.0"/"copa").read_bytes(),content)
+            network.assert_not_called()

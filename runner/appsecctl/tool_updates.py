@@ -74,13 +74,17 @@ class SafeRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         if not allowed_url(newurl):
             raise RuntimeError("Unexpected release redirect")
-        return super().redirect_request(req, fp, code, msg, headers, newurl)
+        redirected = super().redirect_request(req, fp, code, msg, headers, newurl)
+        self.last_host = urlsplit(newurl).hostname
+        return redirected
 class ReleaseNetworkError(RuntimeError):
     """Sanitized release transport failure (no URL queries or proxy credentials)."""
 
 
 def network_reason(exc):
     if isinstance(exc, urllib.error.HTTPError):
+        if exc.code == 403 and exc.headers and exc.headers.get("X-RateLimit-Remaining") == "0":
+            return "HTTP 403 (GitHub API rate limit; try a later check)", False
         return "HTTP " + str(exc.code), exc.code in (408, 429, 500, 502, 503, 504)
     reason = exc.reason if isinstance(exc, urllib.error.URLError) else exc
     if isinstance(reason, ssl.SSLCertVerificationError):
@@ -103,14 +107,20 @@ def release_opener():
     ca = os.getenv("APPSEC_TOOL_CA_FILE", "").strip()
     context = ssl.create_default_context()
     if ca:
-        context.load_verify_locations(cafile=ca)
-    handlers = [SafeRedirect(), urllib.request.HTTPSHandler(context=context)]
+        try:
+            context.load_verify_locations(cafile=ca)
+        except (OSError, ssl.SSLError):
+            raise RuntimeError("Configured enterprise CA file cannot be loaded; check scheduler mount and PEM format") from None
+    redirect = SafeRedirect()
+    handlers = [redirect, urllib.request.HTTPSHandler(context=context)]
     if proxy:
         parsed = urlsplit(proxy)
         if parsed.scheme not in ("http", "https") or not parsed.hostname:
             raise RuntimeError("Invalid APPSEC_TOOL_HTTPS_PROXY; use an HTTP(S) proxy URL")
         handlers.append(urllib.request.ProxyHandler({"https": proxy}))
-    return urllib.request.build_opener(*handlers)
+    opener = urllib.request.build_opener(*handlers)
+    opener.appsec_redirect = redirect
+    return opener
 
 
 def read_url(url, maximum, stage="Release metadata"):
@@ -120,6 +130,9 @@ def read_url(url, maximum, stage="Release metadata"):
     opener = release_opener()
     for attempt in range(3):
         try:
+            redirect = getattr(opener, "appsec_redirect", None)
+            if redirect is not None:
+                redirect.last_host = None
             with opener.open(request, timeout=20) as response:
                 data = response.read(maximum + 1)
                 if len(data) > maximum:
@@ -130,6 +143,9 @@ def read_url(url, maximum, stage="Release metadata"):
             # Redirect failures identify the failing official host without leaking signed query parameters.
             failed_url = getattr(exc, "url", None) or url
             host = urlsplit(failed_url).hostname
+            redirected_host = getattr(redirect, "last_host", None)
+            if not getattr(exc, "url", None) and redirected_host in HOSTS:
+                host = redirected_host
             if host not in HOSTS:
                 host = urlsplit(url).hostname
             if transient and attempt < 2:
