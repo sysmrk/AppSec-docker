@@ -44,22 +44,23 @@ class OnboardingTests(unittest.TestCase):
                 self.cli.setup(SimpleNamespace())
                 self.assertEqual(env.read_bytes(), before)
 
-    def test_start_is_scan_only_unless_explicit(self):
+    def test_start_is_always_full_even_with_old_false_argument(self):
         cli = self.cli
         with tempfile.TemporaryDirectory() as folder, \
              patch.object(cli, "ENV_FILE", Path(folder) / ".env"), \
              patch.object(cli, "check_prerequisites"), \
              patch.object(cli, "checkout_build_info", return_value={"revision":"a"*40,"source_sha256":"b"*64}), \
              patch.object(cli, "verify_deployment") as verify, \
+             patch.object(cli, "verify_patch_runtime") as verify_patch, \
              patch.object(cli, "compose") as compose_calls, \
              patch.object(cli, "run") as run_command, \
              patch.object(cli.os, "environ", dict(os.environ)):
             cli.ENV_FILE.write_text("POSTGRES_PASSWORD=xyz\n")
             cli.start(SimpleNamespace(analytics=False, patching=False))
             calls = [call.args for call in compose_calls.call_args_list]
-            self.assertFalse(any("buildkit" in args for args in calls))
-            self.assertFalse(any("patch" in args for args in calls))
-            self.assertEqual(cli.os.environ["APPSEC_PATCH_ENABLED"], "false")
+            self.assertIn(("--profile", "patch", "up", "-d", "--wait", "buildkit"), calls)
+            self.assertEqual(cli.os.environ["APPSEC_PATCH_ENABLED"], "true")
+            verify_patch.assert_called_once()
             self.assertTrue(any("metabase" in str(args).lower() for args in [call.args for call in run_command.call_args_list]))
             runner_build = ("--profile", "tools", "build", "appsec-runner")
             migrate = ("--profile", "tools", "run", "--rm", "appsec-runner", "migrate")

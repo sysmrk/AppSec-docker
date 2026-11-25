@@ -10,7 +10,7 @@ cd AppSec-docker
 ./appsec wizard
 ```
 
-The wizard confirms a scan-only startup, generates credentials and Fernet MFA key if `.env` is missing, then starts PostgreSQL, MinIO, API, Worker, Scheduler, Nginx and Metabase. **It never overwrites `.env`.** Alternative individual commands:
+The wizard confirms a full startup including BuildKit, generates credentials and Fernet MFA key if `.env` is missing, then starts PostgreSQL, MinIO, API, Worker, Scheduler, Nginx and Metabase. **It never overwrites `.env`.** Alternative individual commands:
 
 ```bash
 ./appsec setup

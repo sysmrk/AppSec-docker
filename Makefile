@@ -8,7 +8,7 @@ help:
 	@printf '%s\n' \
 		'AppSec commands:' \
 		'  ./appsec setup      Create initial secure configuration' \
-		'  ./appsec start      Start the standard scan-only platform' \
+		'  ./appsec start      Start full platform with patching' \
 		'  ./appsec doctor     Diagnose Docker, API and background services' \
 		'  ./appsec credentials  Show admin credentials on a trusted terminal' \
 		'  make preflight        Check host requirements and ports' \

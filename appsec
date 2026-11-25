@@ -115,23 +115,23 @@ def setup(_args) -> None:
 
 
 def wizard(args) -> None:
-    """Human-friendly guided first run, no patching or registry publication."""
+    """Human-friendly full platform startup; publication still requires approval."""
     print("AppSec onboarding wizard — real services, no demo data", flush=True)
     check_prerequisites()
     if not ENV_FILE.exists():
         setup(args)
     else:
         print("Using existing .env; existing credentials remain untouched.")
-    print("\nPlan: start PostgreSQL, MinIO, API, Workers and Metabase (scan-only).")
+    print("\nPlan: start PostgreSQL, MinIO, API, Workers, BuildKit and Metabase (full mode).")
     print("AppSec UI: http://127.0.0.1:8080; Metabase: http://127.0.0.1:3001")
-    print("Registry push and MCP will remain disabled.")
+    print("Patching is enabled; registry publication still requires explicit approval. MCP is optional.")
     if not args.yes:
         if not sys.stdin.isatty():
             raise RuntimeError("Interactive terminal required; use ./appsec wizard --yes to confirm startup")
         if input("Start the platform using this configuration? [y/N] ").strip().lower() != "y":
             print("No containers started. You can run ./appsec start later.")
             return
-    start(argparse.Namespace(patching=False, analytics=True))
+    start(argparse.Namespace(analytics=True))
     print("\nNext: open the Control Center and choose 'New manual scan'.")
     print("If something fails, run ./appsec doctor and ./appsec logs worker.")
 
@@ -197,6 +197,18 @@ def verify_deployment() -> None:
     raise RuntimeError("Browser endpoint does not serve the verified deployment; check Nginx/port mapping.")
 
 
+def verify_patch_runtime() -> None:
+    for service in ("api", "worker"):
+        result = subprocess.run(compose_command("--profile", "platform", "exec", "-T", service,
+                                "python", "-c", "import os; print(os.getenv('APPSEC_PATCH_ENABLED',''))"),
+                                cwd=ROOT, capture_output=True, text=True, check=True, timeout=20)
+        if result.stdout.strip().lower() not in ("true", "1", "yes"):
+            raise RuntimeError("Full mode required: patching disabled in " + service + "; check Compose overrides")
+    compose("--profile", "patch", "exec", "-T", "buildkit",
+            "buildctl", "--addr", "unix:///run/buildkit/buildkitd.sock", "debug", "workers")
+    print("Full patch runtime verified.", flush=True)
+
+
 def start(args) -> None:
     if not ENV_FILE.exists():
         raise RuntimeError(".env missing. Run './appsec setup' first.")
@@ -206,24 +218,24 @@ def start(args) -> None:
     print("Deploying checkout " + expected["revision"][:12] + " source=" + expected["source_sha256"][:16], flush=True)
     print("\n[1/3] Starting database and artifact storage", flush=True)
     compose("--profile", "platform", "up", "-d", "postgres", "minio", "minio-init")
-    if args.patching:
-        compose("--profile", "patch", "up", "-d", "buildkit")
+    compose("--profile", "patch", "up", "-d", "--wait", "buildkit")
     print("\n[2/3] Building migration runner and applying database migrations", flush=True)
     # A cached runner may contain older Alembic revisions than the checkout.
     # Always build from the current source before executing database migrations.
     compose("--profile", "tools", "build", "appsec-runner")
     compose("--profile", "tools", "run", "--rm", "appsec-runner", "migrate")
     print("\n[3/3] Starting Control Center, workers and Metabase", flush=True)
-    os.environ["APPSEC_PATCH_ENABLED"] = "true" if args.patching else "false"
+    os.environ["APPSEC_PATCH_ENABLED"] = "true"
     services = ["api", "nginx", "worker", "scheduler", "metabase-db-init", "metabase"]
     compose("--profile", "platform", "up", "-d", "--build", *services)
     verify_deployment()
+    verify_patch_runtime()
     run("bash", str(ROOT / "scripts/setup-metabase.sh"))
     print("\nAppSec Control Center: http://127.0.0.1:8080")
     print("Sign-in: admin (use './appsec credentials' to retrieve the generated password).")
     print("Metabase dashboards: http://127.0.0.1:3001")
     print("MCP is OFF unless separately activated with 'make mcp-up'.")
-    print("Patching:", "enabled (requires configured registry)" if args.patching else "off (scan-only default)")
+    print("Patching: enabled — local patch and rescan; registry publication requires separate approval.")
 
 
 def stop(_args) -> None:
@@ -277,8 +289,7 @@ def doctor(_args) -> None:
             show("Session cookies", "WARN", "HTTP localhost only; enable Secure behind HTTPS")
         if settings.get("MINIO_ROOT_PASSWORD") != settings.get("S3_SECRET_ACCESS_KEY"):
             show("MinIO credentials", "WARN", "Local S3 access requires matching credentials or a dedicated service account")
-        if settings.get("APPSEC_PATCH_ENABLED", "false").lower() in ("1", "true", "yes"):
-            show("Patch executor", "WARN", "Privileged BuildKit must run on isolated hosts")
+        show("Patch executor", "WARN", "Privileged BuildKit must run on isolated hosts")
     if not shutil.which("docker"):
         show("Docker CLI", "FAIL", "Install Docker Engine with Compose v2")
     else:
@@ -303,7 +314,7 @@ def doctor(_args) -> None:
             if raw:
                 entries = json.loads(raw) if raw.startswith("[") else [json.loads(line) for line in raw.splitlines()]
                 by_service = {entry.get("Service", ""): entry for entry in entries}
-                for name in ("postgres", "api", "nginx", "worker", "scheduler", "metabase", "minio"):
+                for name in ("postgres", "api", "nginx", "worker", "scheduler", "metabase", "minio", "buildkit"):
                     entry = by_service.get(name)
                     status = str(entry.get("State", "")) if entry else ""
                     health = str(entry.get("Health", "")) if entry else ""
@@ -341,6 +352,11 @@ def doctor(_args) -> None:
              "runtime=" + str(actual.get("revision", "unknown"))[:12])
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
         show("Deployment identity", "FAIL", "Could not verify checkout and running browser endpoint")
+    try:
+        verify_patch_runtime()
+        show("Full patch runtime", "OK")
+    except (OSError, RuntimeError, subprocess.SubprocessError):
+        show("Full patch runtime", "FAIL", "API/worker patch flag or BuildKit unavailable")
     print(f"\nDoctor result: {failures} failures, {warnings} warnings.")
     if failures:
         raise RuntimeError("Fix FAIL checks before using AppSec")
@@ -367,11 +383,11 @@ def main() -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     for name in ("setup", "stop", "status", "doctor", "credentials"):
         sub.add_parser(name)
-    wizard_parser = sub.add_parser("wizard", help="Guided first run: checks, secure config and scan-only startup")
-    wizard_parser.add_argument("--yes", action="store_true", help="Confirm scan-only startup for unattended setup")
+    wizard_parser = sub.add_parser("wizard", help="Guided first run: checks, secure config and full startup")
+    wizard_parser.add_argument("--yes", action="store_true", help="Confirm full startup for unattended setup")
     start_parser = sub.add_parser("start", help="Start real AppSec services and migrate the DB")
     start_parser.add_argument("--analytics", action="store_true", help="Legacy compatibility; Metabase is enabled by default")
-    start_parser.add_argument("--patching", action="store_true", help="Enable privileged BuildKit and explicit patch/push mode")
+    start_parser.add_argument("--patching", action="store_true", help="Compatibility flag; full patch mode is always enabled")
     logs_parser = sub.add_parser("logs")
     logs_parser.add_argument("service", choices=SERVICE_CHOICES)
     args = parser.parse_args()

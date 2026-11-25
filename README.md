@@ -16,7 +16,7 @@ cd AppSec-docker
 ./appsec wizard
 ```
 
-The interactive wizard validates Docker, generates random local credentials and an MFA encryption key in `.env` (without overwriting existing configuration), explains what will start, and runs the **scan-only** platform after confirmation. For manual operations instead:
+The interactive wizard validates Docker, generates random local credentials and an MFA encryption key in `.env` (without overwriting existing configuration), explains what will start, and runs the **full** platform with patching after confirmation. For manual operations instead:
 
 ```bash
 ./appsec setup
@@ -37,7 +37,7 @@ AppSec UI: **http://127.0.0.1:8080**. Metabase Analytics: **http://127.0.0.1:300
 6. **Approve publication** (separately): a valid, policy-passed prepared image can be published only after a second explicit confirmation and an Admin-approved Registry destination. Production can require **two distinct approvers** using `APPSEC_REQUIRE_SECOND_APPROVER=true`. Or choose **Finish without publishing**.
 7. **Publish and report**: an authorized Worker publishes with a single-attempt job. Ambiguous Registry errors are never automatically retried. Errors include stable codes and plain-language troubleshooting hints.
 
-Patch preparation and publication require opt-in privileged BuildKit: `./appsec start --patching`, approved Registry credentials available to the Worker, and Registry metadata marked `allow_push`. Default installation remains scan-only.
+The full platform always starts privileged BuildKit with `./appsec start`. Patch preparation still requires operator approval in guided workflows. Publication is a separate explicit decision requiring approved registry credentials and registry metadata marked `allow_push`. `--patching` is a backwards-compatible flag.
 
 Trivy stores its vulnerability and Java databases in `trivy-cache/` at the project root. Set `TRIVY_CACHE_PATH` to an absolute host path to use a different directory. When upgrading an installation with an existing `appsec_trivy_cache` Docker volume, copy its contents into the host cache before restarting the scanner to retain downloaded databases.
 
@@ -73,10 +73,10 @@ All data-changing cookie-session requests require a first-party browser header. 
 
 | Command | Description |
 | --- | --- |
-| `./appsec wizard` | Guided first run (starts scan-only after confirmation) |
+| `./appsec wizard` | Guided first run (starts full mode after confirmation) |
 | `./appsec setup` | Generate secure `.env`, never overwrite existing config |
 | `./appsec start` | Start standard platform, migrate DB, provision Metabase |
-| `./appsec start --patching` | Enable optional privileged patch executor |
+| `./appsec start --patching` | Compatibility alias for full startup |
 | `./appsec doctor` | Check Docker, API/DB, workers, Metabase and configuration |
 | `./appsec status` / `./appsec logs worker` | Inspect actual execution health |
 | `./appsec stop` | Stop containers, preserve named volumes |
