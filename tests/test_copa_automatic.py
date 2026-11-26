@@ -83,3 +83,27 @@ class AutomaticCopaTests(unittest.TestCase):
         self.assertFalse(any(r["action"]=="ALLOW" and r["selector"]["match_type"]=="REGEX" for r in rules))
         with self.assertRaises(RuntimeError):
             patch_sources.source_policy(source,{},local_source=ref,pins={})
+
+    def test_namespace_owner_resolution_and_host_reference(self):
+        import json
+        from appsecctl import copa_transport,patch_sources
+        def row(identity,mode,networks=None):
+            return json.dumps([{"Id":identity,"State":{"Running":True},"HostConfig":{"NetworkMode":mode},"NetworkSettings":{"Networks":networks or {}}}])
+        with patch.object(copa_transport.apt,"run",side_effect=[row("a"*64,"container:owner"),row("b"*64,"host")]):
+            self.assertEqual(copa_transport.buildkit_network("buildkit"),("b"*64,"host"))
+        with patch.object(copa_transport.apt,"run",side_effect=[row("a"*64,"container:owner"),row("b"*64,"custom",{"custom":{}}),"bridge"]):
+            self.assertEqual(copa_transport.buildkit_network("buildkit"),("b"*64,"bridge"))
+        ref="127.0.0.1:15000/appsec-local/copa-mirror:"+"a"*32
+        digest="sha256:"+"b"*64
+        rules=patch_sources.source_policy("mirror.example/library/nginx:1",{},local_source=ref,pins={ref:digest})["rules"]
+        self.assertIn("docker-image://"+ref+"@"+digest,{r["selector"]["identifier"] for r in rules if r["action"]=="ALLOW"})
+        with self.assertRaises(RuntimeError):
+            patch_sources.source_policy("mirror.example/library/nginx:1",{},local_source=ref.replace("15000","15001"),pins={ref.replace("15000","15001"):digest})
+
+    def test_disabled_network_rejected(self):
+        import json
+        from appsecctl import copa_transport
+        data=[{"Id":"a"*64,"State":{"Running":True},"HostConfig":{"NetworkMode":"none"}}]
+        with patch.object(copa_transport.apt,"run",return_value=json.dumps(data)):
+            with self.assertRaisesRegex(RuntimeError,"network is disabled"):
+                copa_transport.buildkit_network("buildkit")

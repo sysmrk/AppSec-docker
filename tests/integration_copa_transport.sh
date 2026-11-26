@@ -3,7 +3,7 @@ set -euo pipefail
 name="appsec-copa-export-ci-$$"
 source="appsec-local/copa-mirror:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 export BUILDKIT_CONTAINER="$name"
-trap 'docker rm -f "$name" >/dev/null 2>&1 || true; docker image rm "$source" appsec-ci/copa-export:test >/dev/null 2>&1 || true' EXIT
+trap 'docker rm -f "$name" "$name-owner" >/dev/null 2>&1 || true; docker image rm "$source" appsec-ci/copa-export:test >/dev/null 2>&1 || true' EXIT
 docker pull registry:2.8.3
 docker pull busybox:1.36
 # Exercise the same docker commit preparation as the production path.
@@ -11,7 +11,17 @@ docker pull busybox:1.36
 cid=$(docker create --platform linux/amd64 busybox:1.36)
 docker commit "$cid" "$source"
 docker rm -v "$cid"
-docker run -d --privileged --name "$name" -v "$PWD/config/buildkitd.toml:/etc/buildkit/buildkitd.toml:ro" moby/buildkit:v0.29.0
+# Real bridge, host, and shared namespace executors. Exercise the same
+# transport and docker exporter for each network layout.
+for mode in bridge host shared; do
+export APPSEC_TEST_NETWORK_MODE="$mode"
+if [ "$mode" = shared ]; then
+  docker run -d --name "$name-owner" busybox:1.36 sleep 600
+  net="container:$name-owner"
+else
+  net="$mode"
+fi
+docker run -d --privileged --network "$net" --name "$name" -v "$PWD/config/buildkitd.toml:/etc/buildkit/buildkitd.toml:ro" moby/buildkit:v0.29.0
 for i in $(seq 1 30); do
   if docker exec "$name" buildctl debug workers >/dev/null 2>&1; then break; fi
   sleep 1
@@ -25,6 +35,7 @@ source="appsec-local/copa-mirror:"+"a"*32
 identity=scan_evidence.local_image_id(source)
 with copa_transport.open_transport(registry_image="registry:2.8.3") as transport:
     ref=transport.stage(source,identity)
+    assert ref.startswith("127.0.0.1:15000/" if os.environ["APPSEC_TEST_NETWORK_MODE"]=="host" else "appsec-copa-stage:5000/")
     alias="source.invalid/library/helper:1"
     policy=patch_sources.source_policy("docker.io/library/busybox:1.36",{alias:ref},local_source=ref,pins=transport.pins)
     subprocess.run(["docker","exec","-i",name,"sh","-c","cat >/tmp/policy.json"],input=json.dumps(policy),text=True,check=True)
@@ -41,3 +52,8 @@ with copa_transport.open_transport(registry_image="registry:2.8.3") as transport
 assert subprocess.run(["docker","inspect","--type","container","appsec-copa-stage"],capture_output=True).returncode!=0
 print("Private staging source, real dedicated BuildKit Docker export, Docker load and cleanup passed")
 PY
+
+docker rm -f "$name"
+if [ "$mode" = shared ]; then docker rm -f "$name-owner"; fi
+docker image rm appsec-ci/copa-export:test
+done

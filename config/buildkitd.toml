@@ -2,3 +2,8 @@
 # No remote registry has TLS disabled.
 [registry."appsec-copa-stage:5000"]
   http = true
+
+# Host-network BuildKit cannot join the per-job bridge. The same temporary
+# registry is published only on host loopback, at this dedicated port.
+[registry."127.0.0.1:15000"]
+  http = true
