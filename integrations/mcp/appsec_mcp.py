@@ -221,6 +221,12 @@ def validate_remediation_selection(pipeline_id: str, stage: str, plan_digest: st
                      "plan_digest": plan_digest, "selections": selections})
 
 
+@mcp.tool()
+def get_optimization_review(pipeline_id: str) -> dict[str, Any]:
+    """Read scoped optimization comparison summaries; no raw reports or execution."""
+    return _plan_api("GET",pipeline_id,"optimization-review")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="AppSec optional read-only MCP adapter")
     parser.add_argument("--transport", choices=("stdio", "http"), default="http")

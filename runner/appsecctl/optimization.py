@@ -247,17 +247,33 @@ def execute(task):
     job_watch.emit("build")
     candidate=apt.build(task["plan"],raw,task["plan"]["plan_sha256"])
     # Rescan the exact base and candidate, not an old report with a different DB.
-    reports,hashes,scanner=offline_compare([image,candidate["candidate_image_id"]],raw["_appsec"]["scanner_image"])
-    comparison=audit.analyze({"scans":reports},benchmark=True)
+    images=[image,candidate["candidate_image_id"]]
+    if task["stage"]=="residual":
+        with db.connect() as conn:
+            original=conn.execute("SELECT * FROM scan_runs WHERE pipeline_id=%s AND phase='original' AND status='success' ORDER BY started_at DESC LIMIT 1",(scan["pipeline_id"],)).fetchone()
+        if not audit.verified(original):
+            raise ValueError("Verified original scan missing")
+        original_id=original["raw_report"]["_appsec"]["image_id"]
+        if original_id in images:
+            raise ValueError("Unexpected duplicate candidate identity")
+        images.insert(0,original_id)
+    reports,hashes,scanner=offline_compare(images,raw["_appsec"]["scanner_image"])
+    base={**reports[-2],"phase":"original"}
+    comparison=audit.analyze({"scans":[base,reports[-1]]},benchmark=True)
+    overall=audit.analyze({"scans":[reports[0],reports[-1]]},benchmark=True)
     if comparison["comparison"]!="benchmark_observed":
         raise ValueError("Candidate scan comparison unavailable")
-    before,after=[candidate_review.counts(s["raw_report"]) for s in reports]
+    before,after=[candidate_review.counts(s["raw_report"]) for s in reports[-2:]]
     unknown=sum(c["coverage_unknown"] or 0 for c in comparison["cohorts"].values())
     result={**candidate,"rescan_required":False,"comparison":"frozen_db",
             "database_sha256":hashes,"scanner_image_id":scanner,
             "base_severity":before,"candidate_severity":after,"introduced":comparison["introduced"],
             "coverage_unknown":unknown,"base_findings":comparison["original_findings"],
             "candidate_findings":comparison["patched_findings"],
+            "original_findings":overall["original_findings"],"overall_findings":overall["patched_findings"],
+            "overall_introduced":overall["introduced"],
+            "raw_report_sha256":[hashlib.sha256(audit.input_bytes(s["raw_report"])).hexdigest() for s in reports],
+            "image_ids":images,
             "publication_authorized":False,"functional_test_passed":False,
             "security_review_required":True}
     job_watch.emit("review")

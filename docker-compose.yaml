@@ -69,6 +69,8 @@ x-runner-env: &runner-env
   APPSEC_MFA_ENCRYPTION_KEY: ${APPSEC_MFA_ENCRYPTION_KEY:-}
   APPSEC_REQUIRE_SECOND_APPROVER: ${APPSEC_REQUIRE_SECOND_APPROVER:-false}
   APPSEC_ENABLE_OPTIMIZATION: ${APPSEC_ENABLE_OPTIMIZATION:-false}
+  APPSEC_AI_ENABLED: ${APPSEC_AI_ENABLED:-false}
+  APPSEC_AI_MODEL: ${APPSEC_AI_MODEL:-}
   APPSEC_OPTIMIZATION_VOLUME: ${APPSEC_OPTIMIZATION_VOLUME:-appsec_optimization}
 
 x-runner-volumes: &runner-volumes
@@ -85,6 +87,22 @@ x-api-volumes: &api-volumes
   - ./db:/db:ro
 
 services:
+  ollama:
+    profiles: ["ai"]
+    image: ${APPSEC_OLLAMA_IMAGE:-ollama/ollama:latest}
+    restart: unless-stopped
+    environment:
+      OLLAMA_HOST: "0.0.0.0:11434"
+      OLLAMA_NO_CLOUD: "1"
+    volumes:
+      - ollama-data:/root/.ollama
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - appsec-net
+
   # Optional: absent from normal 'platform' and 'production' profiles.
   # HTTP binds to localhost ONLY; use a TLS/OAuth gateway for remote clients.
   mcp:
@@ -441,6 +459,7 @@ services:
       - maintenance
 
 volumes:
+  ollama-data:
   optimization-data:
     name: ${APPSEC_OPTIMIZATION_VOLUME:-appsec_optimization}
   postgres-data:

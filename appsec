@@ -242,13 +242,13 @@ def start(args) -> None:
 
 def stop(_args) -> None:
     check_prerequisites()
-    compose("--profile", "platform", "--profile", "patch", "--profile", "mcp", "stop")
+    compose("--profile", "platform", "--profile", "patch", "--profile", "mcp", "--profile", "ai", "stop")
     print("AppSec containers stopped. Named data volumes are preserved.")
 
 
 def status(_args) -> None:
     check_prerequisites()
-    compose("--profile", "platform", "--profile", "patch", "--profile", "mcp", "ps")
+    compose("--profile", "platform", "--profile", "patch", "--profile", "mcp", "--profile", "ai", "ps")
 
 
 def logs(args) -> None:

@@ -101,6 +101,9 @@
       profile: "Settings / My profile", tools: "Settings / Tool updates", projects: "Settings / Projects & policies", health: "Settings / System health",
       integrations: "Settings / Integrations"
     })[view] || "AppSec";
+    if(view==="integrations") request("/api/integrations/status").then(d=>{
+      $("integration-ai-status").textContent=d.local_ai_enabled?"Local AI configured: "+d.model+" (model connectivity verified on request)":"Local AI disabled";
+    }).catch(e=>{$("integration-ai-status").textContent=e.message;});
     if (view === "health") refreshSystemHealth().catch(error => notification(error.message, true));
     if (view === "guided") refreshGuided().catch(error => notification(error.message, true));
     if (view === "projects" && state.user?.role === "admin") loadAdminData().catch(error => notification(error.message, true));
@@ -776,7 +779,26 @@
           } catch (error) { planResult.appendChild(node("p","warning",error.message)); }
           finally { planButton.disabled = false; }
         });
-        planBox.appendChild(planButton); planBox.appendChild(planResult); root.appendChild(planBox);
+        planBox.appendChild(planButton); planBox.appendChild(planResult);
+        if(["admin","operator"].includes(state.user?.role)) {
+          const advice=node("button","outline","Ask local AI for strategy suggestions");
+          advice.type="button";
+          const output=node("div");
+          advice.addEventListener("click",async()=>{
+            if(!window.confirm("Send minimized package names, CVE IDs and versions to the configured local Ollama model? No commands or approval will be executed."))return;
+            advice.disabled=true;output.textContent="Waiting for local model…";
+            try{
+              const result=await request("/api/remediation/"+encodeURIComponent(w.pipeline_id)+"/ai-advice",
+                {method:"POST",body:JSON.stringify({stage,offset:0,limit:25,consent:true})});
+              clear(output);
+              output.appendChild(node("p","info-note","Validated advice only · "+result.model+" · reviewed "+result.reviewed_action_count+" package groups."));
+              detailsTable(output,[["Package","package"],["Strategy","strategy"],["Reason","reason_code"]],result.selections);
+              if(result.next_offset!=null)output.appendChild(node("p","hint","First batch only; remaining groups can be reviewed via the paginated API."));
+            }catch(e){output.textContent=e.message;}finally{advice.disabled=false;}
+          });
+          planBox.appendChild(advice);planBox.appendChild(output);
+        }
+        root.appendChild(planBox);
       }
       if (w.state === "awaiting_approval" &&
           ["admin", "operator"].includes(state.user?.role)) {

@@ -1,0 +1,11 @@
+# Explicit opt-in overlay; use together with docker-compose.yaml and any
+# existing override. Mount only the trusted local Docker CLI plugin.
+services:
+  worker:
+    volumes:
+      - type: bind
+        source: ${APPSEC_BUILDX_PLUGIN:?Set absolute path to trusted docker-buildx plugin}
+        target: /usr/local/lib/docker/cli-plugins/docker-buildx
+        read_only: true
+        bind:
+          create_host_path: false

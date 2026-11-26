@@ -34,6 +34,11 @@ MIRRORS = {
 
 
 def run(args, timeout=180, *, capture=True):
+    # Host CLI has no DB dependency. Worker can attach bounded live telemetry.
+    watch=sys.modules.get("appsecctl.job_watch")
+    if not capture and watch is not None and watch.CURRENT.get() is not None:
+        watch.capture_stderr(args,timeout=timeout)
+        return None
     return subprocess.run(args, check=True, text=True, timeout=timeout,
                           stdout=subprocess.PIPE if capture else sys.stderr,
                           stderr=subprocess.PIPE if capture else sys.stderr).stdout
@@ -196,7 +201,7 @@ def build(plan, report, approved):
     try:
         with tempfile.TemporaryDirectory(prefix="appsec-debloat-") as tmp:
             Path(tmp,"Dockerfile").write_text(dockerfile(plan["roots"],plan["remove"]))
-            run(["docker","buildx","build","--builder","default","--load","--pull=false",
+            run(["docker","buildx","build","--builder","default","--progress","plain","--load","--pull=false",
                  "--network=none","--no-cache","--build-arg","BASE_IMAGE="+tag,
                  "-t",output,tmp],1800,capture=False)
         candidate_id=run(["docker","image","inspect","--format","{{.Id}}",output]).strip()

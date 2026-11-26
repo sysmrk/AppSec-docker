@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID, uuid4
 import secrets
+from threading import BoundedSemaphore
 
 import os
 
@@ -1185,6 +1186,65 @@ def get_remediation_plan(pipeline_id: str, stage: str = "original", offset: int 
     if not 0 <= offset <= 1000000 or not 1 <= limit <= 100:
         raise HTTPException(status_code=422, detail="invalid plan page")
     return page(scoped_remediation_plan(pipeline_id, user, stage), offset, limit)
+
+
+_AI_SLOT=BoundedSemaphore(1)
+
+
+class LocalAIRequest(BaseModel):
+    model_config=ConfigDict(extra="forbid")
+    stage: str = Field(default="original",max_length=12)
+    offset: int = Field(default=0,ge=0,le=1000000)
+    limit: int = Field(default=25,ge=1,le=25)
+    consent: bool = False
+
+
+@app.get("/api/integrations/status")
+def integrations_status(user: dict[str, Any] = Depends(current_user)):
+    from . import ai_assist
+    model=os.getenv("APPSEC_AI_MODEL","")
+    enabled=os.getenv("APPSEC_AI_ENABLED","false")=="true" and bool(ai_assist.MODEL.fullmatch(model))
+    return {"local_ai_enabled":enabled,"model":model if enabled else None,
+            "provider":"local_ollama","mcp_optional":True,"automatic_execution":False}
+
+
+@app.post("/api/remediation/{pipeline_id}/ai-advice")
+def remediation_ai(pipeline_id: str, request: LocalAIRequest,
+                   user: dict[str, Any] = Depends(require_role("admin","operator"))):
+    from . import ai_assist
+    if not request.consent:
+        raise HTTPException(status_code=422,detail="Explicit local AI consent required")
+    model=os.getenv("APPSEC_AI_MODEL","")
+    if os.getenv("APPSEC_AI_ENABLED","false")!="true" or not ai_assist.MODEL.fullmatch(model):
+        raise HTTPException(status_code=409,detail="Local AI is disabled or model is not configured")
+    plan=scoped_remediation_plan(pipeline_id,user,request.stage)
+    if not _AI_SLOT.acquire(blocking=False):
+        raise HTTPException(status_code=429,detail="Local AI is busy")
+    try:
+        return ai_assist.assist_plan(plan,model,request.offset,request.limit,endpoint="http://ollama:11434/api/chat")
+    except (RuntimeError,ValueError,KeyError,TypeError):
+        raise HTTPException(status_code=409,detail="Local model unavailable or invalid advice; no execution occurred") from None
+    finally:
+        _AI_SLOT.release()
+
+
+@app.get("/api/remediation/{pipeline_id}/optimization-review")
+def remediation_optimization_review(pipeline_id: str,user: dict[str, Any] = Depends(current_user)):
+    # Reuse strict project/owner visibility from the remediation planner.
+    scoped_remediation_plan(pipeline_id,user,"original")
+    with db.connect() as conn:
+        rows=conn.execute("""SELECT o.id,o.stage,o.operation,o.state,o.result,o.created_at
+          FROM optimization_runs o JOIN manual_workflows w ON w.id=o.workflow_id
+          JOIN pipeline_jobs j ON j.id=w.scan_job_id WHERE j.pipeline_id=%s
+          ORDER BY o.created_at DESC LIMIT 20""",(pipeline_id,)).fetchall()
+    # Do not send raw inventory, repository diagnostics, URLs, tags, plan
+    # or approval metadata to the model/MCP consumer.
+    allowed=("candidate_image_id","base_findings","candidate_findings","base_severity","candidate_severity",
+             "introduced","coverage_unknown","comparison","functional_test_passed","historical_layers_removed",
+             "overall_findings","original_findings","overall_introduced")
+    return {"runs":[{"id":r["id"],"stage":r["stage"],"operation":r["operation"],"state":r["state"],
+                     "created_at":r["created_at"],"result":{k:v for k,v in (r["result"] or {}).items() if k in allowed}}
+                    for r in rows],"publication_authorized":False}
 
 
 @app.post("/api/remediation/{pipeline_id}/validate")

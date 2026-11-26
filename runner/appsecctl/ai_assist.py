@@ -59,13 +59,15 @@ def model_context(plan, offset=0, limit=MAX_ACTIONS):
     # environment variables, descriptions or arbitrary advisory text.
 
 
-def request_model(model, context, timeout=120):
+def request_model(model, context, timeout=120, *, endpoint=ENDPOINT):
+    if endpoint not in (ENDPOINT,"http://ollama:11434/api/chat"):
+        raise ValueError("Unapproved local model endpoint")
     if not isinstance(model,str) or not MODEL.fullmatch(model):
         raise ValueError("Invalid locally installed model name")
     body={"model":model,"stream":False,"format":"json","options":{"temperature":0,"num_predict":2048},
           "messages":[{"role":"system","content":SYSTEM},
                       {"role":"user","content":json.dumps(context,ensure_ascii=True)}]}
-    req=urllib.request.Request(ENDPOINT, data=json.dumps(body).encode("utf-8"),
+    req=urllib.request.Request(endpoint, data=json.dumps(body).encode("utf-8"),
                                 headers={"Content-Type":"application/json"},method="POST")
     opener=urllib.request.build_opener(urllib.request.ProxyHandler({}),NoRedirect())
     try:
@@ -106,9 +108,13 @@ def validate_model(plan, context, output):
 
 
 def assist(payload, model, stage="original", offset=0, limit=MAX_ACTIONS):
-    plan=planner.build(payload,stage)
+    return assist_plan(planner.build(payload,stage),model,offset,limit)
+
+
+def assist_plan(plan, model, offset=0, limit=MAX_ACTIONS, *, endpoint=ENDPOINT):
+    stage=plan["stage"]
     context=model_context(plan,offset,limit)
-    rows=validate_model(plan,context,request_model(model,context)) if context["actions"] else []
+    rows=validate_model(plan,context,request_model(model,context,endpoint=endpoint)) if context["actions"] else []
     return {"schema":"appsec.ai-remediation-advice/v1","provider":"local_ollama",
             "model":model,"stage":stage,"plan_digest":plan["plan_digest"],"offset":offset,
             "reviewed_action_count":len(context["actions"]),"total_action_count":plan["package_group_count"],
