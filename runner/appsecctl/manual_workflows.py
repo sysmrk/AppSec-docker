@@ -21,6 +21,10 @@ def _uuid(value: str) -> UUID:
 def _state(item: dict[str, Any]) -> str:
     if item.get("stop_requested_at"):
         return "stopping" if item.get("optimization_running") or any(item.get(k)=="running" for k in ("scan_job_status","patch_job_status","publish_job_status")) else "stopped"
+    if item.get("unattended") and item.get("auto_error"):
+        return "failed"
+    if item.get("unattended") and item.get("optimization_active"):
+        return "optimizing"
     decision = item.get("decision")
     if decision == "finish":
         return "completed"
@@ -50,9 +54,16 @@ def _state(item: dict[str, Any]) -> str:
     return "scanning" if scan_status == "running" else "queued"
 
 
-def create(conn, image: str, project_id: str | None, user_id: str, execution_mode="guided", roots=()) -> dict[str, str]:
+def create(conn, image: str, project_id: str | None, user_id: str, execution_mode="guided", roots=(), unattended=False) -> dict[str, str]:
     from psycopg.types.json import Jsonb
     from . import apt_optimization
+    import os
+    if unattended and execution_mode not in ("scan_only","auto_patch","auto_optimize"):
+        raise ValueError("Choose a fully automatic local route")
+    if unattended and execution_mode=="auto_optimize" and os.getenv("APPSEC_REQUIRE_SECOND_APPROVER","false")=="true":
+        raise ValueError("Unattended optimization is incompatible with the configured second-approver policy")
+    if unattended and execution_mode in ("auto_patch","auto_optimize") and os.getenv("APPSEC_PATCH_ENABLED","false").lower() not in ("1","true","yes"):
+        raise ValueError("Local patching is disabled; choose Scan only or enable patching before starting")
     if execution_mode not in ("guided","scan_only","auto_patch","auto_optimize"):
         raise ValueError("Unknown workflow mode")
     if execution_mode=="auto_optimize":
@@ -66,9 +77,9 @@ def create(conn, image: str, project_id: str | None, user_id: str, execution_mod
     workflow_id = str(uuid4())
     scan_job = db.enqueue_pipeline(conn, name, project_id=project_id, mode="scan")
     conn.execute(
-        """INSERT INTO manual_workflows (id, requested_image, project_id, created_by, scan_job_id, execution_mode, optimization_roots)
-           VALUES (%s, %s, %s, %s, %s, %s, %s)""",
-        (workflow_id, name, project_id, user_id, scan_job, execution_mode, Jsonb(sorted(roots))),
+        """INSERT INTO manual_workflows (id, requested_image, project_id, created_by, scan_job_id, execution_mode, optimization_roots, unattended)
+           VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
+        (workflow_id, name, project_id, user_id, scan_job, execution_mode, Jsonb(sorted(roots)), bool(unattended)),
     )
     return {"id": workflow_id, "image": name, "scan_job_id": scan_job, "state": "queued"}
 
@@ -80,7 +91,8 @@ _WORKFLOW_QUERY = """
            w.scan_job_id, w.patch_job_id, w.publish_job_id,
            w.decision, w.approved_by, w.approved_at,
            w.publish_decision, w.published_by, w.publish_approved_at,
-           w.created_at, w.updated_at, w.execution_mode, w.optimization_roots, w.stop_requested_at, w.auto_step, w.auto_error,
+           w.created_at, w.updated_at, w.execution_mode, w.optimization_roots, w.stop_requested_at, w.auto_step, w.auto_error, w.unattended,
+           (SELECT o.state FROM optimization_runs o WHERE o.workflow_id=w.id AND o.state IN ('queued','planning','awaiting_approval','build_queued','building') ORDER BY o.created_at DESC LIMIT 1) AS optimization_state,
            EXISTS (SELECT 1 FROM optimization_runs o WHERE o.workflow_id=w.id AND o.state IN ('planning','building')) AS optimization_running,
            EXISTS (SELECT 1 FROM optimization_runs o WHERE o.workflow_id=w.id AND o.state IN ('queued','planning','awaiting_approval','build_queued','building')) AS optimization_active,
            s.status AS scan_job_status, s.last_error AS scan_error,

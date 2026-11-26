@@ -36,6 +36,7 @@ MESSAGES={
     "plan":"Package removal plan prepared", "build":"Approved candidate build started",
     "rescan":"Candidate rescan started", "review":"Candidate review complete",
     "approval_wait":"Plan ready; waiting for administrator approval",
+    "auto_approved":"Validated removal plan authorized at start; build queued automatically",
     "stopped":"Stop acknowledged; no further workflow stages will run",
     "apt_index":"APT repository index received", "apt_fetch":"APT metadata/package download received",
     "apt_remove":"APT package removal observed", "apt_install":"APT package installation observed",

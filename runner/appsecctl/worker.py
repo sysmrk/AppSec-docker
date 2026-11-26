@@ -59,8 +59,8 @@ def main() -> int:
                         with db.connect() as conn:
                             if workflow_control.requested(conn,"optimization",str(task["id"])):
                                 status="canceled"
-                            optimization.finish(conn,task,status,plan,result)
-                        job_watch.emit("approval_wait" if status=="awaiting_approval" else
+                            status=optimization.finish(conn,task,status,plan,result)
+                        job_watch.emit("auto_approved" if status=="build_queued" else "approval_wait" if status=="awaiting_approval" else
                                        "stopped" if status=="canceled" else "failed" if status=="failed" else "success")
                     except Exception as exc:
                         with db.connect() as conn:
@@ -109,7 +109,7 @@ def main() -> int:
                 except Exception as auto_exc:
                     with db.connect() as conn:
                         conn.execute("UPDATE manual_workflows SET auto_error=%s WHERE %s IN(scan_job_id,patch_job_id)",
-                                     ("Automatic next step requires review: "+type(auto_exc).__name__,job_id))
+                                     ("Automatic next step failed: "+type(auto_exc).__name__,job_id))
                 notify("pipeline.success", summary)
                 log_event("worker.image.finished", job_id=job_id, pipeline_id=pipeline_id)
                 job_watch.emit("success")

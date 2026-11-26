@@ -134,6 +134,7 @@ class ManualWorkflowRequest(BaseModel):
     project_id: str | None = None
     execution_mode: str = Field(default="guided",pattern="^(guided|scan_only|auto_patch|auto_optimize)$")
     optimization_roots: list[str] = Field(default_factory=list,max_length=3)
+    unattended: bool = False
 
 
 class ManualDecisionRequest(BaseModel):
@@ -1332,11 +1333,13 @@ def create_manual_workflow(
                 from . import optimization
                 if user["role"]!="admin" or not optimization.enabled():
                     raise ValueError("Automatic optimization planning requires an enabled admin lab")
-            result = mw.create(conn, request.image, request.project_id, str(user["id"]),request.execution_mode,request.optimization_roots)
+            result = mw.create(conn, request.image, request.project_id, str(user["id"]),request.execution_mode,request.optimization_roots,request.unattended)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from None
         db.insert_audit(conn, str(user["id"]), "manual.create", "manual_workflow", result["id"], {
             "image": request.image, "project_id": request.project_id,
+            "execution_mode": request.execution_mode, "unattended": request.unattended,
+            "optimization_roots": request.optimization_roots,
         })
     return result
 

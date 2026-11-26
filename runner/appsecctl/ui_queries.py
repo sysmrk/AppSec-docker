@@ -135,10 +135,11 @@ def image_workflow_history(conn, user: dict[str, Any], page: int = 1, limit: int
     total_pages = max(1, (total + limit - 1) // limit)
     page = min(page, total_pages)
     rows = _rows(conn, cte + """
-      SELECT h.*, s.critical_count, s.high_count,
+      SELECT h.*, m.unattended, m.auto_error, m.stop_requested_at, m.optimization_active, m.optimization_running, s.critical_count, s.high_count,
              EXISTS (SELECT 1 FROM pipeline_jobs j WHERE j.pipeline_id=h.pipeline_id
                        AND j.status IN ('queued','running')) AS active
       FROM history h
+      LEFT JOIN manual_rows m ON h.kind='manual' AND m.id=h.id
       LEFT JOIN LATERAL (
         SELECT critical_count, high_count FROM scan_runs WHERE pipeline_id=h.pipeline_id
         ORDER BY started_at DESC, id DESC LIMIT 1
@@ -148,7 +149,7 @@ def image_workflow_history(conn, user: dict[str, Any], page: int = 1, limit: int
     items = []
     for row in rows:
         state = _state(row) if row["kind"] == "manual" else row["legacy_state"]
-        if row["active"] or state in ("queued", "scanning", "patch_queued", "patch_running", "publish_queued", "publishing", "running"):
+        if row["active"] or row.get("optimization_active") or state in ("optimizing", "stopping", "queued", "scanning", "patch_queued", "patch_running", "publish_queued", "publishing", "running"):
             reason = "Job is queued or running; wait until it finishes."
         elif not row["pipeline_id"]:
             reason = "No pipeline/report was created for this job."

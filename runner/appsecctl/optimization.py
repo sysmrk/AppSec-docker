@@ -55,7 +55,7 @@ def lock_workflow(conn,wid,user):
 def require_idle(w):
     if w.get("stop_requested_at"):
         raise ValueError("Workflow stopped")
-    if w["state"] not in ("awaiting_approval","awaiting_publication","completed","completed_without_publish","published","publication_blocked"):
+    if w["state"] not in ("awaiting_approval","awaiting_publication","completed","completed_without_publish","published","publication_blocked","optimizing"):
         raise ValueError("Workflow must have completed scanning/patching")
     if not w.get("pipeline_id"):
         raise ValueError("No verified pipeline")
@@ -73,6 +73,8 @@ def create(conn,wid,user,operation,stage,roots):
         raise ValueError("Removal roots only allowed for debloat")
     w=lock_workflow(conn,wid,user)
     require_idle(w)
+    if w.get("unattended") and (w.get("auto_step") or w["execution_mode"]!="auto_optimize" or operation!="debloat" or sorted(roots)!=sorted(w["optimization_roots"])):
+        raise ValueError("Unattended route is fixed at Start; create a new workflow")
     if conn.execute("SELECT 1 FROM optimization_runs WHERE workflow_id=%s AND state=ANY(%s)",(wid,list(ACTIVE))).fetchone():
         raise ValueError("An optimization task is already active")
     payload=db.pipeline_summary(conn,str(w["pipeline_id"]))
@@ -136,10 +138,47 @@ def claim(conn):
 
 
 def finish(conn,task,state,plan=None,result=None,error=None):
-    conn.execute("""UPDATE optimization_runs SET state=%s,plan=COALESCE(%s,plan),result=COALESCE(%s,result),
-                 error_code=%s,updated_at=now() WHERE id=%s AND state=%s""",
+    # Lock workflow first, matching stop/decide lock order. Only the exact
+    # automatically enqueued task is authorized by the immutable start choice.
+    wid=str(task["workflow_id"])
+    w=conn.execute("SELECT * FROM manual_workflows WHERE id=%s FOR UPDATE",(wid,)).fetchone()
+    auto=bool(w and w.get("unattended") and w["execution_mode"]=="auto_optimize"
+              and str(w.get("auto_step"))==str(task["id"]))
+    if w and w.get("stop_requested_at"):
+        state="canceled"
+    actor=None
+    if auto and state in ("awaiting_approval","completed"):
+        actor=conn.execute("SELECT id,role,disabled FROM users WHERE id=%s",(w["created_by"],)).fetchone()
+        if not actor or actor["disabled"] or actor["role"]!="admin":
+            state,error="failed","Workflow creator authorization revoked"
+        elif w["project_id"] and not db.user_can_access_project(conn,actor,str(w["project_id"]),write=True):
+            state,error="failed","Project write authorization revoked"
+    if auto and state=="awaiting_approval":
+        if (os.getenv("APPSEC_REQUIRE_SECOND_APPROVER","false")=="true"
+                or task["operation"]!="debloat" or not plan
+                or sorted(plan.get("roots",[]))!=sorted(w["optimization_roots"])
+                or plan.get("plan_sha256")!=apt.plan_digest(plan)):
+            state,error="failed","Automatic removal authorization or plan validation failed"
+    updated=conn.execute("""UPDATE optimization_runs SET state=%s,plan=COALESCE(%s,plan),result=COALESCE(%s,result),
+                 error_code=%s,updated_at=now() WHERE id=%s AND state=%s RETURNING id""",
                  (state,Jsonb(plan) if plan is not None else None,Jsonb(result) if result is not None else None,
-                  error,task["id"],task["state"]))
+                  error,task["id"],task["state"])).fetchone()
+    if not updated:
+        return state
+    if auto and state=="awaiting_approval":
+        # Reuse the existing digest and role validation. Transactionally queue
+        # the build: the intermediate approval state is never exposed.
+        decide(conn,wid,str(task["id"]),actor,"approve",plan["plan_sha256"])
+        db.insert_audit(conn,str(actor["id"]),"optimization.auto_approve","manual_workflow",wid,
+                        {"task_id":str(task["id"]),"plan_sha256":plan["plan_sha256"],"roots":plan["roots"]})
+        return "build_queued"
+    if auto and state=="completed":
+        mw.decide(conn,wid,actor,"skip_publish" if w["decision"]=="approve_patch" else "finish")
+        db.insert_audit(conn,str(actor["id"]),"manual.auto_keep_local","manual_workflow",wid,{"task_id":str(task["id"])})
+    elif auto and state in ("failed","canceled") and not w.get("stop_requested_at"):
+        conn.execute("UPDATE manual_workflows SET auto_error=%s,updated_at=now() WHERE id=%s",
+                     (error or "Automatic optimization did not complete",wid))
+    return state
 
 
 def manifest(folder):
@@ -256,6 +295,8 @@ def execute(task):
         approver=conn.execute("SELECT role,disabled FROM users WHERE id=%s",(task["approved_by"],)).fetchone()
     if not approver or approver["role"]!="admin" or approver["disabled"]:
         raise PermissionError("Approval revoked")
+    if os.getenv("APPSEC_REQUIRE_SECOND_APPROVER","false")=="true" and str(task["created_by"])==str(task["approved_by"]):
+        raise PermissionError("Different administrator must approve")
     apt.run(["docker","buildx","version"])
     job_watch.emit("build")
     candidate=(native_apt.build(task["plan"],raw,task["plan"]["plan_sha256"],current["mirrors"]) if op=="upgrade"

@@ -659,7 +659,7 @@
         current.status.textContent=current.state;
         if(current.follow && follow) current.terminal.scrollTop=current.terminal.scrollHeight;
         if(state.view==="guided" && path==="/api/manual-workflows/"+encodeURIComponent(state.selectedWorkflow)+"/watch") {
-          const changed=result.state!==state.workflowState || Boolean(result.optimization_state)!==Boolean(state.optimizationActive);
+          const changed=result.state!==state.workflowState || (result.optimization_state||null)!==state.optimizationState;
           if(changed && !current.refreshing) {
             current.refreshing=true;
             try { await openGuided(state.selectedWorkflow,true); }
@@ -681,7 +681,7 @@
   function optimizationPanel(root,w) {
     const panel=node("details","panel");
     panel.open=Boolean(w.optimization_active)||w.execution_mode==="auto_optimize";
-    panel.appendChild(node("summary","","Optimization results and approval"));
+    panel.appendChild(node("summary","",w.unattended?"Automatic optimization results":"Optimization results and approval"));
     root.appendChild(panel);
     const body=node("div");panel.appendChild(body);
     const path="/api/manual-workflows/"+encodeURIComponent(w.id)+"/optimization";
@@ -698,7 +698,7 @@
         const admin=state.user?.role==="admin";
         const active=data.runs.some(r=>["queued","planning","awaiting_approval","build_queued","building"].includes(r.state));
         refreshActive=data.runs.some(r=>["queued","planning","build_queued","building"].includes(r.state));
-        if(admin && data.enabled && !active && ["awaiting_approval","awaiting_publication","completed","completed_without_publish","published","publication_blocked"].includes(w.state)) {
+        if(admin && data.enabled && !w.unattended && !active && ["awaiting_approval","awaiting_publication","completed","completed_without_publish","published","publication_blocked"].includes(w.state)) {
           const advanced=node("details");advanced.appendChild(node("summary","","Advanced package diagnostics (optional)"));
           advanced.appendChild(node("p","hint","Repository check finds available updates; inventory compares scanner and dpkg; native upgrade builds an alternative candidate; module removal reduces unused functionality."));
           const form=node("div","approval-actions");
@@ -772,6 +772,7 @@
       const w = data.workflow, pipeline = data.pipeline;
       state.workflowState = w.state;
       state.optimizationActive=Boolean(w.optimization_active);
+      state.optimizationState=w.optimization_state||null;
       state.patchEnabled = Boolean(data.patch_enabled);
       clear(root);
       root.appendChild(node("p", "eyebrow", "MANUAL IMAGE WORKFLOW"));
@@ -786,7 +787,8 @@
       attachWatch(root,"/api/manual-workflows/"+encodeURIComponent(w.id)+"/watch");
       root.appendChild(node("p","info-note","Selected route: "+(w.execution_mode||"guided").replaceAll("_"," ")));
       if(w.auto_error)root.appendChild(node("p","warning",w.auto_error));
-      if(["admin","operator"].includes(state.user?.role)&&!["stopped","stopping","publishing","published","failed","patch_failed","publish_failed","canceled"].includes(w.state)){
+      if(w.unattended)root.appendChild(node("p","info-note","Automatic local route: no additional decisions. Output stays local; no registry push."));
+      if(["admin","operator"].includes(state.user?.role)&&!["stopped","stopping","publishing","published","completed","completed_without_publish","failed","patch_failed","publish_failed","canceled"].includes(w.state)){
         const stop=node("button","danger-button","Stop workflow");stop.type="button";
         stop.addEventListener("click",async()=>{
           if(!window.confirm("Stop future stages and retries? The current tool operation may finish at a safe boundary. Local images and reports are retained."))return;
@@ -845,7 +847,7 @@
         }
         root.appendChild(planBox);
       }
-      if (w.state === "awaiting_approval" && !w.optimization_active &&
+      if (!w.unattended && w.state === "awaiting_approval" && !w.optimization_active &&
           ["admin", "operator"].includes(state.user?.role)) {
         const controls = section(root, "Your decision is required");
         controls.appendChild(node("p", "info-note", "Scan complete. Review the findings below, then choose how to finish this workflow."));
@@ -890,17 +892,18 @@
       const scanFailed = w.scan_job_status === "failed";
       stepItem(ol, "1. Queue and scan image", "Trivy inspects the actual image and saves vulnerability findings.", scanFailed ? "failed" : w.scan_job_status === "success" ? "done" : w.scan_job_status === "running" ? "running" : "waiting");
       stepItem(ol, "2. Generate SBOM", "Generate a CycloneDX inventory of the original image's packages and dependencies.", sbomReady ? "done" : scanFailed ? "failed" : w.scan_job_status === "running" ? "running" : "waiting");
-      stepItem(ol, "3. Review original findings", "Human approval is needed before local patching.", w.decision ? "done" : w.state === "awaiting_approval" ? "running" : "waiting");
+      stepItem(ol, "3. Review original findings", w.unattended?"Local actions authorized before Start.":"Human approval is needed before local patching.", w.decision || (w.unattended&&w.optimization_active) ? "done" : w.state === "awaiting_approval" ? "running" : "waiting");
       stepItem(ol, "4. Prepare local patched image", "Copa uses BuildKit but does not push to the registry.", w.decision === "finish" ? "skipped" : w.patch_job_status === "success" ? "done" : w.patch_job_status === "failed" ? "failed" : w.decision === "approve_patch" ? "running" : "waiting");
       stepItem(ol, "5. Rescan & compare", "Trivy rescans the local patch and provides an advisory recommendation.", w.decision === "finish" ? "skipped" : diffs.length > 0 && patched ? "done" : w.decision === "approve_patch" ? "running" : "waiting");
-      stepItem(ol, "6. Separate publication approval", "Review the new findings and explicitly approve registry Push, or finish without publishing.", w.publish_decision ? "done" : ["awaiting_publication","publication_blocked"].includes(w.state) ? "running" : w.decision === "finish" ? "skipped" : "waiting");
+      stepItem(ol, "6. Separate publication approval", w.unattended?"No registry push; retain local results automatically.":"Review the new findings and explicitly approve registry Push, or finish without publishing.", w.publish_decision ? "done" : ["awaiting_publication","publication_blocked"].includes(w.state) ? "running" : w.decision === "finish" ? "skipped" : "waiting");
       stepItem(ol, "7. Publish & final report", "Only the verified rescanned image can be published after explicit approval; policy is advisory.", ["published","completed","completed_without_publish"].includes(w.state) ? "done" : w.state === "publishing" ? "running" : "waiting");
+      if(w.execution_mode==="auto_optimize")stepItem(ol,"8. Optimize and verify local candidate","Compare the exact base and candidate using the same frozen vulnerability DB.",w.optimization_active?"running":w.state==="failed"?"failed":w.auto_step&&["completed","completed_without_publish"].includes(w.state)?"done":"waiting");
       sec.appendChild(ol);
       if (pipeline?.pipeline) {
         renderUnifiedSummary(root, pipeline);
         root.appendChild(button("Open detailed findings →", () => openPipeline(w.pipeline_id)));
       }
-      if (["awaiting_publication", "publication_blocked"].includes(w.state) && !w.optimization_active &&
+      if (!w.unattended && ["awaiting_publication", "publication_blocked"].includes(w.state) && !w.optimization_active &&
           ["admin", "operator"].includes(state.user?.role)) {
         const controls = section(root, "Final review: publish or stop");
         const lastPatch = patches[0];
@@ -992,7 +995,7 @@
         });
         details.appendChild(links);root.appendChild(details);
       }
-      if(optimizationVisible&&w.execution_mode!=="auto_optimize"&&!w.optimization_active)optimizationPanel(root,w);
+      if(optimizationVisible&&!w.unattended&&w.execution_mode!=="auto_optimize"&&!w.optimization_active)optimizationPanel(root,w);
       if(state.user?.role==="admin"&&w.pipeline_id) {
         const danger=node("div","history-danger");
         danger.appendChild(button("Delete this workflow & history",()=>deletePipelineHistory(w.pipeline_id)));
@@ -1172,7 +1175,7 @@
   $("execution-mode").addEventListener("change",()=>{
     const mode=$("execution-mode").value;
     $("optimization-choices").hidden=mode!=="auto_optimize";
-    $("execution-help").textContent=({guided:"Review the initial scan and decide whether to patch.",scan_only:"Scan and SBOM only; no local patch.",auto_patch:"After a verified scan, build and rescan a local Copa patch if fixes exist.",auto_optimize:"After Copa, or on the original if no fix is available, prepare a removal plan; exact removal requires approval."})[mode];
+    $("execution-help").textContent=({guided:"Review the initial scan and decide whether to patch.",scan_only:"Scan and SBOM only; no local patch.",auto_patch:"Automatically build and rescan a local Copa patch if fixes exist, then finish. No registry push.",auto_optimize:"Automatically patch if possible, simulate removal of the selected unused modules and safe dependency closure, build and rescan locally, then finish. No registry push."})[mode];
   });
   async function loadPackageMirrors(){
     const data=await request("/api/optimization/mirrors");
@@ -1190,15 +1193,15 @@
     event.preventDefault();
     if (!state.user || state.user.role === "viewer") return notification("Viewer cannot start scans.", true);
     const mode=$("execution-mode").value;
-    const roots=mode==="auto_optimize"?Array.from($("optimization-choices").querySelectorAll("input:checked"),x=>x.value):[];
+    const roots=mode==="auto_optimize"?Array.from($("optimization-choices").querySelectorAll("input:checked:not(#optimization-authorize)"),x=>x.value):[];
     if(mode==="auto_optimize"&&!roots.length)return notification("Select at least one unused optional module.",true);
-    if(["auto_patch","auto_optimize"].includes(mode)&&!window.confirm("Authorize local Copa patching after a verified scan? No registry push or package removal is authorized."))return;
-    const payload = { image: $("image-reference").value.trim(), project_id: $("image-project").value || null,execution_mode:mode,optimization_roots:roots };
+    if(mode==="auto_optimize"&&!$("optimization-authorize").checked)return notification("Confirm local removal of selected modules and the validated dependency closure before starting.",true);
+    const payload = { image: $("image-reference").value.trim(), project_id: $("image-project").value || null,execution_mode:mode,optimization_roots:roots,unattended:true };
     try {
       const result = await request("/api/manual-workflows", { method: "POST", body: JSON.stringify(payload) });
       guidedPage = 1; selectedPipelines.clear();
       await openGuided(result.id);
-      notification("Workflow queued with your selected route. Registry publication always requires separate approval.");
+      notification("Workflow queued. Selected local route runs automatically to completion; no registry push.");
     } catch (error) { notification(error.message, true); }
   });
   $("repo-form").addEventListener("submit", async event => {

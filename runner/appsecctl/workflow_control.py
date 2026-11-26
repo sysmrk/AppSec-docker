@@ -1,6 +1,7 @@
 """Pre-authorized local routes and cooperative workflow stop.
 
-Never authorize registry publication or package removal automatically.
+Never authorize registry publication automatically. Local package removal
+requires explicit pre-start authorization and the existing safety checks.
 A stop request prevents subsequent stages/retries; an in-flight atomic tool
 operation may finish before the worker acknowledges the stop.
 """
@@ -68,17 +69,26 @@ def advance(conn,job_id):
     if not workflow:
         raise PermissionError("Workflow access revoked")
     mode=row["execution_mode"]
+    unattended=row.get("unattended",False)
     if row["mode"]=="scan" and not row["decision"]:
         if mode=="scan_only":
             mw.decide(conn,wid,actor,"finish")
             return
-        if os.getenv("APPSEC_PATCH_ENABLED","false")=="true" and scan_evidence.original_patch_eligibility(conn,workflow["pipeline_id"])["eligible"]:
+        if os.getenv("APPSEC_PATCH_ENABLED","false").lower() in ("1","true","yes") and scan_evidence.original_patch_eligibility(conn,workflow["pipeline_id"])["eligible"]:
             mw.decide(conn,wid,actor,"approve_patch")
             db.insert_audit(conn,str(actor["id"]),"manual.auto_patch","manual_workflow",wid,{})
+            return
+        if mode=="auto_patch" and unattended:
+            mw.decide(conn,wid,actor,"finish")
+            db.insert_audit(conn,str(actor["id"]),"manual.auto_no_eligible_patch","manual_workflow",wid,{})
             return
         if mode=="auto_patch":
             conn.execute("UPDATE manual_workflows SET auto_error='No eligible local Copa patch; review original findings' WHERE id=%s",(wid,))
             return
+    if unattended and mode=="auto_patch" and row["mode"]=="continue_patch":
+        mw.decide(conn,wid,actor,"skip_publish")
+        db.insert_audit(conn,str(actor["id"]),"manual.auto_keep_local","manual_workflow",wid,{})
+        return
     if mode!="auto_optimize" or row["auto_step"]:
         return
     if row["mode"]=="scan" and row["decision"]:
