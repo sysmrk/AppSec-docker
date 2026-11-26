@@ -31,3 +31,14 @@ class AutomaticCopaTests(unittest.TestCase):
         self.assertIn("https://mirrors.tuna.tsinghua.edu.cn/debian-security",result)
         self.assertIn("Signed-By: /key",result)
         self.assertIn("https://nginx.org/packages/debian",result)
+
+    def test_copa_base_image_label_is_the_only_allowed_change(self):
+        source="appsec-local/copa-mirror:"+"a"*32
+        original={"Config":{"Labels":{"application":"nginx"}},"RootFS":{"Layers":["base"]}}
+        candidate={"Config":{"Labels":{"application":"nginx","BaseImage":source}},"RootFS":{"Layers":["base","patch"]}}
+        with patch.object(copa_mirrors.apt,"inspect",side_effect=[original,candidate]),patch.object(copa_mirrors.apt,"inventory",side_effect=[{"p":{"version":"1"}},{"p":{"version":"2"}}]),patch.object(copa_mirrors.apt,"container"):
+            copa_mirrors.verify_candidate("original","candidate",source_ref=source)
+        candidate["Config"]["Labels"]["application"]="changed"
+        with patch.object(copa_mirrors.apt,"inspect",side_effect=[original,candidate]):
+            with self.assertRaisesRegex(RuntimeError,"application image labels"):
+                copa_mirrors.verify_candidate("original","candidate",source_ref=source)

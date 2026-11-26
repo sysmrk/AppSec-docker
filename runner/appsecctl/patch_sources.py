@@ -94,7 +94,7 @@ def source_policy(source: str, mappings: dict[str, str], *, local_source=None) -
 
 
 @contextmanager
-def policy_environment(source: str, report_path: Path, *, extra_groups=(), local_source=None):
+def policy_environment(source: str, report_path: Path, *, extra_groups=(), local_source=None, local_mirror=None):
     with db.connect() as conn:
         sources = image_sources.configured_sources(conn)
     if sources is None:
@@ -116,14 +116,25 @@ def policy_environment(source: str, report_path: Path, *, extra_groups=(), local
         if len(group) != 1 or not re.fullmatch(r"docker\.io/library/(?:python:3\.[0-9]{1,2}-slim|node:[0-9]{1,3}-alpine)", group[0]):
             raise RuntimeError("PATCH_SOURCE_POLICY: Invalid experimental language helper")
         groups.append((group, group))
-    for group, aliases in groups:
-        chosen = image_sources.pull_ordered(image_sources.ordered_candidates(sources, group))
-        for reference in aliases:
-            mappings[reference] = chosen
-            print("COPA_HELPER_MAPPING " + reference + " -> " + chosen, flush=True)
-    policy = source_policy(source, mappings,local_source=local_source)
-    with tempfile.TemporaryDirectory(prefix="appsec-copa-policy-") as folder:
-        path = Path(folder) / "policy.json"
-        path.write_text(json.dumps(policy), encoding="utf-8")
-        print("COPA_SOURCE_POLICY active; helper mappings=" + str(len(mappings)), flush=True)
-        yield {**os.environ, "EXPERIMENTAL_BUILDKIT_SOURCE_POLICY": str(path)}
+    staged_helpers=[]
+    try:
+        for group, aliases in groups:
+            chosen = image_sources.pull_ordered(image_sources.ordered_candidates(sources, group))
+            if local_mirror and local_source and str((report.get("Metadata") or {}).get("OS",{}).get("Family"))=="debian":
+                from . import copa_mirrors, scan_evidence
+                helper=copa_mirrors.prepare_sources(scan_evidence.local_image_id(chosen),local_mirror)
+                staged_helpers.append(helper["image_ref"])
+                chosen=helper["image_ref"]
+            for reference in aliases:
+                mappings[reference] = chosen
+                print("COPA_HELPER_MAPPING " + reference + " -> " + chosen, flush=True)
+        policy = source_policy(source, mappings,local_source=local_source)
+        with tempfile.TemporaryDirectory(prefix="appsec-copa-policy-") as folder:
+            path = Path(folder) / "policy.json"
+            path.write_text(json.dumps(policy), encoding="utf-8")
+            print("COPA_SOURCE_POLICY active; helper mappings=" + str(len(mappings)), flush=True)
+            yield {**os.environ, "EXPERIMENTAL_BUILDKIT_SOURCE_POLICY": str(path)}
+    finally:
+        for ref in staged_helpers:
+            from . import copa_mirrors
+            copa_mirrors.cleanup(ref)

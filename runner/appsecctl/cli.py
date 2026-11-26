@@ -432,6 +432,7 @@ def patch_from_scan(scan_id: str, *, automatic=False) -> tuple[str, str]:
         from . import copa_mirrors
         if mirrors and (original_report.get("Metadata",{}).get("OS") or {}).get("Family")=="debian":
             staged=copa_mirrors.prepare(expected_id,original_report,mirrors)
+            job_watch.emit("apt_upgrades",staged["availability"]["upgraded"])
             command[command.index("-i")+1]=staged["image_ref"]
             command[command.index("--addr")+1]="docker://"
             local_patched_ref=source_repository(staged["image_ref"])+":"+patch_tag
@@ -446,8 +447,9 @@ def patch_from_scan(scan_id: str, *, automatic=False) -> tuple[str, str]:
                          (Jsonb({"copa_version": copa_version, "buildkit_version": buildkit_info,
                                  "source_image": source_image_ref,
                                  "strategy":strategy, "package_repository":staged,
+                                 "buildkit_endpoint":"docker://" if staged else "dedicated BuildKit",
                                  "remediation_input": remediation_audit.input_manifest(filtered_report) if filtered_report is not None else None}), patch_id))
-        policy_context=(patch_sources.policy_environment(source_image_ref,policy_path,local_source=staged["image_ref"])
+        policy_context=(patch_sources.policy_environment(source_image_ref,policy_path,local_source=staged["image_ref"],local_mirror=staged["mirror"])
                         if staged else patch_sources.policy_environment(source_image_ref,policy_path))
         with policy_context as environment:
             if environment and environment.get("EXPERIMENTAL_BUILDKIT_SOURCE_POLICY"):
@@ -462,7 +464,7 @@ def patch_from_scan(scan_id: str, *, automatic=False) -> tuple[str, str]:
         if patched_id == expected_id or (staged and patched_id==staged["image_id"]):
             raise RuntimeError("SCAN_EVIDENCE_INVALID: Copa output is identical to its input; no verified patch")
         if staged:
-            copa_mirrors.verify_candidate(expected_id,patched_id)
+            copa_mirrors.verify_candidate(expected_id,patched_id,source_ref=staged["image_ref"])
         with db.connect() as conn:
             db.update_patch_success(conn, patch_id, str(copa_path) if filtered_report is not None else None)
             conn.execute("UPDATE patch_runs SET local_image_id=%s WHERE id=%s", (patched_id, patch_id))
