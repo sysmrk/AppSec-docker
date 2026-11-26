@@ -92,6 +92,12 @@ def original_patch_eligibility(conn, pipeline_id) -> dict:
     return patch_eligibility(scan)
 
 
+def copa_strategy(eligibility, *, automatic=False):
+    if eligibility["code"]=="SCAN_EVIDENCE_INVALID":
+        raise RuntimeError("SCAN_EVIDENCE_INVALID: verified scan required")
+    return "comprehensive" if automatic and not eligibility["eligible"] else "targeted"
+
+
 def copa_report(report: dict) -> dict:
     output = copy.deepcopy(report)
     output.pop("_appsec", None)

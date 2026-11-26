@@ -137,24 +137,61 @@ def trivy_database_options(sources=None) -> list[str]:
     return ["-e", f"TRIVY_DB_REPOSITORY={db_refs}", "-e", f"TRIVY_JAVA_DB_REPOSITORY={java_refs}"]
 
 
+def trivy_metadata_fresh(metadata, now=None):
+    """Validate repository content, not the time it happened to be downloaded."""
+    try:
+        now=now or datetime.now(timezone.utc)
+        updated=datetime.fromisoformat(metadata["UpdatedAt"].replace("Z","+00:00"))
+        next_update=datetime.fromisoformat(metadata["NextUpdate"].replace("Z","+00:00"))
+        return updated <= now < next_update and updated < next_update
+    except (ValueError, TypeError, KeyError, AttributeError):
+        return False
+
+
+def trivy_cache_metadata(image, cache, java=False):
+    path="/cache/"+("java-db" if java else "db")+"/metadata.json"
+    cmd=["docker","run","--rm","--pull=never","--network","none","--user","0:0",
+         "-v",cache+":/cache:ro","--entrypoint","/bin/sh",image,"-c",'cat "$1"',"metadata",path]
+    try:
+        result=subprocess.run(cmd,check=True,capture_output=True,text=True,timeout=30)
+        return json.loads(result.stdout)
+    except (OSError,subprocess.SubprocessError,ValueError):
+        return {}
+
+
+def invalidate_trivy_metadata(image, cache, java=False):
+    # Remove only the stale metadata marker, not the DB or unrelated cache.
+    # Trivy must download again rather than accepting its recent-download TTL.
+    path="/cache/"+("java-db" if java else "db")+"/metadata.json"
+    subprocess.run(["docker","run","--rm","--pull=never","--network","none","--user","0:0",
+                    "-v",cache+":/cache","--entrypoint","/bin/sh",image,"-ec",'rm -f -- "$1"',"metadata",path],
+                   check=True,timeout=30)
+
+
 def prepare_trivy_database(trivy_image: str, repositories: str, *, java: bool = False) -> None:
     """Try one approved OCI artifact repository at a time, including HTTP 403/404.
     
-    Trivy still decides whether its existing local cache needs an update.
-    This intentionally never uses docker pull for a vulnerability DB artifact.
+    Reject expired metadata even after a successful download. The next source
+    must be tried with the stale metadata invalidated. No stale-cache fallback.
     """
     flag = "--java-db-repository" if java else "--db-repository"
     download = "--download-java-db-only" if java else "--download-db-only"
     stage = "java" if java else "vulnerability"
     cache = env("TRIVY_CACHE_VOLUME", "appsec_trivy_cache")
     attempts = []
+    if not trivy_metadata_fresh(trivy_cache_metadata(trivy_image,cache,java)):
+        invalidate_trivy_metadata(trivy_image,cache,java)
     for ref in repositories.split(","):
         cmd = docker_base() + ["--pull=never", "-v", f"{cache}:/root/.cache/trivy",
                                trivy_image, "image", download, flag, ref]
         try:
             run_trivy_command(cmd, f"trivy-{stage}-db", timeout_seconds("APPSEC_TRIVY_DB_TIMEOUT_SECONDS", 180))
-            print(f"TRIVY_DB_READY kind={stage} repository={ref} (download or fresh cache)", flush=True)
-            return
+            if trivy_metadata_fresh(trivy_cache_metadata(trivy_image,cache,java)):
+                print(f"TRIVY_DB_READY kind={stage} repository={ref} (verified fresh cache or download)", flush=True)
+                return
+            reason="Database metadata expired or invalid"
+            job_watch.emit("db_stale")
+            invalidate_trivy_metadata(trivy_image,cache,java)
         except subprocess.CalledProcessError as exc:
             reason = safe_detail(exc.stderr)
         except OSError as exc:
@@ -175,8 +212,14 @@ def trivy_runtime() -> tuple[str, list[str], list[str]]:
         active_version = tool_updates.active(conn, "trivy")
         trivy_image = tool_updates.image_ref("trivy", active_version)
     if sources is None and not active_version:
-        return trivy_image, [], trivy_database_options()
-    resolved = tool_updates.resolve_scanner("trivy", trivy_image, sources, active_version)
+        # Legacy installations previously let docker run pull the scanner.
+        # Keep that behavior, but do not bypass DB freshness validation.
+        if subprocess.run(["docker","image","inspect",trivy_image],stdout=subprocess.DEVNULL,
+                          stderr=subprocess.DEVNULL,timeout=30).returncode:
+            run_command(["docker","pull",trivy_image],capture_errors=True,timeout=300)
+        resolved=trivy_image
+    else:
+        resolved = tool_updates.resolve_scanner("trivy", trivy_image, sources, active_version)
     options = trivy_database_options(sources)
     db_refs = image_sources.artifact_repositories(sources, env("TRIVY_DB_REPOSITORY", "ghcr.io/aquasecurity/trivy-db:2"))
     prepare_trivy_database(resolved, db_refs)
@@ -320,7 +363,7 @@ def source_repository(image_ref: str) -> str:
     return image_ref
 
 
-def patch_from_scan(scan_id: str) -> tuple[str, str]:
+def patch_from_scan(scan_id: str, *, automatic=False) -> tuple[str, str]:
     patch_id = str(uuid4())
 
     with db.connect() as conn:
@@ -336,7 +379,12 @@ def patch_from_scan(scan_id: str) -> tuple[str, str]:
         if eligibility["code"] == "SCAN_EVIDENCE_INVALID":
             raise RuntimeError("SCAN_EVIDENCE_INVALID: Original scan evidence is incomplete")
         # Preflight before creating a patch run, touching BuildKit or preparing any image.
-        filtered_report = scan_evidence.copa_report(original_report)
+        strategy = scan_evidence.copa_strategy(eligibility, automatic=automatic)
+        filtered_report = scan_evidence.copa_report(original_report) if strategy=="targeted" else None
+        if strategy=="targeted" and not eligibility["eligible"]:
+            raise scan_evidence.NoFixableOS("NO_FIXABLE_OS: No known OS fixes for targeted Copa")
+        from . import optimization
+        mirrors=optimization.mirrors(conn) if automatic else []
         pipeline_id = scan["pipeline_id"]
         if pipeline_id is None:
             pipeline_id = db.create_pipeline(conn, str(scan["image_id"]), source_image_ref)
@@ -365,13 +413,29 @@ def patch_from_scan(scan_id: str) -> tuple[str, str]:
         env("COPA_TIMEOUT", "30m"),
     ]
 
+    staged=None
     try:
-        # Keep the full report intact. Copa receives only fixable OS findings.
+        # Comprehensive mode intentionally omits the report argument entirely.
         copa_path = report_path.parent / f"copa-input-{patch_id}.json"
-        copa_path.write_bytes(remediation_audit.input_bytes(filtered_report))
-        with db.connect() as conn:
-            db.insert_artifact(conn, pipeline_id, scan_id, source_image_ref, "copa-input", "json", str(copa_path))
-        command[command.index("-r") + 1] = str(copa_path)
+        policy_path = copa_path
+        if strategy=="targeted":
+            copa_path.write_bytes(remediation_audit.input_bytes(filtered_report))
+            with db.connect() as conn:
+                db.insert_artifact(conn, pipeline_id, scan_id, source_image_ref, "copa-input", "json", str(copa_path))
+            command[command.index("-r") + 1] = str(copa_path)
+        else:
+            index=command.index("-r")
+            del command[index:index+2]
+            policy_path=report_path
+        # Only use configured, signed same-release Debian mirrors. A local
+        # preparation image is never pushed or presented as a security fix.
+        from . import copa_mirrors
+        if mirrors and (original_report.get("Metadata",{}).get("OS") or {}).get("Family")=="debian":
+            staged=copa_mirrors.prepare(expected_id,original_report,mirrors)
+            command[command.index("-i")+1]=staged["image_ref"]
+            command[command.index("--addr")+1]="docker://"
+            local_patched_ref=source_repository(staged["image_ref"])+":"+patch_tag
+        job_watch.emit("copa_comprehensive" if strategy=="comprehensive" else "copa_targeted")
         # Capture Copa stderr so a failed patch has a concrete diagnostic in
         # the persisted patch/job error instead of only an exit status.
         copa_version, _ = tool_updates.command_version([copa_executable, "--version"])
@@ -381,8 +445,11 @@ def patch_from_scan(scan_id: str) -> tuple[str, str]:
             conn.execute("UPDATE patch_runs SET execution_evidence=%s WHERE id=%s",
                          (Jsonb({"copa_version": copa_version, "buildkit_version": buildkit_info,
                                  "source_image": source_image_ref,
-                                 "remediation_input": remediation_audit.input_manifest(filtered_report)}), patch_id))
-        with patch_sources.policy_environment(source_image_ref, copa_path) as environment:
+                                 "strategy":strategy, "package_repository":staged,
+                                 "remediation_input": remediation_audit.input_manifest(filtered_report) if filtered_report is not None else None}), patch_id))
+        policy_context=(patch_sources.policy_environment(source_image_ref,policy_path,local_source=staged["image_ref"])
+                        if staged else patch_sources.policy_environment(source_image_ref,policy_path))
+        with policy_context as environment:
             if environment and environment.get("EXPERIMENTAL_BUILDKIT_SOURCE_POLICY"):
                 source_rules = json.loads(Path(environment["EXPERIMENTAL_BUILDKIT_SOURCE_POLICY"]).read_text())["rules"]
                 helper_refs = sorted({rule["updates"]["identifier"] for rule in source_rules if rule["action"] == "CONVERT"})
@@ -392,10 +459,12 @@ def patch_from_scan(scan_id: str) -> tuple[str, str]:
             job_watch.emit("patch")
             run_command(command, capture_errors=True, environment=environment)
         patched_id = scan_evidence.local_image_id(local_patched_ref)
-        if patched_id == expected_id:
-            raise RuntimeError("SCAN_EVIDENCE_INVALID: Copa output is identical to the original image; no verified patch")
+        if patched_id == expected_id or (staged and patched_id==staged["image_id"]):
+            raise RuntimeError("SCAN_EVIDENCE_INVALID: Copa output is identical to its input; no verified patch")
+        if staged:
+            copa_mirrors.verify_candidate(expected_id,patched_id)
         with db.connect() as conn:
-            db.update_patch_success(conn, patch_id, str(copa_path))
+            db.update_patch_success(conn, patch_id, str(copa_path) if filtered_report is not None else None)
             conn.execute("UPDATE patch_runs SET local_image_id=%s WHERE id=%s", (patched_id, patch_id))
             conn.execute("""
                 UPDATE patch_runs SET local_image_ref=%s, publication_status='prepared'
@@ -407,6 +476,9 @@ def patch_from_scan(scan_id: str) -> tuple[str, str]:
         with db.connect() as conn:
             db.update_patch_failed(conn, patch_id, message)
         raise
+    finally:
+        if staged:
+            copa_mirrors.cleanup(staged["image_ref"])
 
     print(json.dumps({"patch_id": patch_id, "patched_image": local_patched_ref,
                       "published": False}, indent=2))
@@ -537,13 +609,16 @@ def continue_pipeline_patch(pipeline_id: str) -> str:
         if not original:
             raise RuntimeError("original scan was not successful")
         source_scan_id = str(original["id"])
+        automatic = bool(conn.execute("""SELECT 1 FROM manual_workflows w JOIN pipeline_jobs j ON j.id=w.patch_job_id
+                WHERE j.pipeline_id=%s AND j.status='running' AND w.unattended
+                AND w.execution_mode IN ('auto_patch','auto_optimize') AND w.decision='approve_patch'""",(pipeline_id,)).fetchone())
         project_id = str(pipeline["project_id"]) if pipeline["project_id"] else None
         conn.execute(
             "UPDATE pipeline_runs SET status = 'running', finished_at = NULL, error_message = NULL WHERE id = %s",
             (pipeline_id,),
         )
     try:
-        _, patched_ref = patch_from_scan(source_scan_id)
+        _, patched_ref = patch_from_scan(source_scan_id,automatic=automatic)
         patched_scan_id = scan_image(patched_ref, "patched", pipeline_id)
         generate_sbom(patched_ref, "patched", patched_scan_id, pipeline_id)
         create_diff(pipeline_id, source_scan_id, patched_scan_id)

@@ -299,7 +299,10 @@ def decide(
         return {"id": workflow_id, "state": "completed"}
 
     eligibility = scan_evidence.original_patch_eligibility(conn, locked["pipeline_id"])
-    if not eligibility["eligible"]:
+    if not eligibility["eligible"] and not (
+        eligibility["code"]=="NO_FIXABLE_OS" and locked.get("unattended")
+        and locked.get("execution_mode") in ("auto_patch","auto_optimize")
+    ):
         raise RuntimeError(eligibility["code"] + ": " + eligibility["message"])
 
     # This approval authorizes local patch preparation and rescan only.

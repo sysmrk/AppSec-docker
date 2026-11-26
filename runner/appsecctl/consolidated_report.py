@@ -324,7 +324,7 @@ def render(resource_id: str, payload: dict[str, Any]) -> str:
     elif not patched:
         from .scan_evidence import patch_eligibility
         eligibility = patch_eligibility(original)
-        changes = ('<p class="muted">Patch not applicable: no known OS fixes. Original findings remain; no patched image or rescan exists.</p>'
+        changes = ('<p class="muted">No known targeted OS fixes. No completed patched scan exists; comprehensive remediation may still be attempted.</p>'
                    if eligibility["code"] == "NO_FIXABLE_OS" else
                    '<p class="muted">No patched scan. No finding is marked fixed without a verified rescan.</p>')
     violations = list(final_policy.get("violations") or []) if final_policy else []
@@ -355,6 +355,7 @@ def render(resource_id: str, payload: dict[str, Any]) -> str:
     publication += '<p>Patch approval: ' + e(approval.get("patch_approver")) + ' · ' + e(approval.get("approved_at")) + '<br>Publish approval: ' + e(approval.get("publish_approver")) + ' · ' + e(approval.get("publish_approved_at")) + '<br>Risk acceptance reason: ' + e(approval.get("risk_reason") or "Not recorded") + '</p>'
     publication += '<p>Patch execution: ' + e(patch.get("status")) + ' · ' + e(patch.get("started_at")) + ' → ' + e(patch.get("finished_at")) + '<br>Rescan: ' + e(patched.get("status") if patched else None) + '<br>Security recommendation: ' + e(recommended) + '</p>'
     exec_evidence = patch.get("execution_evidence") or {}
+    publication += '<p>Copa strategy: ' + e(exec_evidence.get("strategy")) + '<br>Package mirror: ' + e((exec_evidence.get("package_repository") or {}).get("mirror")) + '</p>'
     publication += '<p>Copa: ' + e(exec_evidence.get("copa_version")) + '<br>BuildKit: ' + e(exec_evidence.get("buildkit_version")) + '<br>Helper sources: ' + e(", ".join(exec_evidence.get("helper_sources") or []) or None) + '<br>Published image identity verified by pull-by-digest: ' + e(exec_evidence.get("remote_identity_verified") if exec_evidence.get("remote_identity_verified") else "Not recorded / not verified") + '</p>'
     publication += '<p>Local patched image: ' + e(patch.get("local_image_ref")) + '</p>'
     publication += '<p>Publication status: ' + e(patch.get("publication_status") or "not published") + '</p>'

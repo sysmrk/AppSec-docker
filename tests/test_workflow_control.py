@@ -34,3 +34,11 @@ class WorkflowControlTests(unittest.TestCase):
             mw.create(None,"nginx",None,"user","auto_optimize",[])
         with self.assertRaises(ValueError):
             mw.create(None,"nginx",None,"user","scan_only",["nginx-module-xslt"])
+
+    def test_unattended_no_known_fixes_queues_copa(self):
+        conn=Mock()
+        row={"id":"workflow","created_by":"admin","project_id":None,"execution_mode":"auto_patch","unattended":True,"mode":"scan","decision":None}
+        conn.execute.return_value.fetchone.side_effect=[row,{"id":"admin","role":"admin","disabled":False}]
+        with patch.dict("os.environ",{"APPSEC_PATCH_ENABLED":"true"}), patch.object(wc.mw,"get_workflow",return_value={"pipeline_id":"pipeline"}), patch.object(wc.scan_evidence,"original_patch_eligibility",return_value={"eligible":False,"code":"NO_FIXABLE_OS","os_fixable":0}), patch.object(wc.mw,"decide") as decide, patch.object(wc.db,"insert_audit"):
+            wc.advance(conn,"job")
+            self.assertEqual(decide.call_args.args[3],"approve_patch")

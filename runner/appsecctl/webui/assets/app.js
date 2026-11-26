@@ -1241,7 +1241,7 @@
     const mode=$("execution-mode").value;
     $("optimization-choices").hidden=mode!=="auto_optimize";
     $("patch-output-choices").hidden=mode!=="auto_patch";
-    $("execution-help").textContent=({guided:"Review the initial scan and decide whether to patch.",scan_only:"Scan and SBOM only; no local patch.",auto_patch:"Automatically build and rescan a Copa patch if fixes exist, then finish locally or push to an approved destination if the recommendation passes.",auto_optimize:"Automatically patch if possible, simulate removal of the selected unused modules and safe dependency closure, build and rescan locally, then finish. No registry push."})[mode];
+    $("execution-help").textContent=({guided:"Review the initial scan and decide whether to patch.",scan_only:"Scan and SBOM only; no local patch.",auto_patch:"Automatically use Copa targeted updates when known fixes exist, otherwise try comprehensive OS updates; rescan and retain locally or use approved registry output.",auto_optimize:"Automatically try Copa targeted or comprehensive updates, then simulate removal of the selected unused modules and safe dependency closure, build and rescan locally, then finish. No registry push."})[mode];
   });
   $("auto-push").addEventListener("change",()=>{ $("auto-destination").disabled=!$("auto-push").checked; });
   async function loadPackageMirrors(){

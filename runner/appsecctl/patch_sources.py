@@ -55,7 +55,7 @@ def helper_aliases(report: dict, group: list[str]) -> list[str]:
     return group
 
 
-def source_policy(source: str, mappings: dict[str, str]) -> dict:
+def source_policy(source: str, mappings: dict[str, str], *, local_source=None) -> dict:
     canonical_source = image_sources.canonical_ref(source)
     # Copa v0.14.1 expects the first rule to have an updates object.
     # Retain the default-deny rule first; BuildKit re-evaluates a converted
@@ -63,6 +63,10 @@ def source_policy(source: str, mappings: dict[str, str]) -> dict:
     rules = [{"action": "DENY", "selector": {"identifier": "^docker-image://.*$", "match_type": "REGEX"},
               "updates": {"identifier": ""}}]
     permitted = {canonical_source}
+    if local_source:
+        if not re.fullmatch(r"appsec-local/copa-mirror:[0-9a-f]{32}",local_source):
+            raise RuntimeError("PATCH_SOURCE_POLICY: Invalid local preparation reference")
+        permitted.add(image_sources.canonical_ref(local_source))
     for original, selected in mappings.items():
         original = image_sources.canonical_ref(original)
         selected = image_sources.canonical_ref(selected)
@@ -90,10 +94,12 @@ def source_policy(source: str, mappings: dict[str, str]) -> dict:
 
 
 @contextmanager
-def policy_environment(source: str, report_path: Path, *, extra_groups=()):
+def policy_environment(source: str, report_path: Path, *, extra_groups=(), local_source=None):
     with db.connect() as conn:
         sources = image_sources.configured_sources(conn)
     if sources is None:
+        if local_source:
+            raise RuntimeError("PATCH_SOURCE_POLICY: Configure approved image sources before local mirror preparation")
         yield None
         return
     if not sources:
@@ -115,7 +121,7 @@ def policy_environment(source: str, report_path: Path, *, extra_groups=()):
         for reference in aliases:
             mappings[reference] = chosen
             print("COPA_HELPER_MAPPING " + reference + " -> " + chosen, flush=True)
-    policy = source_policy(source, mappings)
+    policy = source_policy(source, mappings,local_source=local_source)
     with tempfile.TemporaryDirectory(prefix="appsec-copa-policy-") as folder:
         path = Path(folder) / "policy.json"
         path.write_text(json.dumps(policy), encoding="utf-8")

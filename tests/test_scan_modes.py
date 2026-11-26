@@ -23,7 +23,7 @@ class ScanModeTests(unittest.TestCase):
 
     def test_database_prefetch_retries_forbidden_and_stops_on_success(self):
         denied = subprocess.CalledProcessError(1, ["trivy"], stderr="403 Forbidden")
-        with patch.object(cli, "run_command", side_effect=[denied, None]) as runner:
+        with patch.object(cli,"trivy_cache_metadata",return_value={}), patch.object(cli,"trivy_metadata_fresh",side_effect=[False,True]), patch.object(cli,"invalidate_trivy_metadata"), patch.object(cli, "run_command", side_effect=[denied, None]) as runner:
             cli.prepare_trivy_database("mirror.example/aquasec/trivy:1",
                                        "a.example/db:2,b.example/db:2,c.example/db:2")
         self.assertEqual(runner.call_count, 2)
@@ -34,7 +34,7 @@ class ScanModeTests(unittest.TestCase):
 
     def test_database_prefetch_fails_closed(self):
         denied = subprocess.CalledProcessError(1, ["trivy"], stderr="403 Forbidden")
-        with patch.object(cli, "run_command", side_effect=denied) as runner:
+        with patch.object(cli,"trivy_cache_metadata",return_value={}), patch.object(cli,"invalidate_trivy_metadata"), patch.object(cli, "run_command", side_effect=denied) as runner:
             with self.assertRaisesRegex(RuntimeError, "TRIVY_DB:.*403 Forbidden"):
                 cli.prepare_trivy_database("mirror.example/aquasec/trivy:1", "a.example/db:2")
         self.assertEqual(runner.call_count, 1)
