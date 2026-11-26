@@ -6,7 +6,11 @@ export BUILDKIT_CONTAINER="$name"
 trap 'docker rm -f "$name" >/dev/null 2>&1 || true; docker image rm "$source" appsec-ci/copa-export:test >/dev/null 2>&1 || true' EXIT
 docker pull registry:2.8.3
 docker pull busybox:1.36
-docker tag busybox:1.36 "$source"
+# Exercise the same docker commit preparation as the production path.
+# A multi-platform index ID is not a single-platform image config ID.
+cid=$(docker create --platform linux/amd64 busybox:1.36)
+docker commit "$cid" "$source"
+docker rm -v "$cid"
 docker run -d --privileged --name "$name" -v "$PWD/config/buildkitd.toml:/etc/buildkit/buildkitd.toml:ro" moby/buildkit:v0.29.0
 for i in $(seq 1 30); do
   if docker exec "$name" buildctl debug workers >/dev/null 2>&1; then break; fi
@@ -21,10 +25,11 @@ source="appsec-local/copa-mirror:"+"a"*32
 identity=scan_evidence.local_image_id(source)
 with copa_transport.open_transport(registry_image="registry:2.8.3") as transport:
     ref=transport.stage(source,identity)
-    policy=patch_sources.source_policy("docker.io/library/busybox:1.36",{},local_source=ref,pins=transport.pins)
+    alias="source.invalid/library/helper:1"
+    policy=patch_sources.source_policy("docker.io/library/busybox:1.36",{alias:ref},local_source=ref,pins=transport.pins)
     subprocess.run(["docker","exec","-i",name,"sh","-c","cat >/tmp/policy.json"],input=json.dumps(policy),text=True,check=True)
     subprocess.run(["docker","exec",name,"sh","-ec",
-        "mkdir -p /tmp/copa-ci; printf '%s\\n' 'FROM "+ref+"' 'RUN echo patched >/copa-ci-proof' >/tmp/copa-ci/Dockerfile"],check=True)
+        "mkdir -p /tmp/copa-ci; printf '%s\\n' 'FROM "+alias+" AS helper' 'FROM "+ref+"' 'COPY --from=helper /bin/busybox /tmp/helper-busybox' 'RUN echo patched >/copa-ci-proof' >/tmp/copa-ci/Dockerfile"],check=True)
     # Standalone BuildKit's actual Docker exporter and Docker's actual loader,
     # with the same private registry and source policy as the Copa workflow.
     proc=subprocess.Popen(["docker","exec",name,"buildctl","build","--frontend","dockerfile.v0","--local","context=/tmp/copa-ci","--local","dockerfile=/tmp/copa-ci","--source-policy-file","/tmp/policy.json","--output","type=docker,name=appsec-ci/copa-export:test","--progress","plain"],stdout=subprocess.PIPE)

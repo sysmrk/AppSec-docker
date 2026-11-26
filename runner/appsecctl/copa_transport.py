@@ -45,7 +45,7 @@ class Transport:
         apt.run(["docker","tag",expected,external])
         # docker push reports the manifest digest; the exact digest is then
         # independently pulled and matched to the original config ID.
-        output=apt.run(["docker","push",external],300)
+        output=apt.run(["docker","push","--platform","linux/amd64",external],300)
         matches=re.findall(r"\bdigest:\s*(sha256:[a-f0-9]{64})\b",output)
         if len(set(matches))!=1:
             raise RuntimeError("SCAN_EVIDENCE_INVALID: Staged manifest digest unavailable")
@@ -54,7 +54,7 @@ class Transport:
         self.aliases.append(pinned)
         apt.run(["docker","pull",pinned],300)
         if scan_evidence.local_image_id(pinned)!=expected:
-            raise RuntimeError("SCAN_EVIDENCE_INVALID: Staged manifest does not match prepared image")
+            raise RuntimeError("SCAN_EVIDENCE_INVALID: Staged manifest does not match prepared single-platform image")
         # Copa's client-side local image inspection can now use its internal
         # reference without trying to fetch a registry outside the daemon.
         apt.run(["docker","tag",expected,internal])
