@@ -109,12 +109,18 @@
               <p class="hint">Select only capabilities your application does not use. AppSec validates the simulated dependency closure and fails closed if unsafe. Debian 12/13 nginx lab only; no automatic publication.</p>
               <label class="approval-checkbox"><input id="optimization-authorize" type="checkbox"><span>I authorize removal of the selected modules and validated unused dependencies in a local candidate. This may affect application behavior.</span></label>
             </fieldset>
+            <fieldset id="patch-output-choices" hidden><legend>Final patched image output</legend>
+              <label class="approval-checkbox"><input id="auto-push" type="checkbox"><span>Push automatically to an approved registry only if the final recommendation passes</span></label>
+              <label for="auto-destination">Destination (registry.example.org/team/image:tag)</label>
+              <input id="auto-destination" placeholder="registry.example.org/team/image:patched" maxlength="1024" disabled>
+              <p class="hint">Unchecked: retain the verified patch locally. No automatic risk acceptance. Optimized candidates stay local for functional testing.</p>
+            </fieldset>
             <div class="guided-intro"><strong>What happens next?</strong>
               <ol>
                 <li>Trivy scans the image and generates an SBOM</li>
                 <li>AppSec saves the initial CVEs and SBOM; policy recommendation comes only after patching</li>
                 <li>The selected route controls whether to finish after scan or prepare a local patch automatically</li>
-                <li>Optional optimization builds and verifies the local candidate automatically. No registry push is performed.</li>
+                <li>Optional optimization builds and verifies a local candidate automatically. A normal Copa patch can be pushed only if selected above and the recommendation passes.</li>
               </ol>
             </div>
             <div class="form-actions">

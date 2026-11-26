@@ -1,7 +1,9 @@
 """Pre-authorized local routes and cooperative workflow stop.
 
-Never authorize registry publication automatically. Local package removal
-requires explicit pre-start authorization and the existing safety checks.
+Registry publication is allowed only for a verified Copa patch, to the
+explicit pre-start authorized destination, with a passing recommendation.
+Local package removal requires explicit pre-start authorization and the
+existing safety checks. Optimized candidates never publish automatically.
 A stop request prevents subsequent stages/retries; an in-flight atomic tool
 operation may finish before the worker acknowledges the stop.
 """
@@ -81,13 +83,25 @@ def advance(conn,job_id):
         if mode=="auto_patch" and unattended:
             mw.decide(conn,wid,actor,"finish")
             db.insert_audit(conn,str(actor["id"]),"manual.auto_no_eligible_patch","manual_workflow",wid,{})
+            if row.get("auto_destination"):
+                conn.execute("UPDATE manual_workflows SET auto_error=%s WHERE id=%s",("No eligible patch; registry output not produced",wid))
             return
         if mode=="auto_patch":
             conn.execute("UPDATE manual_workflows SET auto_error='No eligible local Copa patch; review original findings' WHERE id=%s",(wid,))
             return
     if unattended and mode=="auto_patch" and row["mode"]=="continue_patch":
-        mw.decide(conn,wid,actor,"skip_publish")
-        db.insert_audit(conn,str(actor["id"]),"manual.auto_keep_local","manual_workflow",wid,{})
+        destination=row.get("auto_destination")
+        if destination:
+            if workflow.get("policy_status") not in ("recommended","passed"):
+                mw.decide(conn,wid,actor,"skip_publish")
+                conn.execute("UPDATE manual_workflows SET auto_error=%s WHERE id=%s",
+                             ("Registry output blocked by final recommendation; verified local patch retained",wid))
+                return
+            mw.decide(conn,wid,actor,"approve_publish",confirm_push=True,destination=destination)
+            db.insert_audit(conn,str(actor["id"]),"manual.auto_publish","manual_workflow",wid,{"destination":destination})
+        else:
+            mw.decide(conn,wid,actor,"skip_publish")
+            db.insert_audit(conn,str(actor["id"]),"manual.auto_keep_local","manual_workflow",wid,{})
         return
     if mode!="auto_optimize" or row["auto_step"]:
         return
@@ -95,5 +109,5 @@ def advance(conn,job_id):
         return
     from . import optimization
     stage="residual" if row["mode"]=="continue_patch" and workflow["state"]!="completed" else "original"
-    result=optimization.create(conn,wid,actor,"debloat",stage,row["optimization_roots"])
+    result=optimization.create(conn,wid,actor,"debloat",stage,row["optimization_roots"],automatic=True)
     conn.execute("UPDATE manual_workflows SET auto_step=%s WHERE id=%s",(result["id"],wid))

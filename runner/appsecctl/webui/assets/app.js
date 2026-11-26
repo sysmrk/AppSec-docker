@@ -787,7 +787,7 @@
       attachWatch(root,"/api/manual-workflows/"+encodeURIComponent(w.id)+"/watch");
       root.appendChild(node("p","info-note","Selected route: "+(w.execution_mode||"guided").replaceAll("_"," ")));
       if(w.auto_error)root.appendChild(node("p","warning",w.auto_error));
-      if(w.unattended)root.appendChild(node("p","info-note","Automatic local route: no additional decisions. Output stays local; no registry push."));
+      if(w.unattended)root.appendChild(node("p","info-note","Automatic route: no additional decisions. Output: "+(w.auto_destination||"local image / report only")));
       if(["admin","operator"].includes(state.user?.role)&&!["stopped","stopping","publishing","published","completed","completed_without_publish","failed","patch_failed","publish_failed","canceled"].includes(w.state)){
         const stop=node("button","danger-button","Stop workflow");stop.type="button";
         stop.addEventListener("click",async()=>{
@@ -895,7 +895,7 @@
       stepItem(ol, "3. Review original findings", w.unattended?"Local actions authorized before Start.":"Human approval is needed before local patching.", w.decision || (w.unattended&&w.optimization_active) ? "done" : w.state === "awaiting_approval" ? "running" : "waiting");
       stepItem(ol, "4. Prepare local patched image", "Copa uses BuildKit but does not push to the registry.", w.decision === "finish" ? "skipped" : w.patch_job_status === "success" ? "done" : w.patch_job_status === "failed" ? "failed" : w.decision === "approve_patch" ? "running" : "waiting");
       stepItem(ol, "5. Rescan & compare", "Trivy rescans the local patch and provides an advisory recommendation.", w.decision === "finish" ? "skipped" : diffs.length > 0 && patched ? "done" : w.decision === "approve_patch" ? "running" : "waiting");
-      stepItem(ol, "6. Separate publication approval", w.unattended?"No registry push; retain local results automatically.":"Review the new findings and explicitly approve registry Push, or finish without publishing.", w.publish_decision ? "done" : ["awaiting_publication","publication_blocked"].includes(w.state) ? "running" : w.decision === "finish" ? "skipped" : "waiting");
+      stepItem(ol, "6. Separate publication approval", w.unattended?(w.auto_destination?"Registry output authorized before Start; publish only on passing recommendation.":"Retain local results automatically."):"Review the new findings and explicitly approve registry Push, or finish without publishing.", w.publish_decision ? "done" : ["awaiting_publication","publication_blocked"].includes(w.state) ? "running" : w.decision === "finish" ? "skipped" : "waiting");
       stepItem(ol, "7. Publish & final report", "Only the verified rescanned image can be published after explicit approval; policy is advisory.", ["published","completed","completed_without_publish"].includes(w.state) ? "done" : w.state === "publishing" ? "running" : "waiting");
       if(w.execution_mode==="auto_optimize")stepItem(ol,"8. Optimize and verify local candidate","Compare the exact base and candidate using the same frozen vulnerability DB.",w.optimization_active?"running":w.state==="failed"?"failed":w.auto_step&&["completed","completed_without_publish"].includes(w.state)?"done":"waiting");
       sec.appendChild(ol);
@@ -1175,8 +1175,10 @@
   $("execution-mode").addEventListener("change",()=>{
     const mode=$("execution-mode").value;
     $("optimization-choices").hidden=mode!=="auto_optimize";
-    $("execution-help").textContent=({guided:"Review the initial scan and decide whether to patch.",scan_only:"Scan and SBOM only; no local patch.",auto_patch:"Automatically build and rescan a local Copa patch if fixes exist, then finish. No registry push.",auto_optimize:"Automatically patch if possible, simulate removal of the selected unused modules and safe dependency closure, build and rescan locally, then finish. No registry push."})[mode];
+    $("patch-output-choices").hidden=mode!=="auto_patch";
+    $("execution-help").textContent=({guided:"Review the initial scan and decide whether to patch.",scan_only:"Scan and SBOM only; no local patch.",auto_patch:"Automatically build and rescan a Copa patch if fixes exist, then finish locally or push to an approved destination if the recommendation passes.",auto_optimize:"Automatically patch if possible, simulate removal of the selected unused modules and safe dependency closure, build and rescan locally, then finish. No registry push."})[mode];
   });
+  $("auto-push").addEventListener("change",()=>{ $("auto-destination").disabled=!$("auto-push").checked; });
   async function loadPackageMirrors(){
     const data=await request("/api/optimization/mirrors");
     $("package-mirror-choice").value=data.selected.join(",");
@@ -1196,12 +1198,14 @@
     const roots=mode==="auto_optimize"?Array.from($("optimization-choices").querySelectorAll("input:checked:not(#optimization-authorize)"),x=>x.value):[];
     if(mode==="auto_optimize"&&!roots.length)return notification("Select at least one unused optional module.",true);
     if(mode==="auto_optimize"&&!$("optimization-authorize").checked)return notification("Confirm local removal of selected modules and the validated dependency closure before starting.",true);
-    const payload = { image: $("image-reference").value.trim(), project_id: $("image-project").value || null,execution_mode:mode,optimization_roots:roots,unattended:true };
+    const destination=mode==="auto_patch"&&$("auto-push").checked?$("auto-destination").value.trim():null;
+    if(mode==="auto_patch"&&$("auto-push").checked&&!destination)return notification("Enter the approved destination before starting.",true);
+    const payload = { image: $("image-reference").value.trim(), project_id: $("image-project").value || null,execution_mode:mode,optimization_roots:roots,unattended:true,auto_destination:destination };
     try {
       const result = await request("/api/manual-workflows", { method: "POST", body: JSON.stringify(payload) });
       guidedPage = 1; selectedPipelines.clear();
       await openGuided(result.id);
-      notification("Workflow queued. Selected local route runs automatically to completion; no registry push.");
+      notification("Workflow queued with all selected actions and output. No additional decisions are required.");
     } catch (error) { notification(error.message, true); }
   });
   $("repo-form").addEventListener("submit", async event => {

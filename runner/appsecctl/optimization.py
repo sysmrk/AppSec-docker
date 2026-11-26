@@ -61,7 +61,7 @@ def require_idle(w):
         raise ValueError("No verified pipeline")
 
 
-def create(conn,wid,user,operation,stage,roots):
+def create(conn,wid,user,operation,stage,roots,*,automatic=False):
     if not enabled():
         raise ValueError("Optimization worker disabled")
     if operation not in OPERATIONS or stage not in ("original","residual"):
@@ -73,7 +73,7 @@ def create(conn,wid,user,operation,stage,roots):
         raise ValueError("Removal roots only allowed for debloat")
     w=lock_workflow(conn,wid,user)
     require_idle(w)
-    if w.get("unattended") and (w.get("auto_step") or w["execution_mode"]!="auto_optimize" or operation!="debloat" or sorted(roots)!=sorted(w["optimization_roots"])):
+    if w.get("unattended") and (not automatic or w.get("auto_step") or w["execution_mode"]!="auto_optimize" or operation!="debloat" or sorted(roots)!=sorted(w["optimization_roots"])):
         raise ValueError("Unattended route is fixed at Start; create a new workflow")
     if conn.execute("SELECT 1 FROM optimization_runs WHERE workflow_id=%s AND state=ANY(%s)",(wid,list(ACTIVE))).fetchone():
         raise ValueError("An optimization task is already active")
@@ -108,7 +108,7 @@ def decide(conn,wid,task_id,user,action,digest):
         require_idle(w)
         if row["state"]!="awaiting_approval" or not row.get("plan") or digest!=row["plan"]["plan_sha256"]:
             raise ValueError("Plan missing, stale, or already decided")
-        if os.getenv("APPSEC_REQUIRE_SECOND_APPROVER","false")=="true" and str(row["created_by"])==str(user["id"]):
+        if os.getenv("APPSEC_REQUIRE_SECOND_APPROVER","false").lower()=="true" and str(row["created_by"])==str(user["id"]):
             raise PermissionError("Different administrator must approve")
         state="build_queued"
     else:
@@ -154,7 +154,7 @@ def finish(conn,task,state,plan=None,result=None,error=None):
         elif w["project_id"] and not db.user_can_access_project(conn,actor,str(w["project_id"]),write=True):
             state,error="failed","Project write authorization revoked"
     if auto and state=="awaiting_approval":
-        if (os.getenv("APPSEC_REQUIRE_SECOND_APPROVER","false")=="true"
+        if (os.getenv("APPSEC_REQUIRE_SECOND_APPROVER","false").lower()=="true"
                 or task["operation"]!="debloat" or not plan
                 or sorted(plan.get("roots",[]))!=sorted(w["optimization_roots"])
                 or plan.get("plan_sha256")!=apt.plan_digest(plan)):

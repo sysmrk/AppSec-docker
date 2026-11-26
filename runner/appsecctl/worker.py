@@ -101,15 +101,20 @@ def main() -> int:
                     pipeline_id = run_pipeline(image_ref, project_id, mode=str(job.get("mode") or "scan"), job_id=job_id)
                 job_watch.checkpoint()
                 with db.connect() as conn:
+                    # Same lock order as Stop. Commit the completed job and
+                    # next automatic stage together; savepoint preserves evidence
+                    # if the next stage is rejected by policy or authorization.
+                    conn.execute("SELECT id FROM manual_workflows WHERE %s IN(scan_job_id,patch_job_id,publish_job_id) FOR UPDATE",(job_id,))
+                    if workflow_control.requested(conn,"image",job_id):
+                        raise workflow_control.StopRequested("Stopped by user")
                     db.finish_job(conn, job_id, pipeline_id)
                     summary = db.pipeline_summary(conn, pipeline_id)
-                try:
-                    with db.connect() as conn:
-                        workflow_control.advance(conn,job_id)
-                except Exception as auto_exc:
-                    with db.connect() as conn:
+                    try:
+                        with conn.transaction():
+                            workflow_control.advance(conn,job_id)
+                    except Exception as auto_exc:
                         conn.execute("UPDATE manual_workflows SET auto_error=%s WHERE %s IN(scan_job_id,patch_job_id)",
-                                     ("Automatic next step failed: "+type(auto_exc).__name__,job_id))
+                                     ("Automatic next step failed: "+safe_message(auto_exc,"image"),job_id))
                 notify("pipeline.success", summary)
                 log_event("worker.image.finished", job_id=job_id, pipeline_id=pipeline_id)
                 job_watch.emit("success")

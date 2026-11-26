@@ -54,13 +54,28 @@ def _state(item: dict[str, Any]) -> str:
     return "scanning" if scan_status == "running" else "queued"
 
 
-def create(conn, image: str, project_id: str | None, user_id: str, execution_mode="guided", roots=(), unattended=False) -> dict[str, str]:
+def create(conn, image: str, project_id: str | None, user_id: str, execution_mode="guided", roots=(), unattended=False, auto_destination=None) -> dict[str, str]:
     from psycopg.types.json import Jsonb
     from . import apt_optimization
     import os
+    if auto_destination:
+        from .registry import image_registry
+        from .image_sources import image_path
+        import re
+        if not unattended or execution_mode!="auto_patch":
+            raise ValueError("Automatic registry output is supported only for the verified Copa patch route")
+        if os.getenv("APPSEC_REQUIRE_SECOND_APPROVER","false").lower()=="true":
+            raise ValueError("Automatic publication is incompatible with the second-approver policy")
+        auto_destination=auto_destination.strip()
+        host=image_registry(auto_destination)
+        if not host or "@" in auto_destination or not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}",auto_destination.rsplit("/",1)[-1].partition(":")[2]):
+            raise ValueError("Enter an explicit destination registry/repository:tag")
+        image_path(auto_destination)
+        if not conn.execute("SELECT 1 FROM registry_connections WHERE host=%s AND allow_push=true AND (project_id IS NULL OR project_id=%s) LIMIT 1",(host,project_id)).fetchone():
+            raise ValueError("Destination registry is not authorized for Push in this project")
     if unattended and execution_mode not in ("scan_only","auto_patch","auto_optimize"):
         raise ValueError("Choose a fully automatic local route")
-    if unattended and execution_mode=="auto_optimize" and os.getenv("APPSEC_REQUIRE_SECOND_APPROVER","false")=="true":
+    if unattended and execution_mode=="auto_optimize" and os.getenv("APPSEC_REQUIRE_SECOND_APPROVER","false").lower()=="true":
         raise ValueError("Unattended optimization is incompatible with the configured second-approver policy")
     if unattended and execution_mode in ("auto_patch","auto_optimize") and os.getenv("APPSEC_PATCH_ENABLED","false").lower() not in ("1","true","yes"):
         raise ValueError("Local patching is disabled; choose Scan only or enable patching before starting")
@@ -77,9 +92,9 @@ def create(conn, image: str, project_id: str | None, user_id: str, execution_mod
     workflow_id = str(uuid4())
     scan_job = db.enqueue_pipeline(conn, name, project_id=project_id, mode="scan")
     conn.execute(
-        """INSERT INTO manual_workflows (id, requested_image, project_id, created_by, scan_job_id, execution_mode, optimization_roots, unattended)
-           VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
-        (workflow_id, name, project_id, user_id, scan_job, execution_mode, Jsonb(sorted(roots)), bool(unattended)),
+        """INSERT INTO manual_workflows (id, requested_image, project_id, created_by, scan_job_id, execution_mode, optimization_roots, unattended, auto_destination)
+           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+        (workflow_id, name, project_id, user_id, scan_job, execution_mode, Jsonb(sorted(roots)), bool(unattended), auto_destination or None),
     )
     return {"id": workflow_id, "image": name, "scan_job_id": scan_job, "state": "queued"}
 
@@ -91,7 +106,7 @@ _WORKFLOW_QUERY = """
            w.scan_job_id, w.patch_job_id, w.publish_job_id,
            w.decision, w.approved_by, w.approved_at,
            w.publish_decision, w.published_by, w.publish_approved_at,
-           w.created_at, w.updated_at, w.execution_mode, w.optimization_roots, w.stop_requested_at, w.auto_step, w.auto_error, w.unattended,
+           w.created_at, w.updated_at, w.execution_mode, w.optimization_roots, w.stop_requested_at, w.auto_step, w.auto_error, w.unattended, w.auto_destination,
            (SELECT o.state FROM optimization_runs o WHERE o.workflow_id=w.id AND o.state IN ('queued','planning','awaiting_approval','build_queued','building') ORDER BY o.created_at DESC LIMIT 1) AS optimization_state,
            EXISTS (SELECT 1 FROM optimization_runs o WHERE o.workflow_id=w.id AND o.state IN ('planning','building')) AS optimization_running,
            EXISTS (SELECT 1 FROM optimization_runs o WHERE o.workflow_id=w.id AND o.state IN ('queued','planning','awaiting_approval','build_queued','building')) AS optimization_active,
