@@ -225,3 +225,34 @@ jobs:
               print('PostgreSQL migrations, guided approval, registry gate, inventory, users and Metabase SQL verified')
           PY
           python -m alembic -c alembic.ini upgrade head
+
+  v4-scanner-lab:
+    # Separate network-dependent integration job; no DB sharing with AppSec.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare official scanner images and independent DB
+        run: |
+          docker pull anchore/syft:latest
+          docker pull anchore/grype:latest
+          docker pull nginx:stable
+          mkdir -m 700 grype-cache
+          timeout 600 docker run --rm --pull=never --user 0:0 \
+            -e GRYPE_DB_CACHE_DIR=/db -v "$PWD/grype-cache:/db" \
+            anchore/grype:latest db update
+      - name: Run real offline Syft and Grype comparison
+        run: |
+          python3 scripts/v4-scanner-compare.py --image nginx:stable \
+            --syft anchore/syft:latest --grype anchore/grype:latest \
+            --grype-cache ./grype-cache --output ./benchmark-results/ci-scanners
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          root=Path("benchmark-results/ci-scanners")
+          report=json.loads((root/"scanner-comparison.json").read_text())
+          assert report["publication_authorized"] is False
+          assert len(report["images"])==1 and report["images"][0]["syft_packages"]>0
+          assert (root/"image-1-grype.json").is_file()
+          assert json.loads((root/"manifest.json").read_text())["grype_db_files_sha256"]
+          PY
