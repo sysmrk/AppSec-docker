@@ -226,46 +226,8 @@ def dockerfile(roots, closure):
 def build(plan, report, approved):
     if plan.get("schema")!=SCHEMA or plan.get("plan_sha256")!=approved or plan_digest(plan)!=approved:
         raise ValueError("Plan digest mismatch")
-    image=plan["image_id"]
-    current=plan_removal(image,plan["roots"],report)
-    if current != plan:
-        raise ValueError("Stale plan: recompute and approve again")
-    base=inspect(image)
-    if base.get("Config",{}).get("User") not in ("","root","0","0:0",None):
-        raise ValueError("Only root-default build images supported")
-    uid=uuid4().hex
-    tag="appsec-lab/debloat-base:"+uid
-    output="appsec-lab/debloated:"+uid
-    run(["docker","tag",image,tag])
-    try:
-        with tempfile.TemporaryDirectory(prefix="appsec-debloat-") as tmp:
-            Path(tmp,"Dockerfile").write_text(dockerfile(plan["roots"],plan["remove"]))
-            run(["docker","buildx","build","--builder","default","--progress","plain","--load","--pull=false",
-                 "--network=none","--no-cache","--build-arg","BASE_IMAGE="+tag,
-                 "-t",output,tmp],1800,capture=False)
-        candidate_id=run(["docker","image","inspect","--format","{{.Id}}",output]).strip()
-        candidate=inspect(candidate_id)
-        if candidate_id==image or candidate["RootFS"]["Layers"][:len(base["RootFS"]["Layers"])]!=base["RootFS"]["Layers"]:
-            raise ValueError("Candidate does not extend approved base layers")
-        keys=("Entrypoint","Cmd","User","Env","WorkingDir","ExposedPorts","Healthcheck","Volumes","StopSignal","Labels")
-        if any(base["Config"].get(k)!=candidate["Config"].get(k) for k in keys):
-            raise ValueError("Runtime config changed")
-        expected={k:v for k,v in current["inventory"].items() if k not in current["remove"]}
-        if inventory(candidate_id)!=expected:
-            raise ValueError("Actual package changes differ from approved closure")
-        return {"schema":"appsec.apt-debloat-candidate/v1","status":"candidate_prepared",
-                "base_image_id":image,"candidate":output,"candidate_image_id":candidate_id,
-                "approved_plan_sha256":approved,"removed_packages":current["remove"],
-                "rescan_required":True,"functional_test_passed":False,"publication_authorized":False,
-                "historical_layers_removed":False}
-    except BaseException:
-        # Remove only the unique failed candidate alias, never the source.
-        subprocess.run(["docker","image","rm",output],check=False,timeout=30,
-                       stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
-        raise
-    finally:
-        # Only our unique temporary reference, never the input image.
-        subprocess.run(["docker","image","rm",tag],check=False,timeout=30,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+    raise ValueError("V4 preservation policy: package removal is disabled")
+
 
 
 def availability(image, mirror):

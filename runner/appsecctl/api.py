@@ -1394,7 +1394,7 @@ def optimization_list(workflow_id: UUID,user: dict[str, Any] = Depends(current_u
     from . import optimization, apt_optimization
     try:
         with db.connect() as conn:
-            return {"enabled":optimization.enabled(),"modules":apt_optimization.OPTIONAL,
+            return {"enabled":optimization.enabled(),"modules":[],
                     "runs":optimization.list_runs(conn,str(workflow_id),user)}
     except LookupError:
         raise HTTPException(status_code=404,detail="workflow not found") from None

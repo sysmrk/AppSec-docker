@@ -55,8 +55,9 @@ def _state(item: dict[str, Any]) -> str:
 
 
 def create(conn, image: str, project_id: str | None, user_id: str, execution_mode="guided", roots=(), unattended=False, auto_destination=None) -> dict[str, str]:
+    if execution_mode=="auto_optimize" or roots:
+        raise ValueError("V4 preservation policy: package removal is disabled")
     from psycopg.types.json import Jsonb
-    from . import apt_optimization
     import os
     if auto_destination:
         from .registry import image_registry
@@ -81,11 +82,6 @@ def create(conn, image: str, project_id: str | None, user_id: str, execution_mod
         raise ValueError("Local patching is disabled; choose Scan only or enable patching before starting")
     if execution_mode not in ("guided","scan_only","auto_patch","auto_optimize"):
         raise ValueError("Unknown workflow mode")
-    if execution_mode=="auto_optimize":
-        if not roots or len(roots)!=len(set(roots)) or not set(roots)<=set(apt_optimization.OPTIONAL):
-            raise ValueError("Select optional modules to review")
-    elif roots:
-        raise ValueError("Optional modules only apply to optimization mode")
     name = image.strip()
     if not name or len(name) > 1024 or any(x.isspace() for x in name):
         raise ValueError("enter a valid nonempty container image reference without whitespace")

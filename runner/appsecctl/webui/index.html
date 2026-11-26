@@ -99,7 +99,6 @@
             <select id="execution-mode">
               <option value="scan_only">Scan only — finish after scan and SBOM</option>
               <option value="auto_patch">Scan &amp; patch — targeted or comprehensive OS updates</option>
-              <option value="auto_optimize" data-admin-setting>Scan, patch &amp; optimize — build and verify locally</option>
             </select>
             <p id="execution-help" class="hint">Scan and SBOM only; finish automatically.</p>
             <fieldset id="optimization-choices" hidden><legend>Optional nginx capabilities to remove</legend>
@@ -120,7 +119,7 @@
                 <li>Trivy scans the image and generates an SBOM</li>
                 <li>AppSec saves the initial CVEs and SBOM; policy recommendation comes only after patching</li>
                 <li>The selected route controls whether to finish after scan or prepare a local patch automatically</li>
-                <li>Optional optimization builds and verifies a local candidate automatically. A normal Copa patch can be pushed only if selected above and the recommendation passes.</li>
+                <li>Package removal is disabled. A normal Copa patch can be pushed only if selected above and the recommendation passes.</li>
               </ol>
             </div>
             <div class="form-actions">

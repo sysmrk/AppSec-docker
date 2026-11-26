@@ -768,7 +768,7 @@
         refreshActive=data.runs.some(r=>["queued","planning","build_queued","building"].includes(r.state));
         if(admin && data.enabled && !w.unattended && !active && ["awaiting_approval","awaiting_publication","completed","completed_without_publish","published","publication_blocked"].includes(w.state)) {
           const advanced=node("details");advanced.appendChild(node("summary","","Advanced package diagnostics (optional)"));
-          advanced.appendChild(node("p","hint","Repository check finds available updates; inventory compares scanner and dpkg; native upgrade builds an alternative candidate; module removal reduces unused functionality."));
+          advanced.appendChild(node("p","hint","Repository check finds available updates; inventory compares scanner and dpkg; native upgrade builds an alternative candidate without deliberate package removal."));
           const form=node("div","approval-actions");
           const stage=node("select");
           for(const s of ["original","residual"]) {const o=node("option","",s==="original"?"Original scan":"After Copa patch");o.value=s;stage.appendChild(o);}
@@ -779,7 +779,7 @@
             label.appendChild(check);label.appendChild(node("span","",name));advanced.appendChild(label);modules.push(check);
           }
           form.appendChild(stage);
-          for(const [operation,title] of [["availability","Check package repository"],["inventory","Reconcile inventory"],["upgrade","Plan native APT upgrade"],["debloat","Plan module removal"]]) {
+          for(const [operation,title] of [["availability","Check package repository"],["inventory","Reconcile inventory"],["upgrade","Plan native APT upgrade"]]) {
             const b=node("button","outline",title);b.type="button";b.addEventListener("click",async()=>{
               b.disabled=true;
               try {

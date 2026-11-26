@@ -71,6 +71,10 @@ def advance(conn,job_id):
     if not workflow:
         raise PermissionError("Workflow access revoked")
     mode=row["execution_mode"]
+    if mode=="auto_optimize":
+        conn.execute("UPDATE manual_workflows SET auto_error=%s WHERE id=%s",
+                     ("V4 preservation policy: package removal is disabled; start a new scan or patch workflow",wid))
+        return
     unattended=row.get("unattended",False)
     if row["mode"]=="scan" and not row["decision"]:
         if mode=="scan_only":

@@ -18,3 +18,5 @@ harbor/**/*.tgz
 # V4 raw evidence may contain internal package/application inventory.
 /labs/v4/results/
 /benchmark-results/
+
+/grype-cache/

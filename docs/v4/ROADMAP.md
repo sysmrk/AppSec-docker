@@ -5,15 +5,15 @@ V4 starts from V3 commit 80e0d327493d. No stable release is implied. Keep the ex
 ## Cleanup and priorities
 
 - P0: one scanner DB refresh owner; retire the legacy updater, keep all migration IDs and existing reports; retain V3 labs as reference, not new production features.
-- P0: independent frozen-DB benchmark, Native APT first, conservative package removal second, functional checks mandatory.
-- P1: test SlimToolkit independently on the same fixture; no integration until workload coverage and package/file evidence are verified.
-- P1: evaluate Grype and Syft, APK/RPM adapters and cache/performance improvements after Debian acceptance.
+- P0: independent frozen-DB benchmark, Native APT with strict package preservation; functional checks mandatory.
+- Package removal, debloating and SlimToolkit image mutation are excluded by owner policy. Read-only inventory and diagnostics are allowed.
+- P1: independently evaluate Grype and Syft now; APK/RPM adapters and cache/performance improvements follow.
 - P2: language dependency remediation and optional MCP. Generic reconstruction and mandatory AI are out of scope.
 - No commercial dependency, subscription, or mandatory online AI. Repository currently has no license file; owner must explicitly approve the project license (Apache-2.0 proposed). Audit exact shipped dependency/image licenses and notices before any V4 release. Docker Engine on Linux, not a proprietary desktop subscription, is the target runtime.
 
 ## Run the first benchmark
 
-Use a dedicated Linux/WSL Docker daemon with trusted images only. Existing Docker image and cache can be reused after stopping every DB writer. No AppSec stack, database, credentials, or new service is required. Need Python 3.10+ (Ubuntu 22.04 supported by the host-side lab), Docker Engine and default Buildx builder for native/debloat. The lab requires Debian 12/13 nginx linux/amd64, root-default config, curl in image for HTTP smoke, and explicit approved APT mirrors. No automatic package removal authorization.
+Use a dedicated Linux/WSL Docker daemon with trusted images only. Existing Docker image and cache can be reused after stopping every DB writer. No AppSec stack, database, credentials, or new service is required. Need Python 3.10+ (Ubuntu 22.04 supported by the host-side lab), Docker Engine and default Buildx builder for native upgrades. The lab requires Debian 12/13 nginx linux/amd64, root-default config, curl in image for HTTP smoke, and explicit approved APT mirrors. No automatic package removal authorization.
 
 Before switching from V3, stop the maintenance updater if it exists (use the old Compose file), then stop the V3 workers; never delete volumes. Check for remaining updater containers using:
 
@@ -33,7 +33,7 @@ Example (only if the images are already present and the cache is prepared):
       --output ./benchmark-results/nginx-native-01 \
       --confirm-isolated-lab
 
-Add `--remove nginx-module-image-filter` only if removal of that optional feature and validated dependency closure is authorized for the lab. Add `--candidate IMAGE` to compare an independently built local Copa or SlimToolkit candidate. All comparisons start from the same original, not from one another. For an overdue but at most 72-hour-old DB, explicitly add `--allow-overdue-db`; that run is diagnostic and cannot pass the lab acceptance gate. Fresh DB is required for acceptance.
+Package-removal execution is disabled in V4, including old queued tasks. Add `--candidate IMAGE` only for comparison of a prebuilt package-preserving candidate; the gate rejects missing OS package names. This is not full file-level or application compatibility validation. All comparisons start from the same original, not from one another. For an overdue but at most 72-hour-old DB, explicitly add `--allow-overdue-db`; that run is diagnostic and cannot pass the lab acceptance gate. Fresh DB is required for acceptance.
 
 The output directory is new and private, never overwritten. It records raw scans, frozen DB SHA256s, exact immutable image IDs, native/removal plans, package evidence, size and timings, security comparison and baseline/candidate HTTP body hashes. Exit 0 means at least one candidate passed the conservative security and simple HTTP gate for further workload testing. Exit 2 means no verified improvement (or argument validation failure). Other errors are failures. No candidate is automatically promoted or pushed. A no-change result is not an execution failure or a security success. Inspect retained local candidate tags; successful candidates are intentionally kept for independent review. The original is never modified. Historical OCI layers remain in native/removal images.
 
@@ -46,3 +46,7 @@ Existing AI/MCP, language lab, reporting and migrations are retained for compati
 Lab diagnostics include bounded, redacted error text and the frozen snapshot provenance is written before the first scan. No external Python package installation is needed for the host-side lab.
 
 Native installation uses exact verified local archives with `dpkg --install` in a networkless build (no force or dependency download). A clean pre/post dpkg audit, `apt-get check`, exact installed inventory, runtime configuration and `nginx -t` are required. Unsupported dependency ordering fails closed. CI performs real two-package upgrades with synthetic archives on Nginx and checks the unchanged original and HTTP response parity; actual mirror downloads remain a separate lab test. The host build log streams and retains bounded stderr for diagnostics.
+
+## Independent Syft/Grype evidence
+
+See [SCANNER-COMPARISON.md](SCANNER-COMPARISON.md). No image modification, service deployment, external AI or commercial API. The existing V3 Copa route is legacy and not yet certified against the V4 preservation requirement; do not use it for V4 acceptance or production publication.

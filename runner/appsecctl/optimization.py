@@ -62,6 +62,8 @@ def require_idle(w):
 
 
 def create(conn,wid,user,operation,stage,roots,*,automatic=False):
+    if operation=="debloat":
+        raise ValueError("V4 preservation policy: package removal is disabled")
     if not enabled():
         raise ValueError("Optimization worker disabled")
     if operation not in OPERATIONS or stage not in ("original","residual"):
@@ -105,6 +107,8 @@ def decide(conn,wid,task_id,user,action,digest):
             raise ValueError("Only idle or queued tasks can be canceled")
         state="canceled"
     elif action=="approve":
+        if row["operation"]=="debloat":
+            raise ValueError("V4 preservation policy: package removal is disabled")
         require_idle(w)
         if row["state"]!="awaiting_approval" or not row.get("plan") or digest!=row["plan"]["plan_sha256"]:
             raise ValueError("Plan missing, stale, or already decided")
@@ -258,6 +262,8 @@ def offline_compare(images, scanner_ref):
 
 
 def execute(task):
+    if task["operation"]=="debloat":
+        raise ValueError("V4 preservation policy: package removal is disabled")
     with db.connect() as conn:
         scan=db.get_scan(conn,str(task["scan_id"]))
         current=conn.execute("SELECT mirrors FROM package_mirror_settings WHERE id=1").fetchone()

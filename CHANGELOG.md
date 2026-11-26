@@ -2,7 +2,9 @@
 
 ## V4 development — unreleased
 
-- Plan A: native package upgrades and conservative optimization; generic reconstruction deferred.
+- Disable package-removal execution, including legacy queued tasks; preserve historical evidence. Add read-only Syft/Grype lab using pinned local tool IDs and frozen Grype database.
+
+- Plan A: package-preserving native upgrades; generic reconstruction, package removal and debloating excluded.
 - Retire conflicting standalone Trivy DB updater and preserve migration history.
 - Add isolated, frozen-DB native APT/debloat comparison harness with bounded Nginx HTTP smoke tests. No automatic publication or new production engine.
 

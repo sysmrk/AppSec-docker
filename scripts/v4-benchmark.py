@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""V4 Plan A lab: one original scan, native APT, optional explicit debloat,
+"""V4 Plan A lab: one original scan, native APT,
 optional prebuilt candidates, identical frozen DB, and local HTTP smoke checks.
 No AppSec deployment, database, push, automatic promotion or runtime integration.
 """
@@ -51,7 +51,7 @@ def main(argv=None):
     p.add_argument("--output",required=True,type=Path,help="New private evidence directory")
     p.add_argument("--mirror",action="append",choices=sorted(apt.MIRRORS),help="Approved Debian mirror priority; required for native APT")
     p.add_argument("--native-apt",action="store_true",help="Try same-release existing-package upgrades")
-    p.add_argument("--remove",action="append",choices=apt.OPTIONAL,default=[],help="Explicitly authorize removal of named optional nginx module(s) and validated closure in lab")
+    p.add_argument("--remove",action="append",choices=apt.OPTIONAL,default=[],help=argparse.SUPPRESS)
     p.add_argument("--candidate",action="append",default=[],help="Preloaded external candidate (e.g. Copa or SlimToolkit); repeat")
     p.add_argument("--allow-overdue-db",action="store_true",help="Diagnostic only, up to 72 hours; cannot pass acceptance gate")
     p.add_argument("--http-path",default="/")
@@ -59,7 +59,9 @@ def main(argv=None):
     p.add_argument("--timeout",type=int,default=1800,help="Per scanner command timeout")
     p.add_argument("--confirm-isolated-lab",action="store_true",required=True)
     args=p.parse_args(argv)
-    if not (args.native_apt or args.remove or args.candidate):
+    if args.remove:
+        p.error("V4 preservation policy: package removal is disabled")
+    if not (args.native_apt or args.candidate):
         p.error("Select at least one candidate strategy")
     if args.native_apt and not args.mirror:
         p.error("--native-apt requires explicit --mirror")
@@ -132,14 +134,8 @@ def main(argv=None):
             if not plan["updates"]:
                 return None
             return native_apt.build(plan,raw,plan["plan_sha256"],args.mirror)
-        def debloat():
-            plan=apt.plan_removal(image,args.remove,raw)
-            bench.write_json(out/"debloat-plan.json",plan)
-            return apt.build(plan,raw,plan["plan_sha256"])
         if args.native_apt:
             attempt("native_apt",native)
-        if args.remove:
-            attempt("apt_debloat",debloat)
         for idx,ref in enumerate(args.candidate,1):
             attempt("prebuilt_"+str(idx),lambda ref=ref:{"candidate":ref,"candidate_image_id":scan_evidence.local_image_id(ref)})
         comparisons=[]
@@ -166,7 +162,7 @@ def main(argv=None):
         review=candidate_review.review(out) if comparisons else {"candidates":[],"preferred_for_review":None}
         by_id={r["candidate_image_id"]:r for r in results if r["status"]=="compared"}
         eligible=[r["image_id"] for r in review["candidates"] if not r["comparison_blockers"]
-                  and by_id[r["image_id"]]["smoke_matches_baseline"] and state["fresh"]]
+                  and not r["removed_package_names"] and by_id[r["image_id"]]["smoke_matches_baseline"] and state["fresh"]]
         final={"schema":"appsec.v4-benchmark/v1","database":state,"baseline":baseline,"engines":results,
                "security_review":review,"lab_gate":"passed" if eligible else "no_verified_improvement",
                "eligible_for_further_workload_testing":eligible,"publication_authorized":False,
