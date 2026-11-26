@@ -34,6 +34,7 @@ x-runner-env: &runner-env
   TRIVY_DB_REPOSITORY: ${TRIVY_DB_REPOSITORY:-ghcr.io/aquasecurity/trivy-db:2}
   TRIVY_JAVA_DB_REPOSITORY: ${TRIVY_JAVA_DB_REPOSITORY:-ghcr.io/aquasecurity/trivy-java-db:1}
   BUILDKIT_CONTAINER: ${BUILDKIT_CONTAINER:-appsec-buildkit}
+  APPSEC_COPA_STAGE_REGISTRY_IMAGE: ${APPSEC_COPA_STAGE_REGISTRY_IMAGE:-docker.io/library/registry:2.8.3}
   COPA_TIMEOUT: ${COPA_TIMEOUT:-30m}
   REGISTRY_HOST: ${REGISTRY_HOST:-localhost:8081}
   PATCHED_REPOSITORY: ${PATCHED_REPOSITORY:-library/appsec-patched}
@@ -165,6 +166,7 @@ services:
     entrypoint: ["buildkitd"]
     volumes:
       - buildkit-data:/var/lib/buildkit
+      - ./config/buildkitd.toml:/etc/buildkit/buildkitd.toml:ro
     healthcheck:
       test: ["CMD-SHELL", "buildctl --addr unix:///run/buildkit/buildkitd.sock debug workers >/dev/null"]
       interval: 10s

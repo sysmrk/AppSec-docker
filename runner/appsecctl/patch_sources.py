@@ -55,7 +55,7 @@ def helper_aliases(report: dict, group: list[str]) -> list[str]:
     return group
 
 
-def source_policy(source: str, mappings: dict[str, str], *, local_source=None) -> dict:
+def source_policy(source: str, mappings: dict[str, str], *, local_source=None, pins=None) -> dict:
     canonical_source = image_sources.canonical_ref(source)
     # Copa v0.14.1 expects the first rule to have an updates object.
     # Retain the default-deny rule first; BuildKit re-evaluates a converted
@@ -63,10 +63,14 @@ def source_policy(source: str, mappings: dict[str, str], *, local_source=None) -
     rules = [{"action": "DENY", "selector": {"identifier": "^docker-image://.*$", "match_type": "REGEX"},
               "updates": {"identifier": ""}}]
     permitted = {canonical_source}
+    pins = pins or {}
     if local_source:
-        if not re.fullmatch(r"appsec-local/copa-mirror:[0-9a-f]{32}",local_source):
-            raise RuntimeError("PATCH_SOURCE_POLICY: Invalid local preparation reference")
-        permitted.add(image_sources.canonical_ref(local_source))
+        from .copa_transport import STAGE_REF
+        if not STAGE_REF.fullmatch(local_source) or local_source not in pins:
+            raise RuntimeError("PATCH_SOURCE_POLICY: Invalid or unpinned staging reference")
+        # The original remote source is not needed once the locally verified
+        # derivative has been staged. Do not permit an alternate input.
+        permitted = {image_sources.canonical_ref(local_source)}
     for original, selected in mappings.items():
         original = image_sources.canonical_ref(original)
         selected = image_sources.canonical_ref(selected)
@@ -87,14 +91,22 @@ def source_policy(source: str, mappings: dict[str, str], *, local_source=None) -
         # approved registry, repository and tag. An already pinned input
         # stays exact; never append a second digest or allow another tag.
         # This is a source allowlist, not a cryptographic digest pin.
-        if "@" not in reference:
+        if reference in pins:
+            digest=pins[reference]
+            if not re.fullmatch(r"sha256:[a-f0-9]{64}",digest):
+                raise RuntimeError("PATCH_SOURCE_POLICY: Invalid staged manifest digest")
+            resolved=identifier+"@"+digest
+            rules.append({"action":"ALLOW","selector":{"identifier":resolved,"match_type":"EXACT"}})
+            # BuildKit may express the same manifest without the tag.
+            rules.append({"action":"ALLOW","selector":{"identifier":identifier.rsplit(":",1)[0]+"@"+digest,"match_type":"EXACT"}})
+        elif "@" not in reference:
             resolved = "^" + re.escape(identifier) + "@sha256:[0-9a-f]{64}$"
             rules.append({"action": "ALLOW", "selector": {"identifier": resolved, "match_type": "REGEX"}})
     return {"version": 1, "rules": rules}
 
 
 @contextmanager
-def policy_environment(source: str, report_path: Path, *, extra_groups=(), local_source=None, local_mirror=None):
+def policy_environment(source: str, report_path: Path, *, extra_groups=(), local_source=None, local_mirror=None, transport=None):
     with db.connect() as conn:
         sources = image_sources.configured_sources(conn)
     if sources is None:
@@ -124,11 +136,13 @@ def policy_environment(source: str, report_path: Path, *, extra_groups=(), local
                 from . import copa_mirrors, scan_evidence
                 helper=copa_mirrors.prepare_sources(scan_evidence.local_image_id(chosen),local_mirror)
                 staged_helpers.append(helper["image_ref"])
-                chosen=helper["image_ref"]
+                if not transport:
+                    raise RuntimeError("PATCH_SOURCE_POLICY: Missing private staging transport")
+                chosen=transport.stage(helper["image_ref"],helper["image_id"])
             for reference in aliases:
                 mappings[reference] = chosen
                 print("COPA_HELPER_MAPPING " + reference + " -> " + chosen, flush=True)
-        policy = source_policy(source, mappings,local_source=local_source)
+        policy = source_policy(source, mappings,local_source=local_source,pins=transport.pins if transport else None)
         with tempfile.TemporaryDirectory(prefix="appsec-copa-policy-") as folder:
             path = Path(folder) / "policy.json"
             path.write_text(json.dumps(policy), encoding="utf-8")

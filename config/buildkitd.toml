@@ -1,0 +1,4 @@
+# Only the short-lived, job-private staging registry speaks HTTP.
+# No remote registry has TLS disabled.
+[registry."appsec-copa-stage:5000"]
+  http = true

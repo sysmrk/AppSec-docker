@@ -70,3 +70,16 @@ class AutomaticCopaTests(unittest.TestCase):
         self.assertNotIn("-r",args)
         self.assertNotIn("--report",args)
         self.assertNotIn("--ignore-errors",args)
+
+    def test_private_staging_policy_allows_only_verified_manifest(self):
+        from appsecctl import patch_sources
+        ref="appsec-copa-stage:5000/appsec-local/copa-mirror:"+"a"*32
+        digest="sha256:"+"b"*64
+        source="mirror.example/library/nginx:1"
+        rules=patch_sources.source_policy(source,{},local_source=ref,pins={ref:digest})["rules"]
+        allowed={r["selector"]["identifier"] for r in rules if r["action"]=="ALLOW"}
+        self.assertIn("docker-image://"+ref+"@"+digest,allowed)
+        self.assertNotIn("docker-image://"+source,allowed)
+        self.assertFalse(any(r["action"]=="ALLOW" and r["selector"]["match_type"]=="REGEX" for r in rules))
+        with self.assertRaises(RuntimeError):
+            patch_sources.source_policy(source,{},local_source=ref,pins={})

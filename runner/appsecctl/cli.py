@@ -522,7 +522,12 @@ def patch_from_scan(scan_id: str, *, automatic=False) -> tuple[str, str]:
         env("COPA_TIMEOUT", "30m"),
     ]
 
+    from contextlib import ExitStack
     staged=None
+    transport=None
+    stage_source=None
+    stage_output=None
+    stack=ExitStack()
     try:
         # Comprehensive mode intentionally omits the report argument entirely.
         copa_path = report_path.parent / f"copa-input-{patch_id}.json"
@@ -542,23 +547,30 @@ def patch_from_scan(scan_id: str, *, automatic=False) -> tuple[str, str]:
         if mirrors and (original_report.get("Metadata",{}).get("OS") or {}).get("Family")=="debian":
             staged=copa_mirrors.prepare(expected_id,original_report,mirrors)
             job_watch.emit("apt_upgrades",staged["availability"]["upgraded"])
-            command[command.index("-i")+1]=staged["image_ref"]
-            command[command.index("--addr")+1]="docker://"
-            local_patched_ref=source_repository(staged["image_ref"])+":"+patch_tag
+            from . import copa_transport
+            transport=stack.enter_context(copa_transport.open_transport())
+            stage_source=transport.stage(staged["image_ref"],staged["image_id"])
+            command[command.index("-i")+1]=stage_source
+            # Dedicated BuildKit provides the Docker tar exporter; the
+            # ephemeral registry supplies the exact locally prepared inputs.
+            stage_output=source_repository(stage_source)+":"+patch_tag
         job_watch.emit("copa_comprehensive" if strategy=="comprehensive" else "copa_targeted")
         # Capture Copa stderr so a failed patch has a concrete diagnostic in
         # the persisted patch/job error instead of only an exit status.
         copa_version, _ = tool_updates.command_version([copa_executable, "--version"])
-        _, buildkit_info = tool_updates.command_version(["docker", "exec", env("BUILDKIT_CONTAINER", "appsec-buildkit"), "buildkitd", "--version"]) if not staged else (None,"Docker embedded BuildKit; separate daemon version not applicable")
+        _, buildkit_info = tool_updates.command_version(["docker", "exec", env("BUILDKIT_CONTAINER", "appsec-buildkit"), "buildkitd", "--version"])
         from psycopg.types.json import Jsonb
         with db.connect() as conn:
             conn.execute("UPDATE patch_runs SET execution_evidence=%s WHERE id=%s",
                          (Jsonb({"copa_version": copa_version, "buildkit_version": buildkit_info,
                                  "source_image": source_image_ref,
                                  "strategy":strategy, "package_repository":staged,
-                                 "buildkit_endpoint":"docker://" if staged else "dedicated BuildKit",
+                                 "buildkit_endpoint":command[command.index("--addr")+1],
+                                 "staging_transport":"private temporary registry" if staged else None,
+                                 "staging_source":stage_source,
+                                 "staging_manifest":transport.pins.get(stage_source) if transport else None,
                                  "remediation_input": remediation_audit.input_manifest(filtered_report) if filtered_report is not None else None}), patch_id))
-        policy_context=(patch_sources.policy_environment(source_image_ref,policy_path,local_source=staged["image_ref"],local_mirror=staged["mirror"])
+        policy_context=(patch_sources.policy_environment(source_image_ref,policy_path,local_source=stage_source,local_mirror=staged["mirror"],transport=transport)
                         if staged else patch_sources.policy_environment(source_image_ref,policy_path))
         with policy_context as environment:
             if environment and environment.get("EXPERIMENTAL_BUILDKIT_SOURCE_POLICY"):
@@ -569,11 +581,16 @@ def patch_from_scan(scan_id: str, *, automatic=False) -> tuple[str, str]:
                                  (Jsonb({"helper_sources": helper_refs}), patch_id))
             job_watch.emit("patch")
             run_command(command, capture_errors=True, environment=environment)
-        patched_id = scan_evidence.local_image_id(local_patched_ref)
+        patched_id = scan_evidence.local_image_id(stage_output or local_patched_ref)
         if patched_id == expected_id or (staged and patched_id==staged["image_id"]):
             raise RuntimeError("SCAN_EVIDENCE_INVALID: Copa output is identical to its input; no verified patch")
         if staged:
-            copa_mirrors.verify_candidate(expected_id,patched_id,source_ref=staged["image_ref"])
+            copa_mirrors.verify_candidate(expected_id,patched_id,source_ref=stage_source)
+            # Retain a normal local output tag, never push the patched image
+            # to the temporary registry. Recheck the retained identity.
+            run_command(["docker","tag",patched_id,local_patched_ref],capture_errors=True)
+            if scan_evidence.local_image_id(local_patched_ref)!=patched_id:
+                raise RuntimeError("SCAN_EVIDENCE_INVALID: Retained patch identity mismatch")
         with db.connect() as conn:
             db.update_patch_success(conn, patch_id, str(copa_path) if filtered_report is not None else None)
             conn.execute("UPDATE patch_runs SET local_image_id=%s WHERE id=%s", (patched_id, patch_id))
@@ -588,8 +605,13 @@ def patch_from_scan(scan_id: str, *, automatic=False) -> tuple[str, str]:
             db.update_patch_failed(conn, patch_id, message)
         raise
     finally:
-        if staged:
-            copa_mirrors.cleanup(staged["image_ref"])
+        try:
+            if stage_output:
+                copa_mirrors.cleanup(stage_output)
+            stack.close()
+        finally:
+            if staged:
+                copa_mirrors.cleanup(staged["image_ref"])
 
     print(json.dumps({"patch_id": patch_id, "patched_image": local_patched_ref,
                       "published": False}, indent=2))

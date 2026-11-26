@@ -30,6 +30,8 @@ MESSAGES={
     "db_fallback":"WARNING: using bounded overdue vulnerability database; age (hours)",
     "copa_targeted":"Copa strategy: targeted OS updates",
     "copa_comprehensive":"Copa strategy: comprehensive OS updates (no FixedVersion required)",
+    "copa_stage":"Preparing isolated local registry for dedicated BuildKit",
+    "copa_stage_ready":"Verified prepared image available to dedicated BuildKit",
     "patch":"Copa / BuildKit patch started", "publish":"Registry publication started",
     "git":"Repository clone started", "gitleaks":"Redacted secret scanner started",
     "verified":"Verified scan findings", "done":"Tool command completed",
