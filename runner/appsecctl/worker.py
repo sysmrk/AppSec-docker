@@ -57,7 +57,8 @@ def main() -> int:
                         status,plan,result=optimization.execute(task)
                         with db.connect() as conn:
                             optimization.finish(conn,task,status,plan,result)
-                        job_watch.emit("failed" if status=="failed" else "success")
+                        job_watch.emit("approval_wait" if status=="awaiting_approval" else
+                                       "failed" if status=="failed" else "success")
                     except Exception as exc:
                         with db.connect() as conn:
                             optimization.finish(conn,task,"failed",error=type(exc).__name__)

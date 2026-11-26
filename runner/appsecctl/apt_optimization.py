@@ -36,7 +36,9 @@ MIRRORS = {
 def run(args, timeout=180, *, capture=True):
     # Host CLI has no DB dependency. Worker can attach bounded live telemetry.
     watch=sys.modules.get("appsecctl.job_watch")
-    if not capture and watch is not None and watch.CURRENT.get() is not None:
+    if watch is not None and watch.CURRENT.get() is not None:
+        if capture:
+            return watch.capture_output(args,timeout=timeout)
         watch.capture_stderr(args,timeout=timeout)
         return None
     return subprocess.run(args, check=True, text=True, timeout=timeout,
@@ -71,7 +73,14 @@ def container(image, script, args=(), *, network="none", writable=False, timeout
         raise
 
 
+def progress(event):
+    watch=sys.modules.get("appsecctl.job_watch")
+    if watch is not None:
+        watch.emit(event)
+
+
 def inventory(image):
+    progress("apt_inventory")
     output = container(image, 'export LC_ALL=C; dpkg-query -W -f="$1"', [FORMAT])
     rows = {}
     for line in output.splitlines():
@@ -130,6 +139,7 @@ def plan_removal(image, roots, report):
     manual_raw = container(image, "export LC_ALL=C; apt-mark showmanual")
     manual = {resolve(p,rows) for p in manual_raw.splitlines() if p and
               (p in rows or any(n.split(':')[0]==p.split(':')[0] for n in rows))}
+    progress("apt_simulate")
     output = container(image, 'export LC_ALL=C; apt-get -s --auto-remove purge -- "$@"', roots)
     removed = parse_simulation(output,rows)
     if not set(roots)<=set(removed):
@@ -245,6 +255,7 @@ apt-get -o Dir::Etc::sourcelist=/tmp/appsec-apt.list -o Dir::Etc::sourceparts=/t
 '''
     # apt may need to drop privileges to _apt. Use ordinary Docker default
     # capabilities only for this explicit networked metadata probe.
+    progress("apt_probe")
     name="appsec-apt-probe-"+uuid4().hex
     try:
         out=run(["docker","run","--rm","--pull=never","--name",name,"--user","0:0",

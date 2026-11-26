@@ -95,6 +95,7 @@ apt_safe download "$@"
 
 
 def download(image,mirror,updates,dest):
+    apt.progress("apt_download")
     args=[]
     for name,row in sorted(updates.items()):
         if not apt.PKG.fullmatch(name) or not VERSION.fullmatch(row["after"]):

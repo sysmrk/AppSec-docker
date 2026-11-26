@@ -618,14 +618,28 @@
     let current = watchSession;
     if (!current || current.path !== path) {
       stopWatch();
-      current = {path, cursor:0, lines:[], timer:null, busy:false, state:"Connecting"};
+      current = {path, cursor:0, lines:[], timer:null, busy:false, state:"Connecting", follow:true};
       watchSession = current;
     }
     const box=section(root,"Live execution watch");
     const status=node("p","info-note",current.state);
     const terminal=node("pre","job-terminal",current.lines.join("\n") || "Waiting for recorded worker events…");
     terminal.tabIndex=0;
-    box.appendChild(status);box.appendChild(terminal);
+    box.appendChild(status);
+    const controls=node("div","approval-actions");
+    const followButton=node("button","outline",current.follow?"Pause auto-scroll":"Resume auto-scroll");
+    followButton.type="button";followButton.addEventListener("click",()=>{
+      current.follow=!current.follow;
+      followButton.textContent=current.follow?"Pause auto-scroll":"Resume auto-scroll";
+      if(current.follow)terminal.scrollTop=terminal.scrollHeight;
+    });
+    const copyButton=node("button","outline","Copy watch log");copyButton.type="button";
+    copyButton.addEventListener("click",async()=>{
+      try{await navigator.clipboard.writeText(current.lines.join("\n"));notification("Watch log copied");}
+      catch(e){notification("Clipboard unavailable; select and copy the terminal text.",true);}
+    });
+    controls.appendChild(followButton);controls.appendChild(copyButton);box.appendChild(controls);
+    box.appendChild(terminal);
     box.appendChild(node("p","hint","Actual worker/tool events, refreshed every 2 seconds. Raw secret-bearing output and shell input are intentionally unavailable."));
     current.status=status;current.terminal=terminal;
     terminal.scrollTop=terminal.scrollHeight;
@@ -638,11 +652,11 @@
         for (const e of result.events) current.lines.push(date(e.created_at)+"  "+e.detail);
         current.lines=current.lines.slice(-1000);
         current.cursor=result.next_cursor;
-        current.state="Job state: "+result.state+" · live";
+        current.state="Workflow/job: "+result.state+(result.optimization_state?" · "+result.optimization_operation+": "+result.optimization_state:"")+" · connected";
         const follow=current.terminal.scrollHeight-current.terminal.scrollTop-current.terminal.clientHeight<40;
         current.terminal.textContent=current.lines.join("\n") || "No recorded events yet.";
         current.status.textContent=current.state;
-        if(follow) current.terminal.scrollTop=current.terminal.scrollHeight;
+        if(current.follow && follow) current.terminal.scrollTop=current.terminal.scrollHeight;
       } catch(e) {
         if (watchSession!==current) return;
         current.status.textContent="Watch unavailable: "+e.message;

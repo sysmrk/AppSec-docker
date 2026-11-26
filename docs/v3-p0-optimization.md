@@ -55,3 +55,7 @@ For trusted Debian 12/13 nginx only, choose Plan native APT upgrade. The plan us
 ### Starting the opt-in worker
 
 Set `APPSEC_ENABLE_OPTIMIZATION=true` in the existing .env only on the dedicated test daemon. The `./appsec start` launcher detects the host Buildx executable, appends the optimization overlay after the existing local override, and checks worker-side Buildx. Set `APPSEC_BUILDX_PLUGIN=/absolute/path/to/docker-buildx` if autodetection fails. No change to the existing secrets or project name is required. For normal operation set the flag false. The approval worker is initial lab-only; the API and standard workflow do not acquire a Docker socket. Live Watch also records actual Docker layer completion and elapsed command duration, not arbitrary stdout or credential-bearing command lines.
+
+## Live execution watch improvements
+
+The Control Center watch polls real per-job events every two seconds. APT repository metadata/download, package inventory, simulation, installation/removal and numeric summary events now join Trivy/BuildKit events. Captured tool stdout/stderr remains available to the existing execution code but only fixed messages and bounded numbers reach the watch. Approval wait is not reported as successful execution. The terminal has auto-scroll control and copy, and displays active optimization operation/state. It is not a raw shell and does not expose credentials or raw tool lines. Go migration remains deferred.

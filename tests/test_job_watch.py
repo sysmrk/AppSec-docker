@@ -25,3 +25,22 @@ class WatchTests(unittest.TestCase):
                 self.assertEqual(args[1],("test-id","verified","Verified scan findings: 12"))
             finally:
                 watch.CURRENT.reset(token)
+
+
+    def test_apt_events_do_not_expose_names_or_urls(self):
+        self.assertEqual(watch.parse_line("Get:1 https://secret.example/debian trixie InRelease [12 kB]"),("apt_index",None))
+        self.assertEqual(watch.parse_line("#4 0.45 Removing private-package (1.0) ..."),("apt_remove",None))
+        self.assertEqual(watch.parse_line("1 upgraded, 0 newly installed, 0 to remove and 0 not upgraded."),("apt_upgrades",1))
+
+    def test_capture_both_pipes_and_preserve_errors(self):
+        import subprocess
+        import sys
+        with patch.object(watch,"emit") as emit:
+            out=watch.capture_output([sys.executable,"-c","import sys; print('ok'); print('Get:1 https://secret.test/debian trixie InRelease',file=sys.stderr)"])
+            self.assertEqual(out,"ok\n")
+            emit.assert_any_call("apt_index",None)
+            with self.assertRaises(subprocess.CalledProcessError) as cm:
+                watch.capture_output([sys.executable,"-c","import sys; print('E: certificate failed',file=sys.stderr); sys.exit(100)"])
+            self.assertIn("certificate failed",cm.exception.stderr)
+            with self.assertRaisesRegex(RuntimeError,"capture limit"):
+                watch.capture_output([sys.executable,"-c","print('x'*1000)"],max_bytes=100)

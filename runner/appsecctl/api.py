@@ -1431,9 +1431,13 @@ def workflow_watch(workflow_id: str, after: int = 0, user: dict[str, Any] = Depe
             raise HTTPException(status_code=404,detail="workflow not found")
         ids=[str(w[k]) for k in ("scan_job_id","patch_job_id","publish_job_id") if w.get(k)]
         rows=job_watch.read(conn,"image",ids,after)
-        task_ids=[str(r["id"]) for r in conn.execute("SELECT id FROM optimization_runs WHERE workflow_id=%s",(workflow_id,)).fetchall()]
+        tasks=conn.execute("SELECT id,state,operation FROM optimization_runs WHERE workflow_id=%s ORDER BY created_at DESC",(workflow_id,)).fetchall()
+        task_ids=[str(r["id"]) for r in tasks]
         rows=sorted(rows+job_watch.read(conn,"optimization",task_ids,after),key=lambda r:r["id"])[:200]
-    return {"events":rows,"state":w["state"],"next_cursor":rows[-1]["id"] if rows else after}
+    active=next((r for r in tasks if r["state"] in ("queued","planning","awaiting_approval","build_queued","building")),None)
+    return {"events":rows,"state":w["state"],"optimization_state":active["state"] if active else None,
+            "optimization_operation":active["operation"] if active else None,
+            "next_cursor":rows[-1]["id"] if rows else after}
 
 
 @app.get("/api/security-jobs/{job_id}/watch")

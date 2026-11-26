@@ -35,8 +35,16 @@ MESSAGES={
     "buildkit_step":"BuildKit completed step", "optimization":"Optimization task started",
     "plan":"Package removal plan prepared", "build":"Approved candidate build started",
     "rescan":"Candidate rescan started", "review":"Candidate review complete",
+    "approval_wait":"Plan ready; waiting for administrator approval",
+    "apt_index":"APT repository index received", "apt_fetch":"APT metadata/package download received",
+    "apt_remove":"APT package removal observed", "apt_install":"APT package installation observed",
+    "apt_upgrades":"APT reported upgrade candidates", "apt_removals":"APT reported removal candidates",
+    "apt_probe":"Checking approved APT repository",
+    "apt_inventory":"Reading installed package inventory",
+    "apt_simulate":"Simulating package changes",
+    "apt_download":"Downloading approved version-pinned archives",
 }
-NUMERIC={"elapsed","verified","trivy_packages","trivy_languages","buildkit_step"}
+NUMERIC={"elapsed","verified","trivy_packages","trivy_languages","buildkit_step","apt_upgrades","apt_removals"}
 
 
 def emit(event, number=None):
@@ -93,6 +101,17 @@ def parse_line(raw):
     m=re.fullmatch(r"#(\d{1,7}) DONE(?: \d+(?:\.\d+)?s)?",raw.strip())
     if m:
         return ("buildkit_step",int(m[1]))
+    # BuildKit prefixes RUN output with step number and elapsed time.
+    line=re.sub(r"^#\d{1,7} \d+(?:\.\d+)?\s+", "", raw.strip())
+    if re.match(r"^Get:\d+\s",line):
+        return ("apt_index" if re.search(r"\b(?:InRelease|Packages|Release)\b",line) else "apt_fetch",None)
+    if re.match(r"^Removing [a-z0-9][a-z0-9+.:\-]*\s",line):
+        return ("apt_remove",None)
+    if re.match(r"^(?:Setting up|Unpacking) [a-z0-9][a-z0-9+.:\-]*\s",line):
+        return ("apt_install",None)
+    m=re.fullmatch(r"(\d{1,7}) upgraded, \d{1,7} newly installed, (\d{1,7}) to remove and \d{1,7} not upgraded\.",line)
+    if m:
+        return ("apt_removals",int(m[2])) if int(m[2]) else ("apt_upgrades",int(m[1]))
     return None
 
 
@@ -186,6 +205,60 @@ def observed_run(command, *, timeout=None, environment=None, quiet=False):
                         last=now
             return subprocess.CompletedProcess(command,proc.wait(),
                     tails["stdout"].decode(errors="replace"),tails["stderr"].decode(errors="replace"))
+        except BaseException:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
+            raise
+
+
+def capture_output(command, timeout=180, max_bytes=8*1024*1024):
+    """Capture both pipes without blocking and emit only fixed allowlisted events.
+
+    Preserve stdout/stderr for callers, including repository error classification.
+    Refuse oversized output instead of silently truncating a trust failure.
+    """
+    started=last=time.monotonic()
+    buffers={"stdout":bytearray(),"stderr":bytearray()}
+    pending={"stdout":b"","stderr":b""}
+    with subprocess.Popen(command,stdout=subprocess.PIPE,stderr=subprocess.PIPE) as proc:
+        try:
+            with selectors.DefaultSelector() as sel:
+                sel.register(proc.stdout,selectors.EVENT_READ,"stdout")
+                sel.register(proc.stderr,selectors.EVENT_READ,"stderr")
+                while sel.get_map():
+                    now=time.monotonic()
+                    if now-started>=timeout:
+                        raise subprocess.TimeoutExpired(command,timeout)
+                    for key,_ in sel.select(min(1,max(0,timeout-(now-started)))):
+                        part=os.read(key.fd,8192)
+                        name=key.data
+                        if not part:
+                            sel.unregister(key.fileobj)
+                            if pending[name]:
+                                event=parse_line(pending[name].decode(errors="replace"))
+                                if event:
+                                    emit(*event)
+                            continue
+                        buffers[name].extend(part)
+                        if len(buffers[name])>max_bytes:
+                            raise RuntimeError("Tool output exceeds capture limit")
+                        lines=(pending[name]+part).split(b"\n")
+                        pending[name]=lines.pop()[-8192:]
+                        for line in lines:
+                            event=parse_line(line[:8192].decode(errors="replace"))
+                            if event:
+                                emit(*event)
+                    now=time.monotonic()
+                    if now-last>=5:
+                        emit("elapsed",int(now-started))
+                        last=now
+            code=proc.wait(timeout=max(0,timeout-(time.monotonic()-started)))
+            stdout=buffers["stdout"].decode(errors="replace")
+            stderr=buffers["stderr"].decode(errors="replace")
+            if code:
+                raise subprocess.CalledProcessError(code,command,output=stdout,stderr=stderr)
+            return stdout
         except BaseException:
             if proc.poll() is None:
                 proc.kill()
