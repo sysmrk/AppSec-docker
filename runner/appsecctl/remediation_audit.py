@@ -10,7 +10,7 @@ import hashlib
 import json
 import re
 
-from . import scan_evidence
+from . import scan_evidence, package_versions
 
 SCHEMA = "appsec.remediation-audit/v1"
 SCOPE = "os,library; all fix statuses"
@@ -77,7 +77,7 @@ def index(report):
         for pkg in packages:
             if isinstance(pkg, dict) and isinstance(pkg.get("Name"), str) and pkg["Name"] and isinstance(pkg.get("Version"), str) and pkg["Version"]:
                 covered.add(tk)
-                inventory[tk + (pkg["Name"],)].add(pkg["Version"])
+                inventory[tk + (pkg["Name"],)].add(package_versions.version(pkg,tk[1]) if tk[0]=="os-pkgs" else pkg["Version"])
         for v in target.get("Vulnerabilities") or []:
             findings[tk + (v["PkgName"], v["VulnerabilityID"])].append(v)
     return findings, inventory, covered

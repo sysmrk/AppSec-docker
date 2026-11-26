@@ -1241,7 +1241,7 @@ def remediation_optimization_review(pipeline_id: str,user: dict[str, Any] = Depe
     # or approval metadata to the model/MCP consumer.
     allowed=("candidate_image_id","base_findings","candidate_findings","base_severity","candidate_severity",
              "introduced","coverage_unknown","comparison","functional_test_passed","historical_layers_removed",
-             "overall_findings","original_findings","overall_introduced")
+             "overall_findings","original_findings","overall_introduced","comparison_blockers","security_review_preferred")
     return {"runs":[{"id":r["id"],"stage":r["stage"],"operation":r["operation"],"state":r["state"],
                      "created_at":r["created_at"],"result":{k:v for k,v in (r["result"] or {}).items() if k in allowed}}
                     for r in rows],"publication_authorized":False}

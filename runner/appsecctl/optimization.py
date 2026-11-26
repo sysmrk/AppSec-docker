@@ -18,10 +18,10 @@ from uuid import UUID, uuid4
 from psycopg.types.json import Jsonb
 from . import apt_optimization as apt, apt_repository_review as repo_review
 from . import db, job_watch, manual_workflows as mw, remediation_audit as audit
-from . import candidate_review, scan_evidence
+from . import candidate_review, scan_evidence, native_apt
 
 ACTIVE=("queued","planning","awaiting_approval","build_queued","building")
-OPERATIONS=("debloat","availability","inventory")
+OPERATIONS=("debloat","availability","inventory","upgrade")
 
 
 def enabled():
@@ -78,8 +78,8 @@ def create(conn,wid,user,operation,stage,roots):
     scan=next((s for s in reversed(payload.get("scans",[])) if s["phase"]==phase),None)
     if not audit.verified(scan) or (stage=="residual" and audit.analyze(payload)["comparison"]!="observed"):
         raise ValueError("Verified scan evidence unavailable")
-    selected=mirrors(conn) if operation=="availability" else []
-    if operation=="availability" and not selected:
+    selected=mirrors(conn) if operation in ("availability","upgrade") else []
+    if operation in ("availability","upgrade") and not selected:
         raise ValueError("Configure approved package mirrors first")
     ident=str(uuid4())
     conn.execute("""INSERT INTO optimization_runs(id,workflow_id,scan_id,created_by,stage,operation,roots,mirrors,state)
@@ -220,6 +220,10 @@ def execute(task):
     with db.connect() as conn:
         scan=db.get_scan(conn,str(task["scan_id"]))
         current=conn.execute("SELECT mirrors FROM package_mirror_settings WHERE id=1").fetchone()
+        actor_id=task["approved_by"] if task["state"]=="building" else task["created_by"]
+        actor=conn.execute("SELECT role,disabled FROM users WHERE id=%s",(actor_id,)).fetchone()
+    if not actor or actor["role"]!="admin" or actor["disabled"]:
+        raise PermissionError("Task actor authorization revoked")
     if not audit.verified(scan):
         raise ValueError("Scan no longer verified")
     raw=scan["raw_report"]
@@ -230,13 +234,20 @@ def execute(task):
             if not set(task["mirrors"])<=set(current["mirrors"]):
                 raise ValueError("Mirror authorization revoked")
             result=repo_review.availability(image,task["mirrors"])
-            return "completed",None,result
+            return ("completed" if result["status"]=="repository_checked" else "failed"),None,result
         if op=="inventory":
             return "completed",None,repo_review.reconcile(image,raw)
-        plan=apt.plan_removal(image,task["roots"],raw)
+        if op=="upgrade":
+            if not set(task["mirrors"])<=set(current["mirrors"]):
+                raise ValueError("Mirror authorization revoked")
+            plan=native_apt.plan(image,raw,task["mirrors"])
+            if not plan["updates"]:
+                return "completed",plan,{"status":"no_available_upgrades","publication_authorized":False}
+        else:
+            plan=apt.plan_removal(image,task["roots"],raw)
         job_watch.emit("plan")
         return "awaiting_approval",plan,None
-    if task["state"]!="building" or not task["approved_by"] or op!="debloat":
+    if task["state"]!="building" or not task["approved_by"] or op not in ("debloat","upgrade"):
         raise ValueError("Invalid approved build task")
     # Check approver is still an enabled admin immediately before execution.
     with db.connect() as conn:
@@ -245,7 +256,8 @@ def execute(task):
         raise PermissionError("Approval revoked")
     apt.run(["docker","buildx","version"])
     job_watch.emit("build")
-    candidate=apt.build(task["plan"],raw,task["plan"]["plan_sha256"])
+    candidate=(native_apt.build(task["plan"],raw,task["plan"]["plan_sha256"],current["mirrors"]) if op=="upgrade"
+               else apt.build(task["plan"],raw,task["plan"]["plan_sha256"]))
     # Rescan the exact base and candidate, not an old report with a different DB.
     images=[image,candidate["candidate_image_id"]]
     if task["stage"]=="residual":
@@ -276,5 +288,12 @@ def execute(task):
             "image_ids":images,
             "publication_authorized":False,"functional_test_passed":False,
             "security_review_required":True}
+    blockers=[]
+    if unknown or any(c["coverage_unknown"] for c in overall["cohorts"].values()): blockers.append("coverage_unknown")
+    if result["introduced"] or result["overall_introduced"]: blockers.append("new_findings")
+    if any(after[s]>before[s] for s in ("CRITICAL","HIGH","UNKNOWN")): blockers.append("severity_regression")
+    if result["candidate_findings"]>=result["base_findings"]: blockers.append("no_net_reduction")
+    result["comparison_blockers"]=blockers
+    result["security_review_preferred"]=not blockers
     job_watch.emit("review")
     return "completed",None,result

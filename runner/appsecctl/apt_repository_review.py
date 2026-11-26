@@ -7,7 +7,7 @@ from pathlib import Path
 import subprocess
 import sys
 
-from . import apt_optimization as apt, remediation_audit as audit
+from . import apt_optimization as apt, remediation_audit as audit, package_versions
 
 
 def transport_error(stderr):
@@ -57,7 +57,7 @@ def reconcile(image,report):
         name,version=p.get("Name"),p.get("Version")
         if not isinstance(name,str) or not apt.PKG.fullmatch(name) or not isinstance(version,str) or not version:
             raise ValueError("Malformed scanner inventory")
-        scanned.setdefault(name,set()).add(version)
+        scanned.setdefault(name,set()).add(package_versions.version(p,"debian"))
     if not scanned:
         raise ValueError("Empty scanner inventory")
     matched=set()

@@ -101,7 +101,7 @@ services:
     cap_drop:
       - ALL
     networks:
-      - appsec-net
+      - ai-net
 
   # Optional: absent from normal 'platform' and 'production' profiles.
   # HTTP binds to localhost ONLY; use a TLS/OAuth gateway for remote clients.
@@ -247,6 +247,7 @@ services:
       start_period: 15s
     networks:
       - appsec-net
+      - ai-net
     profiles:
       - platform
 
@@ -475,6 +476,8 @@ volumes:
   metabase-data:
 
 networks:
+  ai-net:
+    internal: true
   appsec-net:
     name: ${TOOL_NETWORK:-appsec-net}
     attachable: true

@@ -663,6 +663,7 @@
     async function load() {
       try {
         const data=await request(path);
+        if(!body.isConnected)return;
         clear(body);
         body.appendChild(node("p","info-note",data.enabled?"Explicit local-only optimization. Never publishes or replaces the existing patch.":"Optimization worker disabled; enable only in an isolated lab."));
         const admin=state.user?.role==="admin";
@@ -678,7 +679,7 @@
             label.appendChild(check);label.appendChild(node("span","",name));body.appendChild(label);modules.push(check);
           }
           form.appendChild(stage);
-          for(const [operation,title] of [["availability","Check package repository"],["inventory","Reconcile inventory"],["debloat","Plan module removal"]]) {
+          for(const [operation,title] of [["availability","Check package repository"],["inventory","Reconcile inventory"],["upgrade","Plan native APT upgrade"],["debloat","Plan module removal"]]) {
             const b=node("button","outline",title);b.type="button";b.addEventListener("click",async()=>{
               b.disabled=true;
               try {
@@ -705,11 +706,13 @@
           const card=node("div","panel");card.appendChild(node("h3","",run.operation+" · "+run.stage+" · "+run.state));
           if(run.error_code)card.appendChild(node("p","warning","Task failed: "+run.error_code+"; inspect worker diagnostics."));
           if(run.plan) {
-            card.appendChild(node("p","info-note","Estimated findings: "+run.plan.estimated_findings+" · Packages to remove: "+run.plan.remove.length));
-            const details=node("details");details.appendChild(node("summary","","Review exact removal closure"));details.appendChild(node("pre","job-terminal",run.plan.remove.join("\n")));card.appendChild(details);
+            const removing=Array.isArray(run.plan.remove);
+            const items=removing?run.plan.remove:Object.entries(run.plan.updates||{}).map(([p,v])=>p+"  "+v.before+" → "+v.after);
+            card.appendChild(node("p","info-note",removing?"Estimated findings: "+run.plan.estimated_findings+" · Packages to remove: "+items.length:"Exact package upgrades: "+items.length+" · Mirror: "+run.plan.mirror));
+            const details=node("details");details.appendChild(node("summary","",removing?"Review exact removal closure":"Review exact upgrade versions"));details.appendChild(node("pre","job-terminal",items.join("\n")));card.appendChild(details);
             if(admin&&run.state==="awaiting_approval") {
               const label=node("label","approval-checkbox"),check=node("input");check.type="checkbox";
-              label.appendChild(check);label.appendChild(node("span","","I reviewed every package and accept loss of these optional capabilities."));card.appendChild(label);
+              label.appendChild(check);label.appendChild(node("span","",removing?"I reviewed every package and accept loss of these optional capabilities.":"I reviewed the exact signed repository package upgrades and approve a local candidate."));card.appendChild(label);
               const b=node("button","primary","Approve local build & rescan");b.type="button";b.disabled=true;
               check.addEventListener("change",()=>{b.disabled=!check.checked;});
               b.addEventListener("click",async()=>{b.disabled=true;try{await request(path+"/"+run.id+"/decision",{method:"POST",body:JSON.stringify({action:"approve",plan_sha256:run.plan.plan_sha256})});await load();}catch(e){notification(e.message,true);b.disabled=false;}});
@@ -729,6 +732,7 @@
       }catch(e){body.textContent=e.message;}
     }
     refresh.addEventListener("click",load);load();
+    const timer=setInterval(()=>{if(!panel.isConnected){clearInterval(timer);return;} if(!document.hidden && state.view==="guided" && body.querySelector("h3") && /queued|planning|building/.test(body.textContent))load();},5000);
   }
 
   async function openGuided(workflowId, silent = false) {
@@ -738,6 +742,7 @@
     if (!silent) root.textContent = "Loading workflow details…";
     try {
       const data = await request("/api/manual-workflows/" + encodeURIComponent(workflowId));
+      if(state.selectedWorkflow!==workflowId || state.view!=="guided")return;
       const w = data.workflow, pipeline = data.pipeline;
       state.workflowState = w.state;
       state.patchEnabled = Boolean(data.patch_enabled);

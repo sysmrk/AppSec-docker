@@ -240,7 +240,7 @@ test -f "$key" || key=/usr/share/keyrings/debian-archive-keyring.gpg
 mkdir -p /tmp/appsec-apt-empty
 printf 'deb [signed-by=%s] %s %s main\ndeb [signed-by=%s] %s %s-updates main\ndeb [signed-by=%s] %s %s-security main\n' "$key" "$1" "$VERSION_CODENAME" "$key" "$1" "$VERSION_CODENAME" "$key" "$2" "$VERSION_CODENAME" > /tmp/appsec-apt.list
 rm -rf /var/lib/apt/lists/*
-apt-get -o Dir::Etc::sourcelist=/tmp/appsec-apt.list -o Dir::Etc::sourceparts=/tmp/appsec-apt-empty -o APT::Update::Error-Mode=any -o Acquire::Retries=1 -o Acquire::https::Timeout=30 -o Acquire::Check-Valid-Until=true -o Acquire::AllowInsecureRepositories=false -o Acquire::https::Verify-Peer=true -o Acquire::https::Verify-Host=true update >&2
+apt-get -o Dir::Etc::sourcelist=/tmp/appsec-apt.list -o Dir::Etc::sourceparts=/tmp/appsec-apt-empty -o Acquire::https::AllowRedirect=false -o Acquire::http::AllowRedirect=false -o APT::Get::AllowUnauthenticated=false -o APT::Update::Error-Mode=any -o Acquire::Retries=1 -o Acquire::https::Timeout=30 -o Acquire::Check-Valid-Until=true -o Acquire::AllowInsecureRepositories=false -o Acquire::https::Verify-Peer=true -o Acquire::https::Verify-Host=true update >&2
 apt-get -o Dir::Etc::sourcelist=/tmp/appsec-apt.list -o Dir::Etc::sourceparts=/tmp/appsec-apt-empty -s dist-upgrade
 '''
     # apt may need to drop privileges to _apt. Use ordinary Docker default

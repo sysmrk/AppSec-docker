@@ -11,7 +11,7 @@ import json
 from pathlib import Path
 import sys
 
-from . import remediation_audit as audit
+from . import remediation_audit as audit, package_versions as versions
 
 SEVERITIES=("CRITICAL","HIGH","UNKNOWN","MEDIUM","LOW")
 
@@ -40,7 +40,7 @@ def package_versions(report):
             continue
         for pkg in target.get("Packages") or []:
             if pkg.get("Name") and pkg.get("Version"):
-                rows.setdefault(pkg["Name"],set()).add(pkg["Version"])
+                rows.setdefault(pkg["Name"],set()).add(versions.version(pkg,target["Type"]))
     return rows
 
 
