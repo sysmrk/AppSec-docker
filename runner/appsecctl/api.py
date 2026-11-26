@@ -1284,6 +1284,35 @@ def list_manual_workflows(
         return mw.list_workflows(conn, user, limit)
 
 
+@app.get("/api/manual-workflows/{workflow_id}/watch")
+def workflow_watch(workflow_id: str, after: int = 0, user: dict[str, Any] = Depends(current_user)):
+    from . import manual_workflows as mw, job_watch
+    if not 0 <= after <= 2**63-1:
+        raise HTTPException(status_code=422,detail="invalid watch cursor")
+    with db.connect() as conn:
+        try:
+            w=mw.get_workflow(conn,workflow_id,user)
+        except ValueError:
+            w=None
+        if not w:
+            raise HTTPException(status_code=404,detail="workflow not found")
+        ids=[str(w[k]) for k in ("scan_job_id","patch_job_id","publish_job_id") if w.get(k)]
+        rows=job_watch.read(conn,"image",ids,after)
+    return {"events":rows,"state":w["state"],"next_cursor":rows[-1]["id"] if rows else after}
+
+
+@app.get("/api/security-jobs/{job_id}/watch")
+def security_watch(job_id: str, after: int = 0, user: dict[str, Any] = Depends(current_user)):
+    from . import job_watch
+    if not 0 <= after <= 2**63-1:
+        raise HTTPException(status_code=422,detail="invalid watch cursor")
+    with db.connect() as conn:
+        require_resource(conn,user,"security_job",job_id)
+        rows=job_watch.read(conn,"security",[job_id],after)
+        state=conn.execute("SELECT status FROM security_jobs WHERE id::text=%s",(job_id,)).fetchone()
+    return {"events":rows,"state":state["status"],"next_cursor":rows[-1]["id"] if rows else after}
+
+
 @app.get("/api/manual-workflows/{workflow_id}")
 def get_manual_workflow(
     workflow_id: str, user: dict[str, Any] = Depends(current_user),

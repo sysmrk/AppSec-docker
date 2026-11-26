@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
-from . import db
+from . import db, job_watch
 from .errors import safe_message
 from .sanitization import MASK, redact_gitleaks_report, validate_repo_target
 
@@ -145,7 +145,9 @@ def execute_security_job(job_id: str) -> str:
             with db.connect() as conn:
                 credentials = repo_credentials.consume(conn, job_id)
             full_history = profile in ("strict", "release")
+            job_watch.emit("git")
             repo_path = prepare_repo(target, job_id, credentials, full_history)
+            job_watch.emit("done")
             del credentials
             from . import image_sources
             from . import tool_updates
@@ -154,6 +156,7 @@ def execute_security_job(job_id: str) -> str:
                 active_version = tool_updates.active(conn, "gitleaks")
                 requested_scanner = tool_updates.image_ref("gitleaks", active_version)
             scanner = tool_updates.resolve_scanner("gitleaks", requested_scanner, configured, active_version)
+            job_watch.emit("gitleaks")
             scan_exit_code = run_command(
                 [
                     "docker",

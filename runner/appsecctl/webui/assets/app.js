@@ -50,6 +50,7 @@
     return body;
   };
   function showLogin() {
+    stopWatch();
     state.user = null;
     selectedPipelines.clear();
     guidedPage = 1; guidedRows = []; guidedRequest++;
@@ -77,6 +78,7 @@
     else if (view === "settings") view = state.user?.role === "admin" ? "tools" : "profile";
     if (adminSettings.has(view) && state.user?.role !== "admin") view = "profile";
     if (view === "results" && state.view !== "results") reportReturnView = state.view;
+    if (state.view !== view) stopWatch();
     state.view = view;
     const inSettings = settingViews.has(view);
     $("settings-navigation").hidden = !inSettings || Boolean(state.user?.must_change_password);
@@ -475,6 +477,7 @@
       root.appendChild(node("h2", "", d.job.target));
       root.appendChild(node("p", "info-note", "Job: " + d.job.id));
       showMetrics(root, [["Findings", d.job.finding_count], ["High", d.job.high_count], ["Status", d.job.status]]);
+      attachWatch(root,"/api/security-jobs/"+encodeURIComponent(id)+"/watch");
       const sec = section(root, "Redacted findings");
       detailsTable(sec, [["Rule", "rule_id"], ["Severity", "severity"], ["Title", "title"], ["Location", "location"]], d.findings);
       sec.appendChild(node("p", "info-note", "Raw secret values and matching evidence are intentionally never displayed."));
@@ -604,6 +607,51 @@
     } catch (error) { notification(error.message, true); }
   }
 
+  let watchSession = null;
+  function stopWatch() {
+    if (watchSession) { clearTimeout(watchSession.timer); watchSession = null; }
+  }
+  function attachWatch(root, path) {
+    let current = watchSession;
+    if (!current || current.path !== path) {
+      stopWatch();
+      current = {path, cursor:0, lines:[], timer:null, busy:false, state:"Connecting"};
+      watchSession = current;
+    }
+    const box=section(root,"Live execution watch");
+    const status=node("p","info-note",current.state);
+    const terminal=node("pre","job-terminal",current.lines.join("\n") || "Waiting for recorded worker events…");
+    terminal.tabIndex=0;
+    box.appendChild(status);box.appendChild(terminal);
+    box.appendChild(node("p","hint","Actual worker/tool events, refreshed every 2 seconds. Raw secret-bearing output and shell input are intentionally unavailable."));
+    current.status=status;current.terminal=terminal;
+    terminal.scrollTop=terminal.scrollHeight;
+    async function poll() {
+      if (watchSession!==current || current.busy) return;
+      current.busy=true;
+      try {
+        const result=await request(path+"?after="+current.cursor);
+        if (watchSession!==current) return;
+        for (const e of result.events) current.lines.push(date(e.created_at)+"  "+e.detail);
+        current.lines=current.lines.slice(-1000);
+        current.cursor=result.next_cursor;
+        current.state="Job state: "+result.state+" · live";
+        const follow=current.terminal.scrollHeight-current.terminal.scrollTop-current.terminal.clientHeight<40;
+        current.terminal.textContent=current.lines.join("\n") || "No recorded events yet.";
+        current.status.textContent=current.state;
+        if(follow) current.terminal.scrollTop=current.terminal.scrollHeight;
+      } catch(e) {
+        if (watchSession!==current) return;
+        current.status.textContent="Watch unavailable: "+e.message;
+        if(e.status===401 || e.status===403 || e.status===404) { stopWatch(); return; }
+      } finally {
+        current.busy=false;
+        if(watchSession===current) current.timer=setTimeout(poll,2000);
+      }
+    }
+    if (!current.busy) {clearTimeout(current.timer);poll();}
+  }
+
   async function openGuided(workflowId, silent = false) {
     selectView("guided");
     state.selectedWorkflow = workflowId;
@@ -624,6 +672,7 @@
         c.appendChild(node("span", "", title)); summary.appendChild(c);
       }
       root.appendChild(summary);
+      attachWatch(root,"/api/manual-workflows/"+encodeURIComponent(w.id)+"/watch");
       if (w.pipeline_id && ["awaiting_approval","awaiting_publication","completed","completed_without_publish","published","patch_failed","publication_blocked"].includes(w.state)) {
         const planBox = node("div", "panel");
         const stage = ["awaiting_publication","completed_without_publish","published","publication_blocked"].includes(w.state) ? "residual" : "original";

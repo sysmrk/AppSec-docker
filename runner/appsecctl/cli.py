@@ -16,6 +16,7 @@ from alembic.config import Config as AlembicConfig
 
 from . import db, policy, image_sources, patch_sources, scan_evidence, tool_updates, remediation_audit
 from .errors import safe_message, safe_detail
+from . import job_watch
 from .reports import write_html_report, write_security_sarif
 from .security import enqueue_security_job, run_security_job
 
@@ -30,8 +31,16 @@ def env(name: str, default: str) -> str:
 def run_command(command: list[str], *, capture_errors: bool = False, environment: dict[str, str] | None = None,
                 timeout: int | None = None) -> None:
     print("+ " + " ".join(command), flush=True)
-    subprocess.run(command, check=True, stderr=subprocess.PIPE if capture_errors else None,
-                   text=capture_errors, env=environment, timeout=timeout)
+    if capture_errors and job_watch.CURRENT.get() is not None:
+        try:
+            job_watch.capture_stderr(command,environment,timeout)
+        except BaseException:
+            job_watch.emit("tool_failed")
+            raise
+        job_watch.emit("done")
+    else:
+        subprocess.run(command, check=True, stderr=subprocess.PIPE if capture_errors else None,
+                       text=capture_errors, env=environment, timeout=timeout)
 
 
 def timeout_seconds(name: str, default: int) -> int:
@@ -49,6 +58,7 @@ def run_trivy_command(command: list[str], stage: str, timeout: int) -> None:
     name = "appsec-trivy-" + uuid4().hex
     command = command[:2] + ["--name", name, "--label", "appsec.managed=trivy"] + command[2:]
     started = time.monotonic()
+    job_watch.emit("sbom" if stage.startswith("sbom") else "db" if "db" in stage else "scan")
     print(f"SCAN_STAGE_START stage={stage} container={name} timeout={timeout}s", flush=True)
     try:
         run_command(command, capture_errors=True, timeout=timeout)
@@ -223,6 +233,7 @@ def scan_image(image_ref: str, phase: str, pipeline_id: str | None = None) -> st
                                   "scanner_image": trivy_image,
                                   "registry_digests": (report.get("Metadata") or {}).get("RepoDigests") or []})
         counts, vulnerabilities = parse_trivy_report(report)
+        job_watch.emit("verified",len(vulnerabilities))
         print(f"SCAN_VERIFIED phase={phase} scan_id={scan_id} image_id={expected_id} findings={len(vulnerabilities)}", flush=True)
         with db.connect() as conn:
             db.update_scan_success(conn, scan_id, str(report_path), report, counts)
@@ -369,6 +380,7 @@ def patch_from_scan(scan_id: str) -> tuple[str, str]:
                 with db.connect() as conn:
                     conn.execute("UPDATE patch_runs SET execution_evidence=COALESCE(execution_evidence,'{}'::jsonb) || %s WHERE id=%s",
                                  (Jsonb({"helper_sources": helper_refs}), patch_id))
+            job_watch.emit("patch")
             run_command(command, capture_errors=True, environment=environment)
         patched_id = scan_evidence.local_image_id(local_patched_ref)
         if patched_id == expected_id:
@@ -604,6 +616,7 @@ def publish_prepared_patch(pipeline_id: str, publish_job_id: str) -> str:
         conn.execute("UPDATE patch_runs SET publication_status='publishing' WHERE id=%s", (patch_id,))
     try:
         run_command(["docker", "tag", str(row["local_image_id"]), dest], capture_errors=True)
+        job_watch.emit("publish")
         pushed = subprocess.run(["docker", "push", dest], check=True, capture_output=True, text=True)
         digest = scan_evidence.push_digest(pushed.stdout)
         if scan_evidence.local_image_id(dest) != row["local_image_id"]:

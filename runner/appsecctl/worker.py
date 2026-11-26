@@ -8,6 +8,7 @@ from . import db
 from .errors import safe_message, classify
 from .cli import run_pipeline, continue_pipeline_patch, publish_prepared_patch
 from .logging_utils import log_event
+from . import job_watch
 from .reports import notify, write_html_report, write_security_sarif
 from .security import execute_security_job
 from .history import claim_removal, finish_removal
@@ -55,6 +56,8 @@ def main() -> int:
             project_id = str(job["project_id"]) if job.get("project_id") else None
             log_event("worker.image.claimed", job_id=job_id, image=image_ref)
 
+            token = job_watch.CURRENT.set(("image",job_id))
+            job_watch.emit("claimed")
             try:
                 if str(job.get("mode")) in ("patch", "continue_patch", "publish_patch") and (
                     os.environ.get("APPSEC_PATCH_ENABLED", "false").lower() not in ("1", "true", "yes")
@@ -75,10 +78,14 @@ def main() -> int:
                     summary = db.pipeline_summary(conn, pipeline_id)
                 notify("pipeline.success", summary)
                 log_event("worker.image.finished", job_id=job_id, pipeline_id=pipeline_id)
+                job_watch.emit("success")
             except BaseException as exc:
                 with db.connect() as conn:
                     db.fail_job(conn, job_id, safe_message(exc, 'image'))
                 log_event("worker.image.failed", level="error", job_id=job_id, error_code=classify(exc, "image")["code"])
+                job_watch.emit("failed")
+            finally:
+                job_watch.CURRENT.reset(token)
             continue
 
         security_job = None
@@ -93,6 +100,8 @@ def main() -> int:
         security_job_id = str(security_job["id"])
         log_event("worker.security.claimed", job_id=security_job_id, target=security_job["target"])
 
+        token = job_watch.CURRENT.set(("security",security_job_id))
+        job_watch.emit("claimed")
         try:
             execute_security_job(security_job_id)
             with db.connect() as conn:
@@ -102,10 +111,14 @@ def main() -> int:
                 write_security_sarif(security_job_id)
                 notify("security.success", detail)
             log_event("worker.security.finished", job_id=security_job_id)
+            job_watch.emit("success")
         except BaseException as exc:
             with db.connect() as conn:
                 db.retry_or_fail_security_job(conn, security_job_id, safe_message(exc, 'repository'))
             log_event("worker.security.failed", level="error", job_id=security_job_id, error_code=classify(exc, "repository")["code"])
+            job_watch.emit("failed")
+        finally:
+            job_watch.CURRENT.reset(token)
 
 
 if __name__ == "__main__":
