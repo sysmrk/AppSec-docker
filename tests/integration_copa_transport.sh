@@ -6,6 +6,18 @@ export BUILDKIT_CONTAINER="$name"
 trap 'docker rm -f "$name" "$name-owner" >/dev/null 2>&1 || true; docker image rm "$source" appsec-ci/copa-export:test >/dev/null 2>&1 || true' EXIT
 docker pull registry:2.8.3
 docker pull busybox:1.36
+docker pull debian:13-slim
+# Prepare the actual Debian helper using the same CA bootstrap as the worker.
+PYTHONPATH=runner python - <<'PYHELPER'
+from appsecctl import copa_mirrors,scan_evidence,apt_optimization as apt
+image=scan_evidence.local_image_id("debian:13-slim")
+helper=copa_mirrors.prepare_sources(image,"debian",helper=True)
+try:
+    print(apt.container(helper["image_id"],'test -s /etc/ssl/certs/ca-certificates.crt || test -s /etc/apt/appsec-helper-ca.pem; apt-config dump | grep -E "Verify-Peer|Verify-Host|AllowUnauthenticated|Check-Valid-Until"'))
+    assert apt.inventory(image)==apt.inventory(helper["image_id"])
+finally:
+    copa_mirrors.cleanup(helper["image_ref"])
+PYHELPER
 # Exercise the same docker commit preparation as the production path.
 # A multi-platform index ID is not a single-platform image config ID.
 cid=$(docker create --platform linux/amd64 busybox:1.36)

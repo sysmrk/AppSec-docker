@@ -520,6 +520,8 @@ def patch_from_scan(scan_id: str, *, automatic=False) -> tuple[str, str]:
         f"docker-container://{env('BUILDKIT_CONTAINER', 'appsec-buildkit')}",
         "--timeout",
         env("COPA_TIMEOUT", "30m"),
+        "--progress",
+        "plain",
     ]
 
     from contextlib import ExitStack
@@ -580,7 +582,15 @@ def patch_from_scan(scan_id: str, *, automatic=False) -> tuple[str, str]:
                     conn.execute("UPDATE patch_runs SET execution_evidence=COALESCE(execution_evidence,'{}'::jsonb) || %s WHERE id=%s",
                                  (Jsonb({"helper_sources": helper_refs}), patch_id))
             job_watch.emit("patch")
-            run_command(command, capture_errors=True, environment=environment)
+            try:
+                run_command(command, capture_errors=True, environment=environment)
+            except subprocess.CalledProcessError as exc:
+                from .errors import copa_apt_diagnostic
+                detail=copa_apt_diagnostic(exc.stderr)
+                if detail:
+                    print("COPA_APT_DIAGNOSTIC "+detail,flush=True)
+                    raise RuntimeError("COPA_APT: "+detail) from None
+                raise
         patched_id = scan_evidence.local_image_id(stage_output or local_patched_ref)
         if patched_id == expected_id or (staged and patched_id==staged["image_id"]):
             raise RuntimeError("SCAN_EVIDENCE_INVALID: Copa output is identical to its input; no verified patch")

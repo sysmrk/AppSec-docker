@@ -107,3 +107,13 @@ class AutomaticCopaTests(unittest.TestCase):
         with patch.object(copa_transport.apt,"run",return_value=json.dumps(data)):
             with self.assertRaisesRegex(RuntimeError,"network is disabled"):
                 copa_transport.buildkit_network("buildkit")
+
+    def test_apt_error_is_not_reduced_to_generic_export_failure(self):
+        from appsecctl.errors import copa_apt_diagnostic,classify
+        base='#8 Updating package database: apt-get update\n'
+        self.assertIn("TLS certificate",copa_apt_diagnostic(base+'#8 E: Certificate verification failed. The certificate is NOT trusted.'))
+        self.assertIn("DNS",copa_apt_diagnostic(base+'#8 Temporary failure resolving mirrors.example'))
+        self.assertIn("signature",copa_apt_diagnostic(base+'#8 E: NO_PUBKEY 1234'))
+        self.assertIn("exact cause not present",copa_apt_diagnostic('failed to solve: process "apt-get update" did not complete successfully: exit code: 100'))
+        self.assertIsNone(copa_apt_diagnostic('failed to solve: exporter "docker" could not be found'))
+        self.assertEqual(classify("COPA_APT: TLS certificate verification failed")["code"],"COPA_APT")

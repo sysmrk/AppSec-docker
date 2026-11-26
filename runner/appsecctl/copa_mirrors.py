@@ -64,7 +64,7 @@ def prepare(image,report,mirrors):
     return result
 
 
-def prepare_sources(image, mirror):
+def prepare_sources(image, mirror, *, helper=False):
     base=apt.inspect(image)
     if (base["Config"].get("Labels") or {}).get("BaseImage"):
         raise RuntimeError("Previously Copa-patched input requires separate lineage review")
@@ -102,8 +102,29 @@ def prepare_sources(image, mirror):
                 contents="\n".join(local.read_text() for _,local in paths)
                 if main not in contents or security not in contents:
                     raise RuntimeError("No default Debian source URLs found; refusing unverified mirror preparation")
+            # Minimal Debian tooling images may not ship ca-certificates.
+            # Use only the trusted runner's OS CA bundle, never the target's
+            # trust store, and only in this disposable tooling image.
+            ca_config=""
+            if helper:
+                has_ca=apt.container(image,'if test -s /etc/ssl/certs/ca-certificates.crt; then echo present; else echo missing; fi').strip()
+                if has_ca=="missing":
+                    bundle=Path("/etc/ssl/certs/ca-certificates.crt")
+                    data=bundle.read_bytes()
+                    if not data or len(data)>4*1024*1024 or b"-----BEGIN CERTIFICATE-----" not in data:
+                        raise RuntimeError("COPA_APT: Trusted runner CA bundle unavailable")
+                    local_ca=root/"appsec-helper-ca.pem"
+                    local_ca.write_bytes(data)
+                    local_ca.chmod(0o644)
+                    apt.run(["docker","cp",str(local_ca),cid+":/etc/apt/appsec-helper-ca.pem"])
+                    ca_config='Acquire::https::CaInfo "/etc/apt/appsec-helper-ca.pem";\n'
+                    print("COPA_HELPER_CA using trusted runner CA bundle for disposable helper",flush=True)
+                elif has_ca!="present":
+                    raise RuntimeError("COPA_APT: Unable to verify helper CA bundle")
+                else:
+                    print("COPA_HELPER_CA existing certificate bundle present",flush=True)
             config=root/"99-appsec-repository-check"
-            config.write_text('APT::Update::Error-Mode "any";\nAcquire::Check-Valid-Until "true";\nAcquire::AllowInsecureRepositories "false";\nAPT::Get::AllowUnauthenticated "false";\nAcquire::https::Verify-Peer "true";\nAcquire::https::Verify-Host "true";\nAcquire::Retries "1";\nAcquire::https::Timeout "30";\nAcquire::http::Timeout "30";\n')
+            config.write_text('APT::Update::Error-Mode "any";\nAcquire::Check-Valid-Until "true";\nAcquire::AllowInsecureRepositories "false";\nAPT::Get::AllowUnauthenticated "false";\nAcquire::https::Verify-Peer "true";\nAcquire::https::Verify-Host "true";\nAcquire::Retries "1";\nAcquire::https::Timeout "30";\nAcquire::http::Timeout "30";\n'+ca_config)
             apt.run(["docker","cp",str(config),cid+":/etc/apt/apt.conf.d/99-appsec-repository-check"])
             apt.run(["docker","commit",cid,ref])
         staged_id=scan_evidence.local_image_id(ref)

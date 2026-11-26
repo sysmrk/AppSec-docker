@@ -31,6 +31,7 @@ _CATALOG = [
     ("TRIVY_DB", r"(vulnerability db|trivy db|db update|could not download.*db|database.*download)", "Vulnerability database unavailable", "Check the Trivy cache, trusted registry mirrors and egress connectivity.", True),
     ("REGISTRY_NETWORK", r"(no such host|temporary failure in name resolution|network is unreachable|i/o timeout|tls handshake timeout|certificate signed by unknown authority)", "Registry or network connection failed", "Check DNS, proxy, outbound firewall and trusted TLS certificates.", True),
     ("NO_DISK", r"(no space left on device|disk quota exceeded|out of space)", "Scanner disk space exhausted", "Ask an administrator to check Docker disk usage and artifact retention.", True),
+    ("COPA_APT", r"^COPA_APT:", "APT update failed inside Copa", "Check the reported APT reason, approved mirror, DNS and trusted certificates inside BuildKit. Do not disable signature or TLS verification.", True),
     ("BUILDKIT", r"(buildkit|failed to solve|copa patch)", "Image patch executor failed", "Check the isolated BuildKit container, Copa logs and package compatibility.", False),
     ("PERMISSION", r"(permission denied|insufficient role|project access denied)", "Permission denied", "Ask a Project owner or administrator to review your access.", False),
     ("TIMEOUT", r"(timed out|timeout expired|deadline exceeded)", "Operation timed out", "Inspect network and worker capacity; retry a scan only if no publication occurred.", True),
@@ -79,3 +80,23 @@ def safe_detail(value: Any) -> str:
     raw = re.sub(r"(?i)([?&](?:token|key|signature|password|secret)=)[^&\s]+", r"\1[REDACTED]", raw)
     lines = [re.sub(r"[\x00-\x1f]", " ", x).strip() for x in raw.splitlines() if x.strip()]
     return (lines[-1] if lines else "No scanner diagnostic was returned")[:350]
+
+def copa_apt_diagnostic(stderr):
+    """Bounded safe category, not arbitrary subprocess output or URL credentials."""
+    raw=str(stderr or "")
+    if not re.search(r"apt-get|Updating package database",raw,re.I):
+        return None
+    patterns=(
+        (r"no system certificates|no certificates available|certificate verification failed|certificate.*not trusted|unable to get local issuer|certificate signed by unknown authority|certificate verify failed|could not load certificates","TLS certificate verification or missing CA bundle"),
+        (r"temporary failure resolving|could not resolve|name or service not known","DNS resolution failed inside BuildKit"),
+        (r"NO_PUBKEY|EXPKEYSIG|BADSIG|not signed|signature.*(?:invalid|verification)|hash sum mismatch|release file.*(?:expired|not valid|does not have)","APT repository signature, hash or Release metadata validation failed"),
+        (r"403\s+Forbidden|401\s+Unauthorized|404\s+Not Found|429\s+Too Many","APT repository returned HTTP authorization, missing-resource or rate-limit error"),
+        (r"connection timed out|connection refused|network is unreachable|could not connect|TLS connection was non-properly terminated|handshake.*failed","APT repository connection or TLS handshake failed inside BuildKit"),
+        (r"no space left on device","Insufficient disk space during APT update"),
+    )
+    for pattern,message in patterns:
+        if re.search(pattern,raw,re.I):
+            return message
+    if re.search(r"apt-get.*update.*(?:exit code:?\s*100|exit status 100)",raw,re.I):
+        return "APT returned exit code 100; exact cause not present in captured BuildKit output"
+    return None

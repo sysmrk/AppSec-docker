@@ -134,7 +134,7 @@ def policy_environment(source: str, report_path: Path, *, extra_groups=(), local
             chosen = image_sources.pull_ordered(image_sources.ordered_candidates(sources, group))
             if local_mirror and local_source and str((report.get("Metadata") or {}).get("OS",{}).get("Family"))=="debian":
                 from . import copa_mirrors, scan_evidence
-                helper=copa_mirrors.prepare_sources(scan_evidence.local_image_id(chosen),local_mirror)
+                helper=copa_mirrors.prepare_sources(scan_evidence.local_image_id(chosen),local_mirror,helper=True)
                 staged_helpers.append(helper["image_ref"])
                 if not transport:
                     raise RuntimeError("PATCH_SOURCE_POLICY: Missing private staging transport")
