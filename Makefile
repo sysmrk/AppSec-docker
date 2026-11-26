@@ -25,7 +25,7 @@ help:
 		'  make harbor-login     Login Docker to local Harbor' \
 		'  make harbor-status    Show Harbor containers' \
 		'  make report-metabase  Provision Metabase dashboards' \
-		'  make trivy-db         Update Trivy vulnerability database' \
+		'  make v4-benchmark-help  Show isolated V4 lab usage' \
 		'  make mcp-up           Start optional read-only MCP HTTP service' \
 		'  make mcp-down         Stop optional MCP service only' \
 		'  make mcp-logs         Follow optional MCP logs' \

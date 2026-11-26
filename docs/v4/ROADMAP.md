@@ -13,7 +13,7 @@ V4 starts from V3 commit 80e0d327493d. No stable release is implied. Keep the ex
 
 ## Run the first benchmark
 
-Use a dedicated Linux/WSL Docker daemon with trusted images only. Existing Docker image and cache can be reused after stopping every DB writer. No AppSec stack, database, credentials, or new service is required. Need Python 3.12+, Docker Engine and default Buildx builder for native/debloat. The lab requires Debian 12/13 nginx linux/amd64, root-default config, curl in image for HTTP smoke, and explicit approved APT mirrors. No automatic package removal authorization.
+Use a dedicated Linux/WSL Docker daemon with trusted images only. Existing Docker image and cache can be reused after stopping every DB writer. No AppSec stack, database, credentials, or new service is required. Need Python 3.10+ (Ubuntu 22.04 supported by the host-side lab), Docker Engine and default Buildx builder for native/debloat. The lab requires Debian 12/13 nginx linux/amd64, root-default config, curl in image for HTTP smoke, and explicit approved APT mirrors. No automatic package removal authorization.
 
 Before switching from V3, stop the maintenance updater if it exists (use the old Compose file), then stop the V3 workers; never delete volumes. Check for remaining updater containers using:
 
@@ -42,3 +42,5 @@ First acceptance: a known-fix positive control and a limited-fix control; identi
 ## Deferred cleanup
 
 Existing AI/MCP, language lab, reporting and migrations are retained for compatibility, not activated by this lab. Existing live V3 workflows remain legacy until replacement; do not call them V4 remediation. Multi-worker DB locking, legacy report wording and unified runtime orchestration require separate work after benchmark evidence. No global Docker prune, database purge, or history rewrite.
+
+Lab diagnostics include bounded, redacted error text and the frozen snapshot provenance is written before the first scan. No external Python package installation is needed for the host-side lab.

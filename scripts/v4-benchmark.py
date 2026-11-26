@@ -8,6 +8,7 @@ import argparse
 from datetime import datetime,timezone
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -19,11 +20,18 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]/"runner"))
 from appsecctl import benchmark as bench, apt_optimization as apt, native_apt, scan_evidence, remediation_audit as audit, candidate_review, v4_validation
 
 
+def parse_timestamp(value):
+    # Trivy writes RFC3339 with up to nine fractional digits. Python 3.10
+    # accepts only three/six, so normalize explicitly to microseconds.
+    value=re.sub(r"(\.\d{6})\d+(?=Z|[+-]\d{2}:\d{2}$)",r"\1",value)
+    return datetime.fromisoformat(value.replace("Z","+00:00"))
+
+
 def database_state(cache, now=None):
     data=json.loads((cache/"db/metadata.json").read_text())
     now=now or datetime.now(timezone.utc)
-    updated=datetime.fromisoformat(data["UpdatedAt"].replace("Z","+00:00"))
-    due=datetime.fromisoformat(data["NextUpdate"].replace("Z","+00:00"))
+    updated=parse_timestamp(data["UpdatedAt"])
+    due=parse_timestamp(data["NextUpdate"])
     if data.get("Version")!=2 or not updated<=now or not updated<due:
         raise ValueError("Invalid Trivy DB metadata")
     return {"updated_at":data["UpdatedAt"],"next_update":data["NextUpdate"],
@@ -80,6 +88,9 @@ def main(argv=None):
         state=database_state(frozen)
         if state["age_hours"]>72 or (not state["fresh"] and not args.allow_overdue_db):
             raise RuntimeError("Frozen DB no longer within permitted age")
+        # Save provenance immediately, including failed/incomplete lab runs.
+        bench.write_json(out/"snapshot.json",{"scanner_image_id":scanner,"original_image_id":image,
+                         "database_files_sha256":manifest,"database_state":state})
         t=time.monotonic()
         original=bench.scan_one(args.original,image,scanner,frozen,manifest,out,"original",args.timeout)
         raw=original["raw_report"]
@@ -101,9 +112,11 @@ def main(argv=None):
                 candidates.append({**record,"engine":name,"build_seconds":round(time.monotonic()-t,3)})
             except (ValueError,RuntimeError,OSError,subprocess.SubprocessError) as exc:
                 # Do not copy raw subprocess output or command lines to public evidence.
+                from appsecctl.errors import safe_detail
+                detail=safe_detail(exc.stderr if isinstance(exc,subprocess.CalledProcessError) else str(exc))
                 results.append({"engine":name,"status":"failed","error_type":type(exc).__name__,
-                                "seconds":round(time.monotonic()-t,3)})
-                print(name+" failed: "+type(exc).__name__,file=sys.stderr)
+                                "diagnostic":detail,"seconds":round(time.monotonic()-t,3)})
+                print(name+" failed: "+detail,file=sys.stderr)
         def native():
             plan=native_apt.plan(image,raw,args.mirror)
             bench.write_json(out/"native-apt-plan.json",plan)

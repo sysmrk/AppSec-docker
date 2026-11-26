@@ -119,8 +119,12 @@ def download(image,mirror,updates,dest):
         # dpkg-deb; never trust file name alone. The install result is checked too.
         hashes={}
         for p in files:
+            # Stream hashing also works with Python 3.10 on Ubuntu 22.04.
+            digest=hashlib.sha256()
             with p.open("rb") as stream:
-                hashes[p.name]=hashlib.file_digest(stream,"sha256").hexdigest()
+                for block in iter(lambda:stream.read(1024*1024),b""):
+                    digest.update(block)
+            hashes[p.name]=digest.hexdigest()
         return hashes
     finally:
         subprocess.run(["docker","rm","-f",container],check=False,timeout=30,

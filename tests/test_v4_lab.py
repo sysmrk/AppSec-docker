@@ -33,3 +33,7 @@ class V4LabTests(unittest.TestCase):
         root=Path(__file__).resolve().parents[1]
         self.assertNotIn("  trivy-db-updater:",(root/"docker-compose.yaml").read_text())
         self.assertIn("develop/v4",(root/".github/workflows/tag-main-changes.yml").read_text())
+
+    def test_rfc3339_nanoseconds_are_accepted(self):
+        self.assertEqual(bench.parse_timestamp("2026-11-24T13:06:50.432258513Z").microsecond,432258)
+        self.assertEqual(bench.parse_timestamp("2026-11-24T13:06:50.432258513+00:00").microsecond,432258)
