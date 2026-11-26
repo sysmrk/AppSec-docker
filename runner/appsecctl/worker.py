@@ -60,6 +60,8 @@ def main() -> int:
                             if workflow_control.requested(conn,"optimization",str(task["id"])):
                                 status="canceled"
                             status=optimization.finish(conn,task,status,plan,result)
+                        if status=="completed" and result and result.get("comparison")=="frozen_db":
+                            job_watch.emit("verified",result["candidate_findings"])
                         job_watch.emit("auto_approved" if status=="build_queued" else "approval_wait" if status=="awaiting_approval" else
                                        "stopped" if status=="canceled" else "failed" if status=="failed" else "success")
                     except Exception as exc:

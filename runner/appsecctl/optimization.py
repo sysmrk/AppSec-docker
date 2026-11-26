@@ -122,7 +122,7 @@ def decide(conn,wid,task_id,user,action,digest):
 def list_runs(conn,wid,user):
     if not mw.get_workflow(conn,wid,user):
         raise LookupError("Workflow not found")
-    rows=conn.execute("""SELECT id,stage,operation,state,roots,mirrors,plan,result,error_code,created_at,updated_at
+    rows=conn.execute("""SELECT id,stage,operation,state,roots,mirrors,plan,(result - 'frozen_reports') AS result,error_code,created_at,updated_at
                         FROM optimization_runs WHERE workflow_id=%s ORDER BY created_at DESC LIMIT 20""",(wid,)).fetchall()
     # Inventory in the plan is needed by the worker, not the browser.
     return [{**dict(row),"plan":{k:v for k,v in row["plan"].items() if k!="inventory"} if row["plan"] else None} for row in rows]
@@ -322,8 +322,9 @@ def execute(task):
     unknown=sum(c["coverage_unknown"] or 0 for c in comparison["cohorts"].values())
     result={**candidate,"rescan_required":False,"comparison":"frozen_db",
             "database_sha256":hashes,"scanner_image_id":scanner,
-            "base_severity":before,"candidate_severity":after,"introduced":comparison["introduced"],
-            "coverage_unknown":unknown,"base_findings":comparison["original_findings"],
+            "base_severity":before,"candidate_severity":after,"original_severity":candidate_review.counts(reports[0]["raw_report"]),
+            "frozen_reports":reports,"introduced":comparison["introduced"],
+            "coverage_unknown":unknown,"overall_coverage_unknown":sum(c["coverage_unknown"] or 0 for c in overall["cohorts"].values()),"base_findings":comparison["original_findings"],
             "candidate_findings":comparison["patched_findings"],
             "original_findings":overall["original_findings"],"overall_findings":overall["patched_findings"],
             "overall_introduced":overall["introduced"],

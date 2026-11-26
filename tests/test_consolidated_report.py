@@ -77,3 +77,18 @@ class UnifiedFindingTests(unittest.TestCase):
         p["patches"] = []
         text = render("pipeline", p)
         self.assertNotIn('finding-state fixed', text)
+
+
+class OptimizationReportTests(unittest.TestCase):
+    def test_historical_aggregate_result_visible_without_copa(self):
+        payload={"pipeline":{"requested_image":"nginx","status":"success"},
+                 "optimization":{"state":"completed","stage":"original","result":{
+                    "comparison":"frozen_db","original_findings":452,"overall_findings":300,
+                    "base_severity":{"HIGH":10},"candidate_severity":{"HIGH":4},
+                    "overall_introduced":0,"coverage_unknown":0,"candidate":"local:optimized"}}}
+        html=render("pipeline",payload)
+        self.assertIn("452 → 300",html)
+        self.assertIn("Final optimized candidate",html)
+        self.assertIn("individual candidate findings were not retained",html)
+        self.assertIn("publication not authorized",html)
+        self.assertNotIn("Recommended for publication</strong>",html)

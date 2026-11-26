@@ -198,8 +198,10 @@ def pipeline_details(conn, pipeline_id: str) -> dict[str, Any]:
         if item.get("error_message"):
             item["error"] = ui_error(item["error_message"], "scan")
             item["error_message"] = item["error"]["title"]
+    from .db import optimization_summary
     return {
         "pipeline": pipelines[0], "scans": scans, "patches": patches,
+        "optimization": optimization_summary(conn, pid),
         "diffs": diffs, "policies": policies, "reports": reports,
         "artifacts": artifacts,
     }

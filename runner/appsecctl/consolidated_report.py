@@ -232,6 +232,36 @@ def plan_section(payload, verified_pair):
             + '</tbody></table></div></section>')
 
 
+def optimization_section(payload):
+    run=payload.get("optimization") or {}
+    result=run.get("result") or {}
+    if run.get("state")!="completed" or result.get("comparison")!="frozen_db":
+        return ""
+    before=result.get("original_severity") or (result.get("base_severity") if run.get("stage")=="original" else None)
+    after=result.get("candidate_severity") or {}
+    a,b=result.get("original_findings"),result.get("overall_findings")
+    rows="".join("<tr><td>"+e(s)+"</td><td>"+e((before or {}).get(s))+"</td><td>"+e(after.get(s))+"</td></tr>"
+                 for s in ("CRITICAL","HIGH","MEDIUM","LOW","UNKNOWN"))
+    html=('<section><h2>Final optimized candidate — frozen DB comparison</h2>'
+          '<p>Original → final findings (all severities): <strong>'+e(a)+' → '+e(b)+'</strong></p>'
+          '<p>Net reduction: '+e(a-b if isinstance(a,int) and isinstance(b,int) else None)+
+          ' · Introduced: '+e(result.get("overall_introduced"))+
+          ' · Unknown coverage: '+e(result.get("overall_coverage_unknown",result.get("coverage_unknown") if run.get("stage")=="original" else None))+'</p>'
+          '<p>Local image: '+e(result.get("candidate"))+' · Image ID: '+e(result.get("candidate_image_id"))+'</p>'
+          '<p>Security comparison blockers: '+e(", ".join(result.get("comparison_blockers") or []) or "None recorded")+
+          '. Functional compatibility not verified; publication not authorized.</p>'
+          '<table><thead><tr><th>Severity</th><th>Original</th><th>Final optimized</th></tr></thead><tbody>'+rows+'</tbody></table>')
+    raw=result.get("frozen_reports") or []
+    if len(raw)>=2:
+        final=findings(raw[-1])
+        html+='<details><summary>Final candidate findings (all severities)</summary><table><thead><tr><th>CVE / ID</th><th>Severity</th><th>Package</th><th>Installed</th><th>Vendor fix</th></tr></thead><tbody>'
+        html+="".join("<tr>"+"".join("<td>"+e(v.get(k))+"</td>" for k in ("cve","severity","package","installed","fixed"))+"</tr>" for v in final)
+        html+='</tbody></table></details>'
+    else:
+        html+='<p class="muted">Historical candidate: aggregate scan evidence is available; individual candidate findings were not retained. A new scan is required for the full list.</p>'
+    return html+'</section>'
+
+
 def render(resource_id: str, payload: dict[str, Any]) -> str:
     p = dict(payload.get("pipeline") or {})
     scans = [dict(x) for x in (payload.get("scans") or [])]
@@ -332,7 +362,7 @@ def render(resource_id: str, payload: dict[str, Any]) -> str:
         publication += '<p>Published image: <strong>' + e(patch.get("patched_image_ref")) + '</strong><br>Registry manifest digest: ' + e(patch.get("published_digest") or "not recorded (legacy)") + '<br>Published at: ' + e(patch.get("published_at")) + ' UTC</p>'
     publication += '<p class="muted">' + ("Scope: OS and application dependencies, all fix statuses. Absence of a finding is not proof of remediation or security." if verified_pair else "Legacy or incomplete scan evidence: comparison and recommendation are not verified. Run a new scan.") + '</p></section>'
     report = (
-        banner + publication +
+        banner + optimization_section(payload) + publication +
         '<div class="summary">' + cards + "</div>" +
         '<section><div class="section-title"><h2>What changed?</h2><p>Same image pipeline · initial scan vs patched rescan</p></div>'
         + bars(scans, original, patched) + changes + comparison_warning +

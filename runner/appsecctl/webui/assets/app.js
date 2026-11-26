@@ -302,7 +302,40 @@
   }
 
   /* One data-driven panel for both Results and My Workflows. No fabricated scan totals. */
+  function renderOptimizedSummary(root, d) {
+    const run=d?.optimization, r=run?.result;
+    if(run?.state!=="completed"||r?.comparison!=="frozen_db")return false;
+    const block=section(root,"Final result · Original vs optimized image");
+    block.classList.add("unified-summary");
+    const before=r.original_severity||(run.stage==="original"?r.base_severity:null);
+    const after=r.candidate_severity||{};
+    showMetrics(block,[["Initial findings (all)",r.original_findings],["Final findings (all)",r.overall_findings],
+      ["Net reduction",r.original_findings!=null&&r.overall_findings!=null?r.original_findings-r.overall_findings:null],
+      ["Introduced",r.overall_introduced]]);
+    const rows=node("div","severity-graph"), palette={CRITICAL:"#d74466",HIGH:"#ec8c43",MEDIUM:"#d6aa38",LOW:"#2aa88a",UNKNOWN:"#8894a8"};
+    const keys=Object.keys(palette);
+    const max=Math.max(1,...keys.flatMap(k=>[Number(before?.[k]||0),Number(after[k]||0)]));
+    for(const k of keys){
+      const row=node("div","severity-graph-row"),chart=node("div","severity-chart"),values=node("div","severity-values");
+      row.appendChild(node("strong","severity-name",k));
+      for(const [phase,n] of [["before",before?.[k]],["after",after[k]]]){
+        const lane=node("div","severity-track"),bar=node("div","severity-fill "+phase);
+        bar.style.width=(n?Math.max(2,n/max*100):0)+"%";bar.style.backgroundColor=palette[k];lane.appendChild(bar);chart.appendChild(lane);
+      }
+      values.appendChild(node("strong","",text(before?.[k])));values.appendChild(node("span","","→"));values.appendChild(node("strong","",text(after[k])));
+      row.appendChild(chart);row.appendChild(values);rows.appendChild(row);
+    }
+    block.appendChild(node("p","info-note","Top: original · bottom: optimized candidate. Both scanned using the same frozen Trivy database. All severities included."));
+    block.appendChild(rows);
+    block.appendChild(node("p","wide-text","Final local image: "+text(r.candidate)+" · "+text(r.candidate_image_id)));
+    block.appendChild(node("p","info-note","Security comparison blockers: "+((r.comparison_blockers||[]).join(", ")||"None recorded")+". Functional tests not verified; registry publication not authorized."));
+    const html=d?.reports?.find(x=>x.format==="html");
+    if(html){const a=node("a","primary report-main-link","Open consolidated report ↗");a.href=prefix+"/api/reports/"+encodeURIComponent(html.id)+"/download";a.target="_blank";a.rel="noopener";block.appendChild(a);}
+    return true;
+  }
+
   function renderUnifiedSummary(root, d) {
+    const optimized=renderOptimizedSummary(root,d);
     const scans = d?.scans || [];
     const originalRecord = [...scans].reverse().find(s => s.phase === "original");
     const finalRecord = [...scans].reverse().find(s => s.phase === "patched");
@@ -312,7 +345,7 @@
       old.evidence.image_id !== after.evidence.image_id && old.evidence.scope === after.evidence.scope);
     const diff = verified ? d?.diffs?.find(x=>String(x.original_scan_id)===String(old.id)&&String(x.patched_scan_id)===String(after.id)) : null;
     const recommendation = verified && diff ? d?.policies?.find(p=>String(p.scan_id)===String(after.id)&&["recommended","not_recommended"].includes(p.status)) : null;
-    const block = section(root, "Initial scan vs post-fix scan");
+    const block = section(root, optimized?"Copa patch evidence (separate from optimized candidate)":"Initial scan vs post-fix scan");
     block.classList.add("unified-summary");
     const phases = node("div", "scan-phases");
     [["01 · INITIAL SCAN", old], ["02 · AFTER PATCH", after]].forEach(([name, scan], i) => {
@@ -365,7 +398,7 @@
       }
       block.appendChild(changes);
     } else {
-      block.appendChild(node("p","info-note","No post-fix comparison yet. This remains pending until an actual patched rescan completes."));
+      block.appendChild(node("p","info-note",optimized?"No separate Copa rescan was recorded. The final optimized comparison is shown above.":"No post-fix comparison yet. This remains pending until an actual patched rescan completes."));
     }
     const advisory=node("div","recommend-banner "+
       (recommendation?.status==="recommended"?"good":recommendation?.status==="not_recommended"?"caution":"pending"));
@@ -496,9 +529,9 @@
 
   function stepItem(container, name, detail, status) {
     const li = node("li", "manual-step " + status);
-    const dot = node("span", "step-dot", status === "done" ? "✓" : status === "running" ? "…" : "○");
+    const dot = node("span", "step-dot", status === "done" ? "✓" : status === "running" ? "…" : status === "skipped" ? "—" : status === "failed" ? "!" : "○");
     const body = node("div");
-    body.appendChild(node("strong", "", name));
+    body.appendChild(node("strong", "", name+(status==="skipped"?" · Skipped":"")));
     body.appendChild(node("p", "muted small-text", detail));
     li.appendChild(dot);
     li.appendChild(body);
@@ -893,11 +926,14 @@
       stepItem(ol, "1. Queue and scan image", "Trivy inspects the actual image and saves vulnerability findings.", scanFailed ? "failed" : w.scan_job_status === "success" ? "done" : w.scan_job_status === "running" ? "running" : "waiting");
       stepItem(ol, "2. Generate SBOM", "Generate a CycloneDX inventory of the original image's packages and dependencies.", sbomReady ? "done" : scanFailed ? "failed" : w.scan_job_status === "running" ? "running" : "waiting");
       stepItem(ol, "3. Review original findings", w.unattended?"Local actions authorized before Start.":"Human approval is needed before local patching.", w.decision || (w.unattended&&w.optimization_active) ? "done" : w.state === "awaiting_approval" ? "running" : "waiting");
-      stepItem(ol, "4. Prepare local patched image", "Copa uses BuildKit but does not push to the registry.", w.decision === "finish" ? "skipped" : w.patch_job_status === "success" ? "done" : w.patch_job_status === "failed" ? "failed" : w.decision === "approve_patch" ? "running" : "waiting");
-      stepItem(ol, "5. Rescan & compare", "Trivy rescans the local patch and provides an advisory recommendation.", w.decision === "finish" ? "skipped" : diffs.length > 0 && patched ? "done" : w.decision === "approve_patch" ? "running" : "waiting");
-      stepItem(ol, "6. Separate publication approval", w.unattended?(w.auto_destination?"Registry output authorized before Start; publish only on passing recommendation.":"Retain local results automatically."):"Review the new findings and explicitly approve registry Push, or finish without publishing.", w.publish_decision ? "done" : ["awaiting_publication","publication_blocked"].includes(w.state) ? "running" : w.decision === "finish" ? "skipped" : "waiting");
-      stepItem(ol, "7. Publish & final report", "Only the verified rescanned image can be published after explicit approval; policy is advisory.", ["published","completed","completed_without_publish"].includes(w.state) ? "done" : w.state === "publishing" ? "running" : "waiting");
-      if(w.execution_mode==="auto_optimize")stepItem(ol,"8. Optimize and verify local candidate","Compare the exact base and candidate using the same frozen vulnerability DB.",w.optimization_active?"running":w.state==="failed"?"failed":w.auto_step&&["completed","completed_without_publish"].includes(w.state)?"done":"waiting");
+      const terminal=["published","completed","completed_without_publish","failed","patch_failed","publish_failed","stopped","canceled"].includes(w.state);
+      const noCopa=!w.patch_job_id&&(terminal||w.optimization_active);
+      const reason=w.execution_mode==="scan_only"?"Scan-only route selected.":data.patch_eligibility?.code==="NO_FIXABLE_OS"?"No OS findings have a reported FixedVersion; targeted Copa was skipped.":"No separate Copa job was executed.";
+      stepItem(ol,"4. Copa targeted patch",noCopa?reason:"Build a local OS patch using Copa / BuildKit.",noCopa?"skipped":w.patch_job_status==="success"?"done":w.patch_job_status==="failed"?"failed":w.decision==="approve_patch"?"running":"waiting");
+      stepItem(ol,"5. Copa rescan",noCopa?"No Copa image to rescan. Optimization has its own verified rescan.":"Trivy scans the actual Copa output.",noCopa?"skipped":patched?.status==="success"&&diffs.length?"done":w.patch_job_status==="failed"?"failed":w.decision==="approve_patch"?"running":"waiting");
+      if(w.execution_mode==="auto_optimize")stepItem(ol,"6. Optimize and rescan candidate","Compare the original and final candidate with the same frozen vulnerability DB.",pipeline?.optimization?.state==="completed"?"done":w.optimization_active?"running":pipeline?.optimization?.state==="failed"?"failed":terminal?"skipped":"waiting");
+      stepItem(ol,w.execution_mode==="auto_optimize"?"7. Registry publication":"6. Registry publication",w.unattended&&!w.auto_destination?"Local output selected before Start; registry push not requested.":"Publish only with applicable authorization and verified evidence.",w.state==="published"?"done":w.state==="publishing"?"running":w.unattended&&!w.auto_destination||noCopa?"skipped":w.state==="publish_failed"?"failed":w.publish_decision==="skip_publish"?"skipped":"waiting");
+      stepItem(ol,w.execution_mode==="auto_optimize"?"8. Final report":"7. Final report","Display original and actual final candidate findings; no invented patch result.",["published","completed","completed_without_publish"].includes(w.state)?"done":terminal?"failed":"waiting");
       sec.appendChild(ol);
       if (pipeline?.pipeline) {
         renderUnifiedSummary(root, pipeline);

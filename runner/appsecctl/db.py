@@ -1328,6 +1328,18 @@ def mark_scheduled_enqueued(conn: psycopg.Connection, schedule_id: str) -> None:
     )
 
 
+def optimization_summary(conn, pipeline_id, *, include_raw=False):
+    """The exact automatic candidate, never a Copa patch or publication evidence."""
+    raw = "o.result" if include_raw else "(o.result - 'frozen_reports')"
+    row = conn.execute("""SELECT o.id,o.stage,o.operation,o.state,o.updated_at,o.error_code,
+                         """ + raw + """ AS result
+                         FROM manual_workflows w JOIN pipeline_jobs j ON j.id=w.scan_job_id
+                         JOIN optimization_runs o ON o.workflow_id=w.id AND o.id::text=w.auto_step::text
+                         WHERE j.pipeline_id=%s
+                         ORDER BY w.created_at DESC LIMIT 1""",(pipeline_id,)).fetchone()
+    return dict(row) if row else None
+
+
 def pipeline_summary(conn: psycopg.Connection, pipeline_id: str) -> dict[str, Any]:
     pipeline = conn.execute(
         "SELECT * FROM pipeline_runs WHERE id = %s",
@@ -1392,6 +1404,7 @@ def pipeline_summary(conn: psycopg.Connection, pipeline_id: str) -> dict[str, An
     return {
         "pipeline": pipeline,
         "approval": dict(approval) if approval else {},
+        "optimization": optimization_summary(conn, pipeline_id, include_raw=True),
         "scans": scans,
         "patches": patches,
         "diffs": diffs,

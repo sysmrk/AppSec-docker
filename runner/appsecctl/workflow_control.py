@@ -76,10 +76,18 @@ def advance(conn,job_id):
         if mode=="scan_only":
             mw.decide(conn,wid,actor,"finish")
             return
-        if os.getenv("APPSEC_PATCH_ENABLED","false").lower() in ("1","true","yes") and scan_evidence.original_patch_eligibility(conn,workflow["pipeline_id"])["eligible"]:
+        eligibility=scan_evidence.original_patch_eligibility(conn,workflow["pipeline_id"])
+        if eligibility["code"]=="SCAN_EVIDENCE_INVALID":
+            raise RuntimeError("Verified original scan unavailable; cannot determine Copa eligibility")
+        from . import job_watch
+        job_watch.emit("copa_eligible",eligibility["os_fixable"])
+        if os.getenv("APPSEC_PATCH_ENABLED","false").lower() in ("1","true","yes") and eligibility["eligible"]:
             mw.decide(conn,wid,actor,"approve_patch")
             db.insert_audit(conn,str(actor["id"]),"manual.auto_patch","manual_workflow",wid,{})
             return
+        if eligibility["eligible"]:
+            raise RuntimeError("Copa patching is disabled")
+        job_watch.emit("copa_skipped")
         if mode=="auto_patch" and unattended:
             mw.decide(conn,wid,actor,"finish")
             db.insert_audit(conn,str(actor["id"]),"manual.auto_no_eligible_patch","manual_workflow",wid,{})

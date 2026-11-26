@@ -24,6 +24,8 @@ MESSAGES={
     "layer_cached":"Registry layer already present",
     "scan":"Vulnerability scan started", "sbom":"SBOM generation started",
     "db":"Vulnerability database preparation started",
+    "copa_eligible":"OS findings with a known fix eligible for targeted Copa",
+    "copa_skipped":"Copa targeted patch skipped: no OS findings with a reported fix",
     "patch":"Copa / BuildKit patch started", "publish":"Registry publication started",
     "git":"Repository clone started", "gitleaks":"Redacted secret scanner started",
     "verified":"Verified scan findings", "done":"Tool command completed",
@@ -46,7 +48,7 @@ MESSAGES={
     "apt_simulate":"Simulating package changes",
     "apt_download":"Downloading approved version-pinned archives",
 }
-NUMERIC={"elapsed","verified","trivy_packages","trivy_languages","buildkit_step","apt_upgrades","apt_removals"}
+NUMERIC={"copa_eligible","elapsed","verified","trivy_packages","trivy_languages","buildkit_step","apt_upgrades","apt_removals"}
 
 
 def checkpoint():
