@@ -155,7 +155,7 @@ def build(plan_data,report,approved,authorized_mirrors):
             hashes=download(image,plan_data["mirror"],plan_data["updates"],dest)
             # BuildKit bind mount keeps downloaded archives out of the final
             # layer. No network and no downloads while installing.
-            # Validate every .deb name/version/arch before invoking apt.
+            # Validate every .deb name/version/arch before invoking dpkg.
             checks=[]
             for name,row in sorted(plan_data["updates"].items()):
                 bare=name.split(":")[0]
@@ -174,8 +174,14 @@ def build(plan_data,report,approved,authorized_mirrors):
                 "a=$(dpkg-deb -f \"$f\" Architecture); test \"$a\" = amd64 || test \"$a\" = all; "
                 "printf '%s=%s\\n' \"$p\" \"$v\"; done | sort | paste -sd ' '); "
                 "test \"$actual\" = '"+expected+"'; "
-                "apt-get -y --no-download --no-remove --only-upgrade install /tmp/appsec-debs/*.deb; "
-                "test -z \"$(dpkg --audit)\"; nginx -t\n")
+                "audit_before=$(dpkg --audit); test -z \"$audit_before\"; "
+                # APT --no-download with local archives can fail on Debian 13
+                # (relative archive filename). dpkg consumes the verified
+                # absolute paths directly, cannot resolve/download extra
+                # packages, and is never invoked with force flags.
+                "dpkg --install /tmp/appsec-debs/*.deb; "
+                "audit_after=$(dpkg --audit); test -z \"$audit_after\"; "
+                "apt-get check; nginx -t\n")
             (root/"Dockerfile").write_text(dockerfile)
             apt.run(["docker","buildx","build","--builder","default","--progress","plain","--load",
                      "--pull=false","--network=none","--no-cache","--build-arg","BASE_IMAGE="+tag,

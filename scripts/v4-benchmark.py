@@ -113,7 +113,16 @@ def main(argv=None):
             except (ValueError,RuntimeError,OSError,subprocess.SubprocessError) as exc:
                 # Do not copy raw subprocess output or command lines to public evidence.
                 from appsecctl.errors import safe_detail
-                detail=safe_detail(exc.stderr if isinstance(exc,subprocess.CalledProcessError) else str(exc))
+                raw=exc.stderr if isinstance(exc,(subprocess.CalledProcessError,subprocess.TimeoutExpired)) else str(exc)
+                if isinstance(raw,bytes):
+                    raw=raw.decode(errors="replace")
+                # Prefer a concrete package-manager diagnostic over the final
+                # BuildKit wrapper; strip credentials using existing helper.
+                lines=[line for line in (raw or "").splitlines() if re.search(
+                    r"(?:^|\s)(?:E:|dpkg: error:|dpkg: error processing|dependency problems)",line,re.I)]
+                detail=safe_detail(lines[-1] if lines else raw)
+                if not raw:
+                    detail="Command failed; consult the preceding local build output"
                 results.append({"engine":name,"status":"failed","error_type":type(exc).__name__,
                                 "diagnostic":detail,"seconds":round(time.monotonic()-t,3)})
                 print(name+" failed: "+detail,file=sys.stderr)

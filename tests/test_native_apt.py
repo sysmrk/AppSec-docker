@@ -18,3 +18,11 @@ class NativeUpgradeTests(unittest.TestCase):
         self.assertEqual(package_versions.version({"Version":"1.5.7+dfsg","Release":"1+deb13u1"},"debian"),"1.5.7+dfsg-1+deb13u1")
         self.assertEqual(package_versions.version({"Version":"2.41.5","Release":"0+deb13u1","Epoch":1},"debian"),"1:2.41.5-0+deb13u1")
         self.assertEqual(package_versions.version({"Version":"2.0","Release":"9"},"rpm"),"2.0")
+
+    def test_host_streamed_failure_retains_stderr(self):
+        import subprocess
+        import sys
+        from appsecctl import apt_optimization as apt
+        with self.assertRaises(subprocess.CalledProcessError) as result:
+            apt.run([sys.executable,"-c","import sys; print('E: fixture failure',file=sys.stderr); sys.exit(100)"],capture=False)
+        self.assertIn("E: fixture failure",result.exception.stderr)

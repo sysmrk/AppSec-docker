@@ -13,6 +13,8 @@ import json
 import os
 from pathlib import Path
 import re
+import selectors
+import time
 import subprocess
 import sys
 import tempfile
@@ -41,9 +43,36 @@ def run(args, timeout=180, *, capture=True):
         result=watch.capture_output(args,timeout=timeout) if capture else watch.capture_stderr(args,timeout=timeout)
         watch.checkpoint()
         return result
-    return subprocess.run(args, check=True, text=True, timeout=timeout,
-                          stdout=subprocess.PIPE if capture else sys.stderr,
-                          stderr=subprocess.PIPE if capture else sys.stderr).stdout
+    if capture:
+        return subprocess.run(args,check=True,text=True,timeout=timeout,
+                              stdout=subprocess.PIPE,stderr=subprocess.PIPE).stdout
+    # Host-side lab: stream BuildKit stderr while retaining a bounded tail.
+    # Previously stderr was inherited, so CalledProcessError had no diagnostic.
+    deadline=time.monotonic()+timeout
+    tail=b""
+    with subprocess.Popen(args,stdout=sys.stderr,stderr=subprocess.PIPE) as proc:
+        try:
+            with selectors.DefaultSelector() as sel:
+                sel.register(proc.stderr,selectors.EVENT_READ)
+                while sel.get_map():
+                    remaining=deadline-time.monotonic()
+                    if remaining<=0:
+                        raise subprocess.TimeoutExpired(args,timeout,stderr=tail.decode(errors="replace"))
+                    for key,_ in sel.select(min(1,remaining)):
+                        block=os.read(key.fd,8192)
+                        if not block:
+                            sel.unregister(key.fileobj)
+                            continue
+                        tail=(tail+block)[-65536:]
+                        print(block.decode(errors="replace"),end="",file=sys.stderr,flush=True)
+            code=proc.wait(timeout=max(0,deadline-time.monotonic()))
+            if code:
+                raise subprocess.CalledProcessError(code,args,stderr=tail.decode(errors="replace"))
+        except BaseException:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
+            raise
 
 
 def inspect(image):
