@@ -309,9 +309,29 @@
     block.classList.add("unified-summary");
     const before=r.original_severity||(run.stage==="original"?r.base_severity:null);
     const after=r.candidate_severity||{};
-    showMetrics(block,[["Initial findings (all)",r.original_findings],["Final findings (all)",r.overall_findings],
-      ["Net reduction",r.original_findings!=null&&r.overall_findings!=null?r.original_findings-r.overall_findings:null],
+    // Both cards use the persisted frozen-DB comparison, not the earlier
+    // initial scan or a synthetic Copa scan. Preserve unknown counts as unknown.
+    const original=[...(d?.scans||[])].reverse().find(s=>s.phase==="original");
+    const phases=node("div","scan-phases");
+    for(const [i,label,count,ref,id] of [
+      [0,"01 · INITIAL SCAN",r.original_findings,original?.image_ref,r.image_ids?.[0]],
+      [1,"02 · FINAL OPTIMIZED SCAN",r.overall_findings,r.candidate,r.candidate_image_id]
+    ]){
+      const card=node("article","scan-phase-card "+(i?"phase-after":"phase-before"));
+      card.appendChild(node("span","phase-label",label));
+      card.appendChild(node("strong","phase-count",count));
+      card.appendChild(node("small","","Frozen DB rescan · all severities, including LOW"));
+      if(ref)card.appendChild(node("p","small-text wide-text","Image: "+ref));
+      if(id)card.appendChild(node("p","small-text wide-text","Image ID: "+id));
+      if(run.updated_at)card.appendChild(node("p","small-text","Comparison recorded: "+date(run.updated_at)));
+      phases.appendChild(card);
+    }
+    block.appendChild(phases);
+    showMetrics(block,[["Net reduction",r.original_findings!=null&&r.overall_findings!=null?r.original_findings-r.overall_findings:null],
       ["Introduced",r.overall_introduced]]);
+    if(!(d?.patches||[]).length&&!(d?.scans||[]).some(s=>s.phase==="patched")){
+      block.appendChild(node("p","info-note","No separate Copa patch or rescan was recorded. The final card shows the verified optimized image, not a Copa result."));
+    }
     const rows=node("div","severity-graph"), palette={CRITICAL:"#d74466",HIGH:"#ec8c43",MEDIUM:"#d6aa38",LOW:"#2aa88a",UNKNOWN:"#8894a8"};
     const keys=Object.keys(palette);
     const max=Math.max(1,...keys.flatMap(k=>[Number(before?.[k]||0),Number(after[k]||0)]));
@@ -339,13 +359,22 @@
     const scans = d?.scans || [];
     const originalRecord = [...scans].reverse().find(s => s.phase === "original");
     const finalRecord = [...scans].reverse().find(s => s.phase === "patched");
+    // Completed optimization is the final result. Do not render a duplicate
+    // empty Copa comparison if there is no actual Copa attempt or scan.
+    if(optimized&&!finalRecord&&!(d?.patches||[]).length)return;
     const old = originalRecord?.status === "success" ? originalRecord : null;
     const after = finalRecord?.status === "success" ? finalRecord : null;
     const verified = Boolean(old?.evidence?.verified && after?.evidence?.verified &&
       old.evidence.image_id !== after.evidence.image_id && old.evidence.scope === after.evidence.scope);
     const diff = verified ? d?.diffs?.find(x=>String(x.original_scan_id)===String(old.id)&&String(x.patched_scan_id)===String(after.id)) : null;
     const recommendation = verified && diff ? d?.policies?.find(p=>String(p.scan_id)===String(after.id)&&["recommended","not_recommended"].includes(p.status)) : null;
-    const block = section(root, optimized?"Copa patch evidence (separate from optimized candidate)":"Initial scan vs post-fix scan");
+    let parent=root;
+    if(optimized){
+      parent=node("details","advanced-evidence");
+      parent.appendChild(node("summary","","Intermediate Copa evidence (optional)"));
+      root.appendChild(parent);
+    }
+    const block = section(parent, optimized?"Copa patch evidence (separate from optimized candidate)":"Initial scan vs post-fix scan");
     block.classList.add("unified-summary");
     const phases = node("div", "scan-phases");
     [["01 · INITIAL SCAN", old], ["02 · AFTER PATCH", after]].forEach(([name, scan], i) => {

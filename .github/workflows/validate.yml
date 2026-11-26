@@ -44,6 +44,7 @@ jobs:
         run: |
           node --check runner/appsecctl/webui/assets/app.js
           node --check runner/appsecctl/webui/assets/workspace.js
+          node tests/test_optimized_summary.js
       - name: Validate CLI syntax and executable mode
         run: |
           test -x appsec
