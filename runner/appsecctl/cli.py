@@ -440,7 +440,7 @@ def patch_from_scan(scan_id: str, *, automatic=False) -> tuple[str, str]:
         # Capture Copa stderr so a failed patch has a concrete diagnostic in
         # the persisted patch/job error instead of only an exit status.
         copa_version, _ = tool_updates.command_version([copa_executable, "--version"])
-        _, buildkit_info = tool_updates.command_version(["docker", "exec", env("BUILDKIT_CONTAINER", "appsec-buildkit"), "buildkitd", "--version"])
+        _, buildkit_info = tool_updates.command_version(["docker", "exec", env("BUILDKIT_CONTAINER", "appsec-buildkit"), "buildkitd", "--version"]) if not staged else (None,"Docker embedded BuildKit; separate daemon version not applicable")
         from psycopg.types.json import Jsonb
         with db.connect() as conn:
             conn.execute("UPDATE patch_runs SET execution_evidence=%s WHERE id=%s",

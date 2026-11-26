@@ -42,3 +42,18 @@ class AutomaticCopaTests(unittest.TestCase):
         with patch.object(copa_mirrors.apt,"inspect",side_effect=[original,candidate]):
             with self.assertRaisesRegex(RuntimeError,"application image labels"):
                 copa_mirrors.verify_candidate("original","candidate",source_ref=source)
+
+    def test_actual_automatic_command_omits_report_when_no_fixed_version(self):
+        image="sha256:"+"a"*64
+        scan={"status":"success","image_ref":"example.org/nginx:1","pipeline_id":"pipeline",
+              "report_path":"/reports/original.json","raw_report":{"ArtifactType":"container_image","Metadata":{"ImageID":image},"_appsec":{"verified":True,"image_id":image},"Results":[{"Target":"nginx (debian 13)","Class":"os-pkgs","Packages":[{"Name":"p","Version":"1"}],"Vulnerabilities":[]}]}}
+        from appsecctl import optimization
+        with patch.object(cli,"db") as database,patch.object(cli,"run_command") as command,patch.object(cli.patch_sources,"policy_environment") as policy,patch.object(cli.scan_evidence,"local_image_id",side_effect=[image,"sha256:"+"b"*64]),patch.object(optimization,"mirrors",return_value=[]),patch.object(cli.tool_updates,"copa_binary",return_value="copa"),patch.object(cli.tool_updates,"command_version",return_value=("0.14.1","test")):
+            database.get_scan.return_value=scan
+            policy.return_value.__enter__.return_value=None
+            cli.patch_from_scan("scan",automatic=True)
+        args=command.call_args.args[0]
+        self.assertEqual(args[:2],["copa","patch"])
+        self.assertNotIn("-r",args)
+        self.assertNotIn("--report",args)
+        self.assertNotIn("--ignore-errors",args)

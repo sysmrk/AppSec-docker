@@ -450,6 +450,8 @@
       section.appendChild(node("h2","","Image publication"));
       section.appendChild(node("p","wide-text","Local image: "+text(publication.local_image_ref)));
       section.appendChild(node("p","","Status: "+text(publication.publication_status)));
+      if(publication.strategy)section.appendChild(node("p","","Copa strategy: "+publication.strategy));
+      if(publication.package_mirror)section.appendChild(node("p","","Package mirror: "+publication.package_mirror));
       if (publication.publication_status==="published") {
         section.appendChild(node("p","wide-text","Published image: "+text(publication.patched_image_ref)));
         section.appendChild(node("p","wide-text","Registry digest: "+text(publication.published_digest)));
@@ -958,7 +960,8 @@
       const terminal=["published","completed","completed_without_publish","failed","patch_failed","publish_failed","stopped","canceled"].includes(w.state);
       const noCopa=!w.patch_job_id&&(terminal||w.optimization_active);
       const reason=w.execution_mode==="scan_only"?"Scan-only route selected.":data.patch_eligibility?.code==="NO_FIXABLE_OS"?"No OS findings have a reported FixedVersion; targeted Copa was skipped.":"No separate Copa job was executed.";
-      stepItem(ol,"4. Copa targeted patch",noCopa?reason:"Build a local OS patch using Copa / BuildKit.",noCopa?"skipped":w.patch_job_status==="success"?"done":w.patch_job_status==="failed"?"failed":w.decision==="approve_patch"?"running":"waiting");
+      const patchStrategy=pipeline?.patches?.[0]?.strategy;
+      stepItem(ol,"4. Copa "+(patchStrategy?patchStrategy+" ":"")+"patch",noCopa?reason:patchStrategy==="comprehensive"?"Comprehensive OS updates; no FixedVersion requirement.":"Build a local OS patch using Copa / BuildKit.",noCopa?"skipped":w.patch_job_status==="success"?"done":w.patch_job_status==="failed"?"failed":w.decision==="approve_patch"?"running":"waiting");
       stepItem(ol,"5. Copa rescan",noCopa?"No Copa image to rescan. Optimization has its own verified rescan.":"Trivy scans the actual Copa output.",noCopa?"skipped":patched?.status==="success"&&diffs.length?"done":w.patch_job_status==="failed"?"failed":w.decision==="approve_patch"?"running":"waiting");
       if(w.execution_mode==="auto_optimize")stepItem(ol,"6. Optimize and rescan candidate","Compare the original and final candidate with the same frozen vulnerability DB.",pipeline?.optimization?.state==="completed"?"done":w.optimization_active?"running":pipeline?.optimization?.state==="failed"?"failed":terminal?"skipped":"waiting");
       stepItem(ol,w.execution_mode==="auto_optimize"?"7. Registry publication":"6. Registry publication",w.unattended&&!w.auto_destination?"Local output selected before Start; registry push not requested.":"Publish only with applicable authorization and verified evidence.",w.state==="published"?"done":w.state==="publishing"?"running":w.unattended&&!w.auto_destination||noCopa?"skipped":w.state==="publish_failed"?"failed":w.publish_decision==="skip_publish"?"skipped":"waiting");

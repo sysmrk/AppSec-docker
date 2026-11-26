@@ -176,7 +176,9 @@ def pipeline_details(conn, pipeline_id: str) -> dict[str, Any]:
                   raw_report->'_appsec' AS evidence
            FROM scan_runs WHERE pipeline_id = %s ORDER BY started_at ASC""", (pid,))
     patches = _rows(conn,
-        """SELECT id, local_image_ref, local_image_id, patched_image_ref, publication_status, published_at, published_digest, status, started_at, finished_at, error_message
+        """SELECT id, local_image_ref, local_image_id, patched_image_ref, publication_status, published_at, published_digest, status, started_at, finished_at, error_message,
+                  execution_evidence->>'strategy' AS strategy,
+                  execution_evidence->'package_repository'->>'mirror' AS package_mirror
            FROM patch_runs WHERE pipeline_id = %s ORDER BY started_at DESC LIMIT 10""", (pid,))
     diffs = _rows(conn,
         """SELECT original_scan_id, patched_scan_id, fixed_count, remaining_count, introduced_count, created_at,
