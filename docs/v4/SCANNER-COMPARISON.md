@@ -37,3 +37,5 @@ The report compares exact advisory IDs only, not package equivalence or aliases.
 Raw SBOM/Grype output and DB hashes are retained privately. No security
 recommendation or publication permission is inferred. Grype-reported fixes
 must be reconciled against signed vendor repositories before any upgrade.
+
+For non-root host users, ensure the private DB directory and its contents are readable by the invoking user after root-owned Docker DB preparation (e.g. in CI, `sudo chown -R "$(id -u):$(id -g)" grype-cache`). Do not make it world-readable. Cache traversal errors are explicit. Syft's temporary cache uses the existing private container tmpfs. Grype comparison reports now include exact advisory/package/type/namespace occurrence deltas against the first image; these are not alias-resolved or proof of vendor remediation.

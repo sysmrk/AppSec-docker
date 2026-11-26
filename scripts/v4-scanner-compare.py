@@ -20,12 +20,17 @@ from appsecctl import benchmark as bench, scan_evidence
 
 def manifest(root):
     files={}
-    for p in sorted(root.rglob("*")):
-        if p.is_symlink() or not (p.is_dir() or p.is_file()):
-            raise ValueError("Unsupported Grype cache entry")
-        if p.is_file():
-            with p.open("rb") as stream:
-                files[p.relative_to(root).as_posix()]=bench.hash_stream(stream)
+    def walk_error(exc):
+        raise exc
+    # pathlib.rglob can silently skip unreadable subdirectories.
+    for directory,dirs,names in os.walk(root,onerror=walk_error,followlinks=False):
+        for name in sorted(dirs+names):
+            p=Path(directory)/name
+            if p.is_symlink() or not (p.is_dir() or p.is_file()):
+                raise ValueError("Unsupported Grype cache entry")
+            if p.is_file():
+                with p.open("rb") as stream:
+                    files[p.relative_to(root).as_posix()]=bench.hash_stream(stream)
     if not any(k.endswith("/vulnerability.db") or k=="vulnerability.db" for k in files):
         raise ValueError("Grype vulnerability database missing; prepare cache first")
     return files
@@ -65,6 +70,23 @@ def findings(report):
                           "type":a.get("type"),"namespace":v.get("namespace"),"fixed_versions":fix["versions"]})
     return {"matches":len(report["matches"]),"severity":dict(counts),"unique_advisory_ids":sorted(ids),
             "reported_fix_matches":fixed,"ignored_matches":len(report.get("ignoredMatches") or [])}
+
+
+def match_delta(before,after):
+    """Compare exact advisory/package/namespace/type occurrences, not aliases."""
+    def index(report):
+        result=Counter()
+        for match in report["matches"]:
+            v,a=match["vulnerability"],match["artifact"]
+            result[(v["id"],a["name"],a.get("type") or "",v.get("namespace") or "")]+=1
+        return result
+    def rows(values):
+        return [{"id":k[0],"package":k[1],"type":k[2],"namespace":k[3],"count":n}
+                for k,n in sorted(values.items())]
+    a,b=index(before),index(after)
+    return {"no_longer_reported":rows(a-b),"introduced":rows(b-a),
+            "no_longer_reported_count":sum((a-b).values()),"introduced_count":sum((b-a).values()),
+            "method":"exact advisory/package/type/namespace occurrence counts; ambiguous instances not resolved"}
 
 
 def trivy_ids(path,image):
@@ -108,6 +130,7 @@ def main(argv=None):
             "grype_db_status":status,"images":[{"ref":r,"id":i} for r,i in zip(args.image,ids)],
             "scope":"squashed image filesystem; offline scanners; no image execution"})
         rows=[]
+        baseline_report=None
         for n,(ref,iid) in enumerate(zip(args.image,ids),1):
             t=time.monotonic()
             archive=work/"image.tar"
@@ -115,7 +138,7 @@ def main(argv=None):
             try:
                 subprocess.run(["docker","image","save","--output",str(archive),iid],check=True,timeout=args.timeout)
                 data=tool(syft,["scan","docker-archive:/image.tar","-o","syft-json"],[(archive,"/image.tar",True)],
-                          ["SYFT_CHECK_FOR_APP_UPDATE=false"],args.timeout)
+                          ["SYFT_CHECK_FOR_APP_UPDATE=false","XDG_CACHE_HOME=/tmp/cache","HOME=/tmp"],args.timeout)
                 sbom=json.loads(data)
                 if not isinstance(sbom.get("artifacts"),list) or not sbom["artifacts"]:
                     raise ValueError("Empty Syft inventory; no zero-risk conclusion")
@@ -127,6 +150,10 @@ def main(argv=None):
                 if manifest(frozen)!=hashes:
                     raise RuntimeError("Frozen Grype DB changed during scan")
                 result=findings(report)
+                if baseline_report is None:
+                    baseline_report=report
+                else:
+                    result["grype_delta_from_original"]=match_delta(baseline_report,report)
                 result.update(image_id=iid,reference=ref,syft_packages=len(sbom["artifacts"]),
                               syft_reported_image_id=reported,sbom_sha256=hashlib.sha256(data).hexdigest(),
                               package_types=dict(Counter(a.get("type","unknown") for a in sbom["artifacts"])),

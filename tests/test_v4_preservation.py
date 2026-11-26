@@ -29,3 +29,13 @@ class PreservationTests(TestCase):
         self.assertEqual(result["reported_fix_matches"][0]["fixed_versions"],["2"])
         with self.assertRaises(ValueError):
             mod.findings({})
+
+    def test_exact_grype_delta_preserves_package_occurrences(self):
+        def match(pkg):
+            return {"vulnerability":{"id":"CVE-example","namespace":"debian:distro:debian:13"},
+                    "artifact":{"name":pkg,"type":"deb"}}
+        d=mod.match_delta({"matches":[match("a"),match("b")]},{"matches":[match("b"),match("c")]})
+        self.assertEqual(d["no_longer_reported_count"],1)
+        self.assertEqual(d["introduced_count"],1)
+        self.assertEqual(d["no_longer_reported"][0]["package"],"a")
+        self.assertEqual(d["introduced"][0]["package"],"c")
