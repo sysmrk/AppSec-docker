@@ -118,6 +118,11 @@ def main() -> int:
                     stopped=workflow_control.requested(conn,"image",job_id)
                     if stopped:
                         conn.execute("UPDATE pipeline_jobs SET status='canceled',finished_at=now(),last_error='Stopped by user' WHERE id=%s",(job_id,))
+                    elif str(exc).startswith(("TRIVY_DB:","TRIVY_JAVA_DB:")):
+                        # The approved DB repository list was already exhausted.
+                        # Do not repeat the entire list three times automatically.
+                        conn.execute("UPDATE pipeline_jobs SET status='failed',finished_at=now(),last_error=%s WHERE id=%s",
+                                     (safe_message(exc,'image'),job_id))
                     else:
                         db.fail_job(conn, job_id, safe_message(exc, 'image'))
                 log_event("worker.image.failed", level="error", job_id=job_id, error_code=classify(exc, "image")["code"])

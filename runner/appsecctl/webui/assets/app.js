@@ -658,24 +658,38 @@
         current.terminal.textContent=current.lines.join("\n") || "No recorded events yet.";
         current.status.textContent=current.state;
         if(current.follow && follow) current.terminal.scrollTop=current.terminal.scrollHeight;
+        if(state.view==="guided" && path==="/api/manual-workflows/"+encodeURIComponent(state.selectedWorkflow)+"/watch") {
+          const changed=result.state!==state.workflowState || Boolean(result.optimization_state)!==Boolean(state.optimizationActive);
+          if(changed && !current.refreshing) {
+            current.refreshing=true;
+            try { await openGuided(state.selectedWorkflow,true); }
+            finally { current.refreshing=false; }
+          }
+        }
       } catch(e) {
         if (watchSession!==current) return;
         current.status.textContent="Watch unavailable: "+e.message;
         if(e.status===401 || e.status===403 || e.status===404) { stopWatch(); return; }
       } finally {
         current.busy=false;
-        if(watchSession===current) current.timer=setTimeout(poll,2000);
+        if(watchSession===current) current.timer=setTimeout(poll,document.hidden?15000:2000);
       }
     }
     if (!current.busy) {clearTimeout(current.timer);poll();}
   }
 
   function optimizationPanel(root,w) {
-    const panel=section(root,"Optimization results and approval");
+    const panel=node("details","panel");
+    panel.open=Boolean(w.optimization_active)||w.execution_mode==="auto_optimize";
+    panel.appendChild(node("summary","","Optimization results and approval"));
+    root.appendChild(panel);
     const body=node("div");panel.appendChild(body);
     const path="/api/manual-workflows/"+encodeURIComponent(w.id)+"/optimization";
     const refresh=node("button","outline","Refresh optimization");refresh.type="button";panel.appendChild(refresh);
+    let busy=false,refreshActive=false;
     async function load() {
+      if(busy||!panel.open)return;
+      busy=true;
       try {
         const data=await request(path);
         if(!body.isConnected)return;
@@ -683,6 +697,7 @@
         body.appendChild(node("p","info-note",data.enabled?"Explicit local-only optimization. Never publishes or replaces the existing patch.":"Optimization worker disabled; enable only in an isolated lab."));
         const admin=state.user?.role==="admin";
         const active=data.runs.some(r=>["queued","planning","awaiting_approval","build_queued","building"].includes(r.state));
+        refreshActive=data.runs.some(r=>["queued","planning","build_queued","building"].includes(r.state));
         if(admin && data.enabled && !active && ["awaiting_approval","awaiting_publication","completed","completed_without_publish","published","publication_blocked"].includes(w.state)) {
           const advanced=node("details");advanced.appendChild(node("summary","","Advanced package diagnostics (optional)"));
           advanced.appendChild(node("p","hint","Repository check finds available updates; inventory compares scanner and dpkg; native upgrade builds an alternative candidate; module removal reduces unused functionality."));
@@ -708,7 +723,11 @@
           advanced.appendChild(form);body.appendChild(advanced);
         }
         for(const run of data.runs) {
-          const card=node("div","panel");card.appendChild(node("h3","",run.operation+" · "+run.stage+" · "+run.state));
+          const card=node("div","panel");
+          const titles={debloat:"Remove unused modules",upgrade:"Upgrade installed OS packages",inventory:"Verify package inventory",availability:"Check signed package repositories"};
+          const descriptions={queued:"Queued — the worker will start automatically.",planning:"Analyzing package dependencies and evidence.",awaiting_approval:"Next: review the exact package list and approve the local build.",build_queued:"Approved; waiting for the worker.",building:"Building and rescanning the candidate.",completed:"Finished. Review the candidate results.",failed:"Failed. Review the diagnostic.",canceled:"Canceled; existing evidence retained."};
+          card.appendChild(node("h3","",titles[run.operation]||run.operation));
+          card.appendChild(node("p","info-note",descriptions[run.state]||run.state));
           if(run.error_code)card.appendChild(node("p","warning","Task failed: "+run.error_code+"; inspect worker diagnostics."));
           if(run.plan) {
             const removing=Array.isArray(run.plan.remove);
@@ -734,10 +753,12 @@
           }
           body.appendChild(card);
         }
-      }catch(e){body.textContent=e.message;}
+      }catch(e){body.textContent=e.message;}finally{busy=false;}
     }
-    refresh.addEventListener("click",load);load();
-    const timer=setInterval(()=>{if(!panel.isConnected){clearInterval(timer);return;} if(!document.hidden && state.view==="guided" && body.querySelector("h3") && /queued|planning|building/.test(body.textContent))load();},5000);
+    refresh.addEventListener("click",load);
+    panel.addEventListener("toggle",()=>{if(panel.open)load();});
+    if(panel.open)load();
+    const timer=setInterval(()=>{if(!panel.isConnected){clearInterval(timer);return;} if(panel.open&&!document.hidden&&state.view==="guided"&&refreshActive)load();},5000);
   }
 
   async function openGuided(workflowId, silent = false) {
@@ -750,6 +771,7 @@
       if(state.selectedWorkflow!==workflowId || state.view!=="guided")return;
       const w = data.workflow, pipeline = data.pipeline;
       state.workflowState = w.state;
+      state.optimizationActive=Boolean(w.optimization_active);
       state.patchEnabled = Boolean(data.patch_enabled);
       clear(root);
       root.appendChild(node("p", "eyebrow", "MANUAL IMAGE WORKFLOW"));
@@ -774,7 +796,8 @@
         });root.appendChild(stop);
       }
       if(w.state==="stopping")root.appendChild(node("p","warning","Stop requested. Waiting for current safe tool boundary; no further stages or retries."));
-      if(w.pipeline_id && !["queued","scanning","patch_queued","patch_running","publishing","stopped","stopping"].includes(w.state))optimizationPanel(root,w);
+      const optimizationVisible=w.pipeline_id && !["queued","scanning","patch_queued","patch_running","publishing","stopped","stopping"].includes(w.state);
+      if(optimizationVisible&&(w.execution_mode==="auto_optimize"||w.optimization_active))optimizationPanel(root,w);
       if (w.pipeline_id && ["awaiting_approval","awaiting_publication","completed","completed_without_publish","published","patch_failed","publication_blocked"].includes(w.state)) {
         const planBox = node("div", "panel");
         const stage = ["awaiting_publication","completed_without_publish","published","publication_blocked"].includes(w.state) ? "residual" : "original";
@@ -822,7 +845,7 @@
         }
         root.appendChild(planBox);
       }
-      if (w.state === "awaiting_approval" &&
+      if (w.state === "awaiting_approval" && !w.optimization_active &&
           ["admin", "operator"].includes(state.user?.role)) {
         const controls = section(root, "Your decision is required");
         controls.appendChild(node("p", "info-note", "Scan complete. Review the findings below, then choose how to finish this workflow."));
@@ -877,7 +900,7 @@
         renderUnifiedSummary(root, pipeline);
         root.appendChild(button("Open detailed findings →", () => openPipeline(w.pipeline_id)));
       }
-      if (["awaiting_publication", "publication_blocked"].includes(w.state) &&
+      if (["awaiting_publication", "publication_blocked"].includes(w.state) && !w.optimization_active &&
           ["admin", "operator"].includes(state.user?.role)) {
         const controls = section(root, "Final review: publish or stop");
         const lastPatch = patches[0];
@@ -969,6 +992,7 @@
         });
         details.appendChild(links);root.appendChild(details);
       }
+      if(optimizationVisible&&w.execution_mode!=="auto_optimize"&&!w.optimization_active)optimizationPanel(root,w);
       if(state.user?.role==="admin"&&w.pipeline_id) {
         const danger=node("div","history-danger");
         danger.appendChild(button("Delete this workflow & history",()=>deletePipelineHistory(w.pipeline_id)));
@@ -1209,11 +1233,7 @@
       refreshOverview().catch(() => {});
       refreshHealth();
     }
-    if (state.view === "guided" && state.selectedWorkflow && !["awaiting_approval", "awaiting_publication", "publication_blocked",
-      "completed", "completed_without_publish", "published",
-      "failed", "patch_failed", "publish_failed", "canceled","stopped"].includes(state.workflowState)) {
-      openGuided(state.selectedWorkflow, true).catch(() => {});
-    }
+    // Workflow details refresh on state transition in Live Watch; no repeated full report fetch.
     if (state.view === "guided" && !bulkBusy) refreshGuided().catch(() => {});
   }, 20000);
 })();

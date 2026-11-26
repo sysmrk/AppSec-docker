@@ -134,6 +134,8 @@ def capture_stderr(command, environment=None, timeout=None):
     """
     started=time.monotonic()
     last=started
+    last_stop_check=started
+    managed_trivy=command[:2]==["docker","run"] and "appsec.managed=trivy" in command
     tail=b""
     pending=b""
     with subprocess.Popen(command,stderr=subprocess.PIPE,env=environment) as proc:
@@ -142,6 +144,9 @@ def capture_stderr(command, environment=None, timeout=None):
                 sel.register(proc.stderr,selectors.EVENT_READ)
                 while sel.get_map():
                     now=time.monotonic()
+                    if managed_trivy and now-last_stop_check>=2:
+                        checkpoint()
+                        last_stop_check=now
                     if timeout is not None and now-started>=timeout:
                         raise subprocess.TimeoutExpired(command,timeout,stderr=tail.decode(errors="replace"))
                     wait=min(1,max(0,timeout-(now-started))) if timeout is not None else 1

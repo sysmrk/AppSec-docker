@@ -1443,6 +1443,7 @@ def workflow_watch(workflow_id: str, after: int = 0, user: dict[str, Any] = Depe
     active=next((r for r in tasks if r["state"] in ("queued","planning","awaiting_approval","build_queued","building")),None)
     return {"events":rows,"state":w["state"],"optimization_state":active["state"] if active else None,
             "optimization_operation":active["operation"] if active else None,
+            "optimization_latest_state":tasks[0]["state"] if tasks else None,
             "next_cursor":rows[-1]["id"] if rows else after}
 
 

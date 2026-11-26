@@ -113,8 +113,8 @@
               <ol>
                 <li>Trivy scans the image and generates an SBOM</li>
                 <li>AppSec saves the initial CVEs and SBOM; policy recommendation comes only after patching</li>
-                <li>You review CVEs and approve a local patch (optional)</li>
-                <li>Copa patches, rescans and compares; you then keep it locally or separately approve a registry Push</li>
+                <li>The selected route controls whether to stop after scan, review first, or prepare a local patch automatically</li>
+                <li>Optional optimization waits for exact package-removal approval; registry publication always requires a separate decision</li>
               </ol>
             </div>
             <div class="form-actions">

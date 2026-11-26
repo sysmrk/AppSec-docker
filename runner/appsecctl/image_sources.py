@@ -153,6 +153,7 @@ def pull_ordered(ordered: list[dict[str, Any]]) -> str:
     if not ordered:
         raise RuntimeError("SOURCE_PULL_FAILED: All trusted image sources are disabled or none match; enable a compatible source in Registries.")
     for item in ordered:
+        job_watch.checkpoint()
         ref = item["ref"]
         job_watch.emit("pull")
         print("IMAGE_SOURCE_TRY priority=%s source=%s ref=%s" % (item["priority"], item["name"], ref), flush=True)
@@ -199,4 +200,16 @@ def artifact_repositories(sources: list[dict[str, Any]] | None, configured: str)
     ordered = ordered_candidates(sources, references)
     if not ordered:
         raise RuntimeError("SOURCE_PULL_FAILED: No approved repository for scanner database")
-    return ",".join(x["ref"] for x in ordered)
+    # Docker Hub mirrors use aquasec, not GHCR's aquasecurity namespace.
+    # Rewrite only known Docker Hub proxy hosts and the exact official DB names.
+    # Custom/private registry paths and all other artifact references remain intact.
+    docker_hub_proxies={"docker.arvancloud.ir","hub.hamdocker.ir","registry.docker.ir"}
+    result=[]
+    for item in ordered:
+        ref=item["ref"]
+        host,path=ref.split("/",1)
+        if host in docker_hub_proxies and re.fullmatch(r"aquasecurity/trivy-(?:java-)?db:[0-9]+",path):
+            ref=host+"/"+path.replace("aquasecurity/","aquasec/",1)
+        if ref not in result:
+            result.append(ref)
+    return ",".join(result)

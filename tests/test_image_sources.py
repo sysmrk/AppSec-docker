@@ -85,3 +85,11 @@ class NoFallbackWhenDisabled(unittest.TestCase):
                 {"name": "second", "host": "m2.example", "priority": 2}]
         self.assertEqual(image_sources.artifact_repositories(rows, "ghcr.io/aquasecurity/trivy-db:2"),
                          "m1.example/proxy/aquasecurity/trivy-db:2,m2.example/aquasecurity/trivy-db:2")
+
+    def test_known_docker_hub_proxies_use_aquasec_db_namespace(self):
+        sources=[{"name":"arvan","host":"docker.arvancloud.ir","priority":1},
+                 {"name":"ghcr","host":"ghcr.io","priority":2}]
+        self.assertEqual(image_sources.artifact_repositories(sources,"ghcr.io/aquasecurity/trivy-db:2"),
+                         "docker.arvancloud.ir/aquasec/trivy-db:2,ghcr.io/aquasecurity/trivy-db:2")
+        self.assertEqual(image_sources.artifact_repositories(sources,"ghcr.io/aquasecurity/trivy-java-db:1"),
+                         "docker.arvancloud.ir/aquasec/trivy-java-db:1,ghcr.io/aquasecurity/trivy-java-db:1")

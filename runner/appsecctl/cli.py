@@ -55,6 +55,11 @@ def timeout_seconds(name: str, default: int) -> int:
         raise RuntimeError("Invalid timeout configuration: " + name) from None
 
 
+def job_watch_stop_type():
+    from .workflow_control import StopRequested
+    return StopRequested
+
+
 def run_trivy_command(command: list[str], stage: str, timeout: int) -> None:
     """Bound Docker client execution and remove only this scanner on timeout."""
     name = "appsec-trivy-" + uuid4().hex
@@ -64,7 +69,7 @@ def run_trivy_command(command: list[str], stage: str, timeout: int) -> None:
     print(f"SCAN_STAGE_START stage={stage} container={name} timeout={timeout}s", flush=True)
     try:
         run_command(command, capture_errors=True, timeout=timeout)
-    except subprocess.TimeoutExpired:
+    except (subprocess.TimeoutExpired, job_watch_stop_type()) as exc:
         try:
             removed = subprocess.run(["docker", "rm", "-f", name], capture_output=True,
                                      text=True, timeout=30, check=False)
@@ -72,6 +77,8 @@ def run_trivy_command(command: list[str], stage: str, timeout: int) -> None:
                 print(f"SCAN_CLEANUP_FAILED container={name}; inspect manually", flush=True)
         except (OSError, subprocess.SubprocessError):
             print(f"SCAN_CLEANUP_FAILED container={name}; inspect manually", flush=True)
+        if not isinstance(exc,subprocess.TimeoutExpired):
+            raise
         raise RuntimeError(f"SCAN_STAGE_TIMEOUT: {stage} exceeded {timeout}s; scanner container {name}") from None
     except subprocess.CalledProcessError as exc:
         print(f"SCAN_STAGE_FAILED stage={stage} reason={safe_detail(exc.stderr)}", flush=True)

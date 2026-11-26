@@ -82,6 +82,7 @@ _WORKFLOW_QUERY = """
            w.publish_decision, w.published_by, w.publish_approved_at,
            w.created_at, w.updated_at, w.execution_mode, w.optimization_roots, w.stop_requested_at, w.auto_step, w.auto_error,
            EXISTS (SELECT 1 FROM optimization_runs o WHERE o.workflow_id=w.id AND o.state IN ('planning','building')) AS optimization_running,
+           EXISTS (SELECT 1 FROM optimization_runs o WHERE o.workflow_id=w.id AND o.state IN ('queued','planning','awaiting_approval','build_queued','building')) AS optimization_active,
            s.status AS scan_job_status, s.last_error AS scan_error,
            p.status AS patch_job_status, p.last_error AS patch_error,
            pub.status AS publish_job_status, pub.last_error AS publish_error,
