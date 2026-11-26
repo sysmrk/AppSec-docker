@@ -1,5 +1,11 @@
 # Changelog
 
+## V4 development — unreleased
+
+- Plan A: native package upgrades and conservative optimization; generic reconstruction deferred.
+- Retire conflicting standalone Trivy DB updater and preserve migration history.
+- Add isolated, frozen-DB native APT/debloat comparison harness with bounded Nginx HTTP smoke tests. No automatic publication or new production engine.
+
 ## v2.0.0 — 2026-11-25
 
 - Full patch-enabled startup with deployment fingerprints and BuildKit/worker capability checks; MCP remains optional.

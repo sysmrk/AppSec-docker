@@ -25,7 +25,7 @@ jobs:
           assert any('/var/run/docker.sock' in str(v) for v in s['worker'].get('volumes',[]))
           PY
       - name: Compile Python
-        run: python -m py_compile runner/appsecctl/*.py scripts/setup-metabase.py scripts/v3-benchmark.py
+        run: python -m py_compile runner/appsecctl/*.py scripts/setup-metabase.py scripts/v3-benchmark.py scripts/v4-benchmark.py
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -34,6 +34,16 @@ jobs:
       - name: Unit tests for security and MCP contracts
         run: |
           PYTHONPATH=runner:integrations/mcp python -m unittest discover -s tests -p 'test_*.py' -v
+      - name: V4 isolated nginx smoke regression
+        run: |
+          docker pull nginx:stable
+          PYTHONPATH=runner python - <<'PY'
+          from appsecctl import v4_validation as v
+          a=v.smoke("nginx:stable")
+          assert a["status"]=="passed",a
+          b=v.smoke("nginx:stable")
+          assert v.matches(a,b),(a,b)
+          PY
       - name: Real BuildKit source policy regression (v0.29.0)
         run: bash tests/integration_buildkit_policy.sh
       - name: Real temporary Copa source transport and Docker exporter

@@ -1,6 +1,6 @@
-# AppSec Control Center — v3 development branch
+# AppSec Control Center — v4 development branch (Plan A)
 
-This branch starts from the stable v2.0.0 release. Development changes are not a v3 release. See [remediation research and acceptance plan](docs/v3-remediation-research.md).
+V4 is an experimental, in-place remediation redesign based on V3. The stable release remains v2.0.0. Start with the [V4 roadmap and independent benchmark](docs/v4/ROADMAP.md). No new production engine is enabled until its benchmark and workload validation pass.
 
 ## Stable baseline: AppSec Control Center v2
 
@@ -113,3 +113,5 @@ See [CHANGELOG](CHANGELOG.md). Main commits receive change-<SHA> tags; VERSION d
 **v3 development:** see [planning and local AI](docs/v3-remediation-planning.md) and [isolated candidate lab](docs/v3-remediation-lab.md). Experimental OS/library candidates and dependency checks are not exposed to production workflows. Go migration is deferred.
 
 The development deployment builds one first-party runtime image for all Python execution roles. The default service count is unchanged, and existing security boundaries remain separate.
+
+**V4 lab:** use `python3 scripts/v4-benchmark.py --help` on a dedicated Docker host. The legacy concurrent Trivy updater is retired. Existing V3 schema and workflows are retained while the lab is evaluated. Do not deploy this branch to production.

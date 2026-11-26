@@ -440,31 +440,6 @@ services:
     profiles:
       - platform
 
-  trivy-db-updater:
-    image: ${DOCKER_CLI_IMAGE:-docker:27-cli}
-    restart: unless-stopped
-    command:
-      - sh
-      - -lc
-      - |
-        while true; do
-          docker run --rm \
-            -e TRIVY_DB_REPOSITORY="${TRIVY_DB_REPOSITORY:-ghcr.io/aquasecurity/trivy-db:2}" \
-            -v "${TRIVY_CACHE_PATH:-${PWD}/trivy-cache}:/root/.cache/trivy" \
-            "${TRIVY_IMAGE:-aquasec/trivy:latest}" image --download-db-only;
-          sleep "$${TRIVY_DB_UPDATE_INTERVAL_SECONDS:-21600}";
-        done
-    environment:
-      TRIVY_IMAGE: ${TRIVY_IMAGE:-aquasec/trivy:latest}
-      TRIVY_DB_REPOSITORY: ${TRIVY_DB_REPOSITORY:-ghcr.io/aquasecurity/trivy-db:2}
-      TRIVY_CACHE_VOLUME: ${TRIVY_CACHE_PATH:-${PWD}/trivy-cache}
-      TRIVY_DB_UPDATE_INTERVAL_SECONDS: ${TRIVY_DB_UPDATE_INTERVAL_SECONDS:-21600}
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-    networks:
-      - appsec-net
-    profiles:
-      - maintenance
 
 volumes:
   ollama-data:

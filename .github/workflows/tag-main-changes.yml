@@ -1,7 +1,7 @@
 name: tag-main-changes
 on:
   push:
-    branches: [main, develop/v3]
+    branches: [main, develop/v3, develop/v4]
 
 permissions:
   contents: write

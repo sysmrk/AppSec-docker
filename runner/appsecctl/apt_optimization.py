@@ -229,6 +229,11 @@ def build(plan, report, approved):
                 "approved_plan_sha256":approved,"removed_packages":current["remove"],
                 "rescan_required":True,"functional_test_passed":False,"publication_authorized":False,
                 "historical_layers_removed":False}
+    except BaseException:
+        # Remove only the unique failed candidate alias, never the source.
+        subprocess.run(["docker","image","rm",output],check=False,timeout=30,
+                       stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+        raise
     finally:
         # Only our unique temporary reference, never the input image.
         subprocess.run(["docker","image","rm",tag],check=False,timeout=30,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)

@@ -2,7 +2,7 @@ COMPOSE ?= docker compose
 COMPOSE_FILE ?= docker-compose.yaml
 PROFILE ?= platform
 
-.PHONY: help setup doctor preflight validate init migrate up down restart ps logs build harbor-install harbor-login harbor-status report-metabase trivy-db mcp-up mcp-down mcp-logs test clean
+.PHONY: help setup doctor preflight validate init migrate up down restart ps logs build harbor-install harbor-login harbor-status report-metabase v4-benchmark-help mcp-up mcp-down mcp-logs test clean
 
 help:
 	@printf '%s\n' \
@@ -80,8 +80,8 @@ harbor-status:
 report-metabase:
 	./scripts/setup-metabase.sh
 
-trivy-db:
-	./scripts/update-trivy-db.sh --once
+v4-benchmark-help:
+	python3 scripts/v4-benchmark.py --help
 
 mcp-up:
 	$(COMPOSE) -f $(COMPOSE_FILE) --profile mcp up -d --build mcp

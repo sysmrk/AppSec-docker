@@ -12,3 +12,8 @@ harbor/data
 harbor/logs
 harbor/runtime
 harbor/**/*.tgz
+
+**/.env
+**/.env.*
+labs/v4/results/
+benchmark-results/
