@@ -19,6 +19,8 @@ def env(name: str, default: str) -> str:
 
 
 def run_command(command: list[str], **options) -> int:
+    if job_watch.CURRENT.get() is not None and set(options)<= {"env","timeout"}:
+        return job_watch.observed_run(command,environment=options.get("env"),timeout=options.get("timeout"),quiet=True).returncode
     result = subprocess.run(
         command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         check=False, **options,

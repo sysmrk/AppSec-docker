@@ -157,8 +157,9 @@ def pull_ordered(ordered: list[dict[str, Any]]) -> str:
         job_watch.emit("pull")
         print("IMAGE_SOURCE_TRY priority=%s source=%s ref=%s" % (item["priority"], item["name"], ref), flush=True)
         try:
-            result = subprocess.run(["docker", "pull", ref], capture_output=True,
-                                    text=True, timeout=180, check=False)
+            command=["docker","pull",ref]
+            result=(job_watch.observed_run(command,timeout=180) if job_watch.CURRENT.get() is not None else
+                    subprocess.run(command,capture_output=True,text=True,timeout=180,check=False))
             if result.returncode == 0:
                 job_watch.emit("pull_ok")
                 print("IMAGE_SOURCE_SELECTED priority=%s source=%s ref=%s" %

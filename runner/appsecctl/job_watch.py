@@ -20,6 +20,8 @@ MESSAGES={
     "failed":"Worker attempt failed; check job status",
     "pull":"Pulling approved image source", "pull_ok":"Image source selected",
     "pull_failed":"Image source attempt failed",
+    "layer_download":"Registry layer downloaded", "layer_extract":"Registry layer extracted",
+    "layer_cached":"Registry layer already present",
     "scan":"Vulnerability scan started", "sbom":"SBOM generation started",
     "db":"Vulnerability database preparation started",
     "patch":"Copa / BuildKit patch started", "publish":"Registry publication started",
@@ -85,6 +87,9 @@ def parse_line(raw):
     m=re.search(r"\bINFO\s+Number of language-specific files\s+num=(\d{1,9})\b",raw)
     if m:
         return ("trivy_languages",int(m[1]))
+    layer=re.fullmatch(r"[0-9a-f]{12,64}: (Download complete|Pull complete|Already exists)",raw.strip())
+    if layer:
+        return ({"Download complete":"layer_download","Pull complete":"layer_extract","Already exists":"layer_cached"}[layer[1]],None)
     m=re.fullmatch(r"#(\d{1,7}) DONE(?: \d+(?:\.\d+)?s)?",raw.strip())
     if m:
         return ("buildkit_step",int(m[1]))
@@ -131,6 +136,56 @@ def capture_stderr(command, environment=None, timeout=None):
             code=proc.wait(timeout=remaining)
             if code:
                 raise subprocess.CalledProcessError(code,command,stderr=tail.decode(errors="replace"))
+        except BaseException:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
+            raise
+
+
+def observed_run(command, *, timeout=None, environment=None, quiet=False):
+    """Observe real process output or elapsed time; raw data never enters watch.
+
+    Preserve CompletedProcess semantics for existing Docker pull/push callers.
+    A repository clone or secret scan uses quiet=True: no output is collected.
+    """
+    started=time.monotonic()
+    last=started
+    tails={"stdout":b"","stderr":b""}
+    pending={"stdout":b"","stderr":b""}
+    mode=subprocess.DEVNULL if quiet else subprocess.PIPE
+    with subprocess.Popen(command,stdout=mode,stderr=mode,env=environment) as proc:
+        try:
+            with selectors.DefaultSelector() as sel:
+                if not quiet:
+                    sel.register(proc.stdout,selectors.EVENT_READ,"stdout")
+                    sel.register(proc.stderr,selectors.EVENT_READ,"stderr")
+                while proc.poll() is None or sel.get_map():
+                    now=time.monotonic()
+                    if timeout is not None and now-started>=timeout:
+                        raise subprocess.TimeoutExpired(command,timeout)
+                    if sel.get_map():
+                        for key,_ in sel.select(1):
+                            block=os.read(key.fd,8192)
+                            if not block:
+                                sel.unregister(key.fileobj)
+                                continue
+                            kind=key.data
+                            tails[kind]=(tails[kind]+block)[-65536:]
+                            lines=(pending[kind]+block).replace(b"\r",b"\n").split(b"\n")
+                            pending[kind]=lines.pop()[-8192:]
+                            for line in lines:
+                                parsed=parse_line(line[:8192].decode(errors="replace"))
+                                if parsed:
+                                    emit(*parsed)
+                    elif proc.poll() is None:
+                        time.sleep(0.25)
+                    now=time.monotonic()
+                    if now-last>=5:
+                        emit("elapsed",int(now-started))
+                        last=now
+            return subprocess.CompletedProcess(command,proc.wait(),
+                    tails["stdout"].decode(errors="replace"),tails["stderr"].decode(errors="replace"))
         except BaseException:
             if proc.poll() is None:
                 proc.kill()

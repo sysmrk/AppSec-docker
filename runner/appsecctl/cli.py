@@ -617,7 +617,12 @@ def publish_prepared_patch(pipeline_id: str, publish_job_id: str) -> str:
     try:
         run_command(["docker", "tag", str(row["local_image_id"]), dest], capture_errors=True)
         job_watch.emit("publish")
-        pushed = subprocess.run(["docker", "push", dest], check=True, capture_output=True, text=True)
+        push_command=["docker","push",dest]
+        if job_watch.CURRENT.get() is not None:
+            pushed=job_watch.observed_run(push_command)
+            pushed.check_returncode()
+        else:
+            pushed=subprocess.run(push_command,check=True,capture_output=True,text=True)
         digest = scan_evidence.push_digest(pushed.stdout)
         if scan_evidence.local_image_id(dest) != row["local_image_id"]:
             raise RuntimeError("SCAN_EVIDENCE_INVALID: Destination tag changed during publication")

@@ -26,7 +26,7 @@ ENV_TEMPLATE = ROOT / ".env.example"
 COMPOSE_FILE = ROOT / "docker-compose.yaml"
 SERVICE_CHOICES = (
     "postgres", "buildkit", "minio", "api", "nginx", "worker", "scheduler",
-    "metabase", "image-worker", "security-worker", "mcp",
+    "metabase", "image-worker", "security-worker", "mcp", "ollama",
 )
 PASSWORD_KEYS = (
     "POSTGRES_PASSWORD", "APPSEC_ADMIN_API_KEY", "APPSEC_ADMIN_PASSWORD",
@@ -46,7 +46,26 @@ def compose_command(*args: str) -> list[str]:
     files = ["-f", str(COMPOSE_FILE)]
     if override.is_file():
         files.extend(["-f", str(override)])
+    if optimization_enabled():
+        settings=read_env()
+        configured=os.environ.get("APPSEC_BUILDX_PLUGIN",settings.get("APPSEC_BUILDX_PLUGIN","")).strip().strip('"').strip("'")
+        candidates=[Path(configured)] if configured else [
+            Path("/usr/libexec/docker/cli-plugins/docker-buildx"),
+            Path("/usr/lib/docker/cli-plugins/docker-buildx"),
+            Path("/usr/local/lib/docker/cli-plugins/docker-buildx"),
+            Path("/usr/local/libexec/docker/cli-plugins/docker-buildx"),
+            Path.home()/".docker/cli-plugins/docker-buildx"]
+        plugin=next((p.resolve() for p in candidates if p.is_absolute() and p.is_file() and os.access(p,os.X_OK)),None)
+        if plugin is None:
+            raise RuntimeError("Optimization requires a trusted host Docker Buildx plugin. Set APPSEC_BUILDX_PLUGIN or disable optimization.")
+        os.environ["APPSEC_BUILDX_PLUGIN"]=str(plugin)
+        files.extend(["-f",str(ROOT/"docker-compose.optimization.yaml")])
     return ["docker", "compose", *files, *args]
+
+
+def optimization_enabled():
+    value=os.environ.get("APPSEC_ENABLE_OPTIMIZATION",read_env().get("APPSEC_ENABLE_OPTIMIZATION","false"))
+    return value.strip().strip('"').strip("'")=="true"
 
 
 def compose(*args: str) -> None:
@@ -232,6 +251,8 @@ def start(args) -> None:
     compose("--profile", "platform", "up", "-d", "--no-build", *services)
     verify_deployment()
     verify_patch_runtime()
+    if optimization_enabled():
+        compose("--profile","platform","exec","-T","worker","docker","buildx","version")
     run("bash", str(ROOT / "scripts/setup-metabase.sh"))
     print("\nAppSec Control Center: http://127.0.0.1:8080")
     print("Sign-in: admin (use './appsec credentials' to retrieve the generated password).")

@@ -1273,8 +1273,17 @@ def cleanup_old_records(conn: psycopg.Connection, days: int) -> dict[str, int]:
         ("pipeline_jobs", "created_at"),
     ]
     for table, column in tables:
+        # Retention must never delete active jobs or the parent of an active optimization.
+        extra = ""
+        if table=="pipeline_jobs":
+            extra = """ AND status NOT IN ('queued','running') AND NOT EXISTS (
+                SELECT 1 FROM manual_workflows w JOIN optimization_runs o ON o.workflow_id=w.id
+                WHERE pipeline_jobs.id IN (w.scan_job_id,w.patch_job_id,w.publish_job_id)
+                AND o.state IN ('queued','planning','awaiting_approval','build_queued','building'))"""
+        elif table=="security_jobs":
+            extra = " AND status NOT IN ('queued','running')"
         row = conn.execute(
-            f"DELETE FROM {table} WHERE {column} < now() - (%s || ' days')::interval RETURNING 1",
+            f"DELETE FROM {table} WHERE {column} < now() - (%s || ' days')::interval"+extra+" RETURNING 1",
             (days,),
         ).fetchall()
         result[table] = len(row)
