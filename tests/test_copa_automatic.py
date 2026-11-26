@@ -20,10 +20,23 @@ class AutomaticCopaTests(unittest.TestCase):
         self.assertFalse(cli.trivy_metadata_fresh({},now))
 
     def test_successful_stale_download_tries_next_source(self):
-        with patch.object(cli,"trivy_cache_metadata",return_value={}),patch.object(cli,"trivy_metadata_fresh",side_effect=[False,False,True]),patch.object(cli,"invalidate_trivy_metadata") as invalid,patch.object(cli,"run_trivy_command") as run:
+        with patch.object(cli,"trivy_cache_metadata",side_effect=[{},{"UpdatedAt":"old"},{"UpdatedAt":"new"}]),patch.object(cli,"trivy_db_age_hours",side_effect=[None,50,1]),patch.object(cli,"trivy_metadata_fresh",side_effect=[False,True]),patch.object(cli,"trivy_activate_stage") as activate,patch.object(cli,"trivy_stage_cleanup"),patch.object(cli,"trivy_mark_refresh"),patch.object(cli,"run_trivy_command") as run:
             cli.prepare_trivy_database("scanner","first/db:2,second/db:2")
             self.assertEqual(run.call_count,2)
-            self.assertEqual(invalid.call_count,2)
+            self.assertEqual(activate.call_count,2)
+
+    def test_overdue_cache_survives_failure_and_cooldown(self):
+        from subprocess import CalledProcessError
+        old={"UpdatedAt":"old"}
+        with patch.object(cli,"trivy_cache_metadata",return_value=old),patch.object(cli,"trivy_db_age_hours",return_value=56),patch.object(cli,"trivy_metadata_fresh",return_value=False),patch.object(cli,"trivy_refresh_recent",side_effect=[False,True]),patch.object(cli,"trivy_activate_stage") as activate,patch.object(cli,"trivy_stage_cleanup"),patch.object(cli,"trivy_mark_refresh"),patch.object(cli,"run_trivy_command",side_effect=CalledProcessError(1,["trivy"],stderr="network unavailable")) as run:
+            cli.prepare_trivy_database("scanner","first/db:2")
+            cli.prepare_trivy_database("scanner","first/db:2")
+            self.assertEqual(run.call_count,1)
+            activate.assert_not_called()
+
+    def test_independent_sources_preserve_order(self):
+        with patch.dict("os.environ",{"APPSEC_TRIVY_DB_SOURCES":"docker.arvancloud.ir/aquasec/trivy-db:2,ghcr.io/aquasecurity/trivy-db:2"}):
+            self.assertEqual(cli.trivy_db_repositories([]),"docker.arvancloud.ir/aquasec/trivy-db:2,ghcr.io/aquasecurity/trivy-db:2")
 
     def test_rewrite_keeps_suite_and_third_party_sources(self):
         original="URIs: http://deb.debian.org/debian\nSuites: trixie\nURIs: http://deb.debian.org/debian-security\nSigned-By: /key\ndeb https://nginx.org/packages/debian trixie nginx\n"

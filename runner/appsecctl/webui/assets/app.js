@@ -355,8 +355,12 @@
   }
 
   function renderUnifiedSummary(root, d) {
-    const optimized=renderOptimizedSummary(root,d);
     const scans = d?.scans || [];
+    for(const scan of scans){
+      const meta=scan.evidence?.trivy_db;
+      if(meta?.fresh===false)root.appendChild(node("p","info-note","WARNING: "+scan.phase+" scan used overdue Trivy DB ("+text(meta.age_hours)+" hours old; updated "+text(meta.updated_at)+"). Automatic publication blocked."));
+    }
+    const optimized=renderOptimizedSummary(root,d);
     const originalRecord = [...scans].reverse().find(s => s.phase === "original");
     const finalRecord = [...scans].reverse().find(s => s.phase === "patched");
     // Completed optimization is the final result. Do not render a duplicate

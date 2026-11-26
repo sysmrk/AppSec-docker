@@ -132,78 +132,179 @@ def docker_base() -> list[str]:
 
 
 def trivy_database_options(sources=None) -> list[str]:
-    db_refs = image_sources.artifact_repositories(sources, env("TRIVY_DB_REPOSITORY", "ghcr.io/aquasecurity/trivy-db:2"))
-    java_refs = image_sources.artifact_repositories(sources, env("TRIVY_JAVA_DB_REPOSITORY", "ghcr.io/aquasecurity/trivy-java-db:1"))
+    db_refs = trivy_db_repositories(sources)
+    java_refs = trivy_db_repositories(sources,java=True)
     return ["-e", f"TRIVY_DB_REPOSITORY={db_refs}", "-e", f"TRIVY_JAVA_DB_REPOSITORY={java_refs}"]
 
 
-def trivy_metadata_fresh(metadata, now=None):
-    """Validate repository content, not the time it happened to be downloaded."""
+def trivy_db_age_hours(metadata, now=None):
     try:
         now=now or datetime.now(timezone.utc)
         updated=datetime.fromisoformat(metadata["UpdatedAt"].replace("Z","+00:00"))
         next_update=datetime.fromisoformat(metadata["NextUpdate"].replace("Z","+00:00"))
-        return updated <= now < next_update and updated < next_update
+        if not updated<=now or not updated<next_update:
+            return None
+        return (now-updated).total_seconds()/3600
     except (ValueError, TypeError, KeyError, AttributeError):
+        return None
+
+
+def trivy_max_age(java=False):
+    key="APPSEC_TRIVY_JAVA_DB_MAX_AGE_HOURS" if java else "APPSEC_TRIVY_DB_MAX_AGE_HOURS"
+    try:
+        value=int(env(key,"168" if java else "72"))
+        if not 1<=value<=720:
+            raise ValueError()
+        return value
+    except ValueError:
+        raise RuntimeError("Invalid configuration: "+key) from None
+
+
+def trivy_metadata_fresh(metadata, now=None):
+    try:
+        now=now or datetime.now(timezone.utc)
+        return trivy_db_age_hours(metadata,now) is not None and now<datetime.fromisoformat(metadata["NextUpdate"].replace("Z","+00:00"))
+    except (ValueError,TypeError,KeyError,AttributeError):
         return False
 
 
-def trivy_cache_metadata(image, cache, java=False):
-    path="/cache/"+("java-db" if java else "db")+"/metadata.json"
-    cmd=["docker","run","--rm","--pull=never","--network","none","--user","0:0",
-         "-v",cache+":/cache:ro","--entrypoint","/bin/sh",image,"-c",'cat "$1"',"metadata",path]
+def trivy_cache_shell(image, cache, script, *args, writable=False):
+    return subprocess.run(["docker","run","--rm","--pull=never","--network","none","--user","0:0",
+                           "-v",cache+":/cache"+("" if writable else ":ro"),
+                           "--entrypoint","/bin/sh",image,"-ec",script,"cache",*args],
+                          check=True,capture_output=True,text=True,timeout=60).stdout
+
+
+def trivy_cache_metadata(image, cache, java=False, stage=None):
+    folder="/cache/"+((stage+"/") if stage else "")+("java-db" if java else "db")
+    filename="trivy-java.db" if java else "trivy.db"
     try:
-        result=subprocess.run(cmd,check=True,capture_output=True,text=True,timeout=30)
-        return json.loads(result.stdout)
-    except (OSError,subprocess.SubprocessError,ValueError):
+        raw=trivy_cache_shell(image,cache,'test -s "$1/$2"; cat "$1/metadata.json"',folder,filename)
+        metadata=json.loads(raw)
+        return metadata if metadata.get("Version")==(1 if java else 2) else {}
+    except (OSError,subprocess.SubprocessError,ValueError,AttributeError):
         return {}
 
 
-def invalidate_trivy_metadata(image, cache, java=False):
-    # Remove only the stale metadata marker, not the DB or unrelated cache.
-    # Trivy must download again rather than accepting its recent-download TTL.
-    path="/cache/"+("java-db" if java else "db")+"/metadata.json"
-    subprocess.run(["docker","run","--rm","--pull=never","--network","none","--user","0:0",
-                    "-v",cache+":/cache","--entrypoint","/bin/sh",image,"-ec",'rm -f -- "$1"',"metadata",path],
-                   check=True,timeout=30)
+def trivy_refresh_recent(image,cache,java=False):
+    marker=".appsec-java-refresh" if java else ".appsec-db-refresh"
+    try:
+        age=time.time()-int(trivy_cache_shell(image,cache,'cat "/cache/$1"',marker).strip())
+        return 0<=age<timeout_seconds("APPSEC_TRIVY_DB_REFRESH_COOLDOWN_SECONDS",21600)
+    except (OSError,subprocess.SubprocessError,ValueError):
+        return False
+
+
+def trivy_mark_refresh(image,cache,java=False):
+    marker=".appsec-java-refresh" if java else ".appsec-db-refresh"
+    trivy_cache_shell(image,cache,'printf "%s\n" "$2" > "/cache/$1"',marker,str(int(time.time())),writable=True)
+
+
+def trivy_stage_cleanup(image,cache,stage):
+    # stage is generated locally, never taken from a registry or user input.
+    if not re.fullmatch(r"\.appsec-db-stage-[0-9a-f]{32}",stage):
+        raise ValueError("Invalid staging directory")
+    trivy_cache_shell(image,cache,'rm -rf -- "/cache/$1"',stage,writable=True)
+
+
+def trivy_activate_stage(image,cache,stage,java=False):
+    if not re.fullmatch(r"\.appsec-db-stage-[0-9a-f]{32}",stage):
+        raise ValueError("Invalid staging directory")
+    kind="java-db" if java else "db"
+    # Both the new database and metadata were validated before this swap.
+    # Keep the prior pair until the new pair is installed; restore on error.
+    script='''cd /cache
+test -d "$1/$2"
+if [ -e "$2" ]; then mv "$2" "$1/previous"; fi
+if ! mv "$1/$2" "$2"; then
+    if [ -e "$1/previous" ]; then mv "$1/previous" "$2"; fi
+    exit 1
+fi
+'''
+    trivy_cache_shell(image,cache,script,stage,kind,writable=True)
+
+
+def trivy_db_repositories(sources,java=False):
+    key="APPSEC_TRIVY_JAVA_DB_SOURCES" if java else "APPSEC_TRIVY_DB_SOURCES"
+    explicit=env(key,"").strip()
+    if explicit:
+        # Explicit administrator-managed OCI DB sources are independent of
+        # the runnable-image pull list. Reject URLs/credentials and bad refs.
+        refs=[x.strip() for x in explicit.split(",") if x.strip()]
+        if not refs or any(not re.fullmatch(r"[A-Za-z0-9_.-]+(?::[0-9]+)?/[A-Za-z0-9_./-]+(?::[A-Za-z0-9_.-]+|@sha256:[a-f0-9]{64})",x) for x in refs):
+            raise RuntimeError("Invalid OCI database repository list: "+key)
+        return ",".join(dict.fromkeys(refs))
+    return image_sources.artifact_repositories(sources,env("TRIVY_JAVA_DB_REPOSITORY" if java else "TRIVY_DB_REPOSITORY","ghcr.io/aquasecurity/trivy-java-db:1" if java else "ghcr.io/aquasecurity/trivy-db:2"))
 
 
 def prepare_trivy_database(trivy_image: str, repositories: str, *, java: bool = False) -> None:
-    """Try one approved OCI artifact repository at a time, including HTTP 403/404.
-    
-    Reject expired metadata even after a successful download. The next source
-    must be tried with the stale metadata invalidated. No stale-cache fallback.
-    """
-    flag = "--java-db-repository" if java else "--db-repository"
-    download = "--download-java-db-only" if java else "--download-db-only"
-    stage = "java" if java else "vulnerability"
-    cache = env("TRIVY_CACHE_VOLUME", "appsec_trivy_cache")
-    attempts = []
-    if not trivy_metadata_fresh(trivy_cache_metadata(trivy_image,cache,java)):
-        invalidate_trivy_metadata(trivy_image,cache,java)
-    for ref in repositories.split(","):
-        cmd = docker_base() + ["--pull=never", "-v", f"{cache}:/root/.cache/trivy",
-                               trivy_image, "image", download, flag, ref]
+    """Stage each approved OCI artifact; never overwrite a usable cache with failed/older data."""
+    flag="--java-db-repository" if java else "--db-repository"
+    download="--download-java-db-only" if java else "--download-db-only"
+    stage_kind="java" if java else "vulnerability"
+    cache=env("TRIVY_CACHE_VOLUME","appsec_trivy_cache")
+    maximum=trivy_max_age(java)
+    current=trivy_cache_metadata(trivy_image,cache,java)
+    age=trivy_db_age_hours(current)
+    if age is not None and age<=maximum and trivy_metadata_fresh(current):
+        print(f"TRIVY_DB_READY kind={stage_kind} source=cache age_hours={age:.1f}",flush=True)
+        return
+    if age is not None and age<=maximum and trivy_refresh_recent(trivy_image,cache,java):
+        job_watch.emit("db_fallback",int(age))
+        print(f"TRIVY_DB_STALE_CACHE kind={stage_kind} age_hours={age:.1f} refresh=cooldown",flush=True)
+        return
+    attempts=[]
+    for ref in dict.fromkeys(x.strip() for x in repositories.split(",") if x.strip()):
+        job_watch.checkpoint()
+        stage=".appsec-db-stage-"+uuid4().hex
+        cmd=docker_base()+["--pull=never","-v",f"{cache}:/root/.cache/trivy",trivy_image,"image",
+                            "--cache-dir","/root/.cache/trivy/"+stage,"--no-progress",download,flag,ref]
+        print(f"TRIVY_DB_SOURCE_TRY kind={stage_kind} repository={ref}",flush=True)
         try:
-            run_trivy_command(cmd, f"trivy-{stage}-db", timeout_seconds("APPSEC_TRIVY_DB_TIMEOUT_SECONDS", 180))
-            if trivy_metadata_fresh(trivy_cache_metadata(trivy_image,cache,java)):
-                print(f"TRIVY_DB_READY kind={stage} repository={ref} (verified fresh cache or download)", flush=True)
-                return
-            reason="Database metadata expired or invalid"
-            job_watch.emit("db_stale")
-            invalidate_trivy_metadata(trivy_image,cache,java)
+            run_trivy_command(cmd,f"trivy-{stage_kind}-db",timeout_seconds("APPSEC_TRIVY_DB_TIMEOUT_SECONDS",180))
+            candidate=trivy_cache_metadata(trivy_image,cache,java,stage)
+            candidate_age=trivy_db_age_hours(candidate)
+            print(f"TRIVY_DB_METADATA kind={stage_kind} repository={ref} updated={candidate.get('UpdatedAt')} next_update={candidate.get('NextUpdate')} age_hours={candidate_age}",flush=True)
+            if candidate_age is not None and candidate_age<=maximum:
+                # Prefer newest valid content; never downgrade the active DB.
+                if age is None or candidate_age<=age:
+                    trivy_activate_stage(trivy_image,cache,stage,java)
+                    current=candidate
+                    age=candidate_age
+                if trivy_metadata_fresh(current):
+                    trivy_mark_refresh(trivy_image,cache,java)
+                    print(f"TRIVY_DB_READY kind={stage_kind} repository={ref}",flush=True)
+                    return
+                job_watch.emit("db_stale")
+                reason="Usable but overdue metadata; checking next source"
+            else:
+                reason="Invalid metadata or maximum DB age exceeded"
+                job_watch.emit("db_stale")
         except subprocess.CalledProcessError as exc:
-            reason = safe_detail(exc.stderr)
+            reason=safe_detail(exc.stderr)
         except OSError as exc:
-            reason = type(exc).__name__
+            reason=type(exc).__name__
         except RuntimeError as exc:
             if not str(exc).startswith("SCAN_STAGE_TIMEOUT:"):
                 raise
-            reason = str(exc)
+            reason=str(exc)
+        finally:
+            try:
+                trivy_stage_cleanup(trivy_image,cache,stage)
+            except (OSError,subprocess.SubprocessError):
+                print("TRIVY_DB_STAGE_CLEANUP_FAILED "+stage,flush=True)
         attempts.append(f"{ref}: {reason}")
-        print(f"TRIVY_DB_SOURCE_FAILED kind={stage} repository={ref} reason={reason}", flush=True)
-    code = "TRIVY_JAVA_DB" if java else "TRIVY_DB"
-    raise RuntimeError(code + ": All approved database repositories failed: " + "; ".join(attempts)[:1200])
+        print(f"TRIVY_DB_SOURCE_FAILED kind={stage_kind} repository={ref} reason={reason}",flush=True)
+    # Re-read the active pair before accepting the degraded local-only path.
+    current=trivy_cache_metadata(trivy_image,cache,java)
+    age=trivy_db_age_hours(current)
+    if age is not None and age<=maximum:
+        trivy_mark_refresh(trivy_image,cache,java)
+        job_watch.emit("db_fallback",int(age))
+        print(f"TRIVY_DB_STALE_CACHE kind={stage_kind} age_hours={age:.1f} max_age_hours={maximum}",flush=True)
+        return
+    code="TRIVY_JAVA_DB" if java else "TRIVY_DB"
+    raise RuntimeError(code+": No usable approved database within maximum age: "+"; ".join(attempts)[:1200])
 
 
 def trivy_runtime() -> tuple[str, list[str], list[str]]:
@@ -221,12 +322,12 @@ def trivy_runtime() -> tuple[str, list[str], list[str]]:
     else:
         resolved = tool_updates.resolve_scanner("trivy", trivy_image, sources, active_version)
     options = trivy_database_options(sources)
-    db_refs = image_sources.artifact_repositories(sources, env("TRIVY_DB_REPOSITORY", "ghcr.io/aquasecurity/trivy-db:2"))
+    db_refs = trivy_db_repositories(sources)
     prepare_trivy_database(resolved, db_refs)
     # The scan must not start another vulnerability DB download from defaults.
     options += ["-e", "TRIVY_SKIP_DB_UPDATE=true"]
     if env("APPSEC_PREFETCH_JAVA_DB", "false").lower() in ("1", "true", "yes"):
-        java_refs = image_sources.artifact_repositories(sources, env("TRIVY_JAVA_DB_REPOSITORY", "ghcr.io/aquasecurity/trivy-java-db:1"))
+        java_refs = trivy_db_repositories(sources,java=True)
         prepare_trivy_database(resolved, java_refs, java=True)
         options += ["-e", "TRIVY_SKIP_JAVA_DB_UPDATE=true"]
     return resolved, ["--pull=never"], options
@@ -248,6 +349,11 @@ def scan_image(image_ref: str, phase: str, pipeline_id: str | None = None) -> st
     try:
         expected_id = scan_evidence.local_image_id(image_ref)
         trivy_image, pull_options, database_options = trivy_runtime()
+        db_metadata=trivy_cache_metadata(trivy_image,trivy_cache_volume)
+        db_age=trivy_db_age_hours(db_metadata)
+        if db_age is None or db_age>trivy_max_age():
+            raise RuntimeError("TRIVY_DB: Active cache metadata invalid or too old")
+        db_fresh=trivy_metadata_fresh(db_metadata)
         command = docker_base() + pull_options + database_options + [
         "-v",
         "/var/run/docker.sock:/var/run/docker.sock",
@@ -280,8 +386,11 @@ def scan_image(image_ref: str, phase: str, pipeline_id: str | None = None) -> st
                              "verified": True,
                              "os_package_count": sum(len(t.get("Packages") or []) for t in report["Results"] if t.get("Class") == "os-pkgs"),
                              "application_package_count": sum(len(t.get("Packages") or []) for t in report["Results"] if t.get("Class") == "lang-pkgs")}
+        if trivy_cache_metadata(trivy_image,trivy_cache_volume)!=db_metadata:
+            raise RuntimeError("TRIVY_DB: Database metadata changed during scan")
         scanner_version, scanner_info = tool_updates.scanner_version(trivy_image, cache=True)
         report["_appsec"].update({"trivy_version": scanner_version, "trivy_info": scanner_info,
+                                  "trivy_db":{"fresh":db_fresh,"age_hours":round(db_age,2),"updated_at":db_metadata["UpdatedAt"],"next_update":db_metadata["NextUpdate"]},
                                   "scanner_image": trivy_image,
                                   "registry_digests": (report.get("Metadata") or {}).get("RepoDigests") or []})
         counts, vulnerabilities = parse_trivy_report(report)
@@ -682,6 +791,10 @@ def publish_prepared_patch(pipeline_id: str, publish_job_id: str) -> str:
             raise RuntimeError("No prepared, unpublished image exists for this workflow")
         if row["policy_status"] not in ("recommended", "not_recommended", "passed"):
             raise RuntimeError("The post-patch recommendation is missing")
+        # Revalidate auto-publication DB evidence at execution as well.
+        auto=conn.execute("SELECT unattended,auto_destination FROM manual_workflows WHERE publish_job_id=%s",(publish_job_id,)).fetchone()
+        if auto and auto["unattended"] and auto["auto_destination"] and not scan_evidence.publication_db_fresh(conn,pipeline_id):
+            raise RuntimeError("TRIVY_DB: Automatic publication requires fresh database evidence")
         # Revalidate registry authorization at execution time (revocation-safe).
         from .registry import image_registry
         host = image_registry(str(row["patched_image_ref"]))

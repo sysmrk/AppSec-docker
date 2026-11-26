@@ -127,3 +127,9 @@ def push_digest(output: str) -> str:
     if not matches:
         raise RuntimeError("SCAN_EVIDENCE_INVALID: Push returned no registry manifest digest; publication requires review")
     return matches[-1]
+
+def publication_db_fresh(conn,pipeline_id):
+    rows=conn.execute("""SELECT DISTINCT ON (phase) phase,raw_report->'_appsec'->'trivy_db' AS evidence
+                         FROM scan_runs WHERE pipeline_id=%s AND status='success' AND phase IN ('original','patched')
+                         ORDER BY phase,started_at DESC""",(pipeline_id,)).fetchall()
+    return {r["phase"] for r in rows if (r["evidence"] or {}).get("fresh") is True}=={"original","patched"}

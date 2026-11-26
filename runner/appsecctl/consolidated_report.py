@@ -275,6 +275,8 @@ def render(resource_id: str, payload: dict[str, Any]) -> str:
         final_policy = None
     a = (original.get("raw_report") or {}).get("_appsec") or {} if original else {}
     b = (patched.get("raw_report") or {}).get("_appsec") or {} if patched else {}
+    db_warnings="".join('<p class="muted">WARNING: '+e(label)+' scan used overdue Trivy DB (age hours: '+e(meta.get("age_hours"))+'; updated: '+e(meta.get("updated_at"))+'). Automatic publication blocked.</p>'
+                       for label,meta in (("Original",a.get("trivy_db") or {}),("Patched",b.get("trivy_db") or {})) if meta.get("fresh") is False)
     remediation = analyze_remediation(payload)
     verified_pair = remediation["comparison"] == "observed"
     if not verified_pair:
@@ -363,7 +365,7 @@ def render(resource_id: str, payload: dict[str, Any]) -> str:
         publication += '<p>Published image: <strong>' + e(patch.get("patched_image_ref")) + '</strong><br>Registry manifest digest: ' + e(patch.get("published_digest") or "not recorded (legacy)") + '<br>Published at: ' + e(patch.get("published_at")) + ' UTC</p>'
     publication += '<p class="muted">' + ("Scope: OS and application dependencies, all fix statuses. Absence of a finding is not proof of remediation or security." if verified_pair else "Legacy or incomplete scan evidence: comparison and recommendation are not verified. Run a new scan.") + '</p></section>'
     report = (
-        banner + optimization_section(payload) + publication +
+        banner + db_warnings + optimization_section(payload) + publication +
         '<div class="summary">' + cards + "</div>" +
         '<section><div class="section-title"><h2>What changed?</h2><p>Same image pipeline · initial scan vs patched rescan</p></div>'
         + bars(scans, original, patched) + changes + comparison_warning +

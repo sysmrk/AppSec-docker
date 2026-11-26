@@ -100,6 +100,12 @@ def advance(conn,job_id):
     if unattended and mode=="auto_patch" and row["mode"]=="continue_patch":
         destination=row.get("auto_destination")
         if destination:
+            from .scan_evidence import publication_db_fresh
+            if not publication_db_fresh(conn,workflow["pipeline_id"]):
+                mw.decide(conn,wid,actor,"skip_publish")
+                conn.execute("UPDATE manual_workflows SET auto_error=%s WHERE id=%s",
+                             ("Automatic registry output blocked: fresh DB evidence required for both scans; local image retained",wid))
+                return
             if workflow.get("policy_status") not in ("recommended","passed"):
                 mw.decide(conn,wid,actor,"skip_publish")
                 conn.execute("UPDATE manual_workflows SET auto_error=%s WHERE id=%s",

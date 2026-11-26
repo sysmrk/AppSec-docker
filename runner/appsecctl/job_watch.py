@@ -26,7 +26,8 @@ MESSAGES={
     "db":"Vulnerability database preparation started",
     "copa_eligible":"OS findings with a known fix eligible for targeted Copa",
     "copa_skipped":"Copa targeted patch skipped: no OS findings with a reported fix",
-    "db_stale":"Scanner database metadata expired or invalid; trying next approved source",
+    "db_stale":"Scanner database overdue or invalid; checking next approved source",
+    "db_fallback":"WARNING: using bounded overdue vulnerability database; age (hours)",
     "copa_targeted":"Copa strategy: targeted OS updates",
     "copa_comprehensive":"Copa strategy: comprehensive OS updates (no FixedVersion required)",
     "patch":"Copa / BuildKit patch started", "publish":"Registry publication started",
@@ -51,7 +52,7 @@ MESSAGES={
     "apt_simulate":"Simulating package changes",
     "apt_download":"Downloading approved version-pinned archives",
 }
-NUMERIC={"copa_eligible","elapsed","verified","trivy_packages","trivy_languages","buildkit_step","apt_upgrades","apt_removals"}
+NUMERIC={"db_fallback","copa_eligible","elapsed","verified","trivy_packages","trivy_languages","buildkit_step","apt_upgrades","apt_removals"}
 
 
 def checkpoint():

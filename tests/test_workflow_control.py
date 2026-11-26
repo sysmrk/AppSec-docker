@@ -23,7 +23,7 @@ class WorkflowControlTests(unittest.TestCase):
             row={"id":"workflow","created_by":"admin","project_id":None,"execution_mode":"auto_patch","unattended":True,"mode":"continue_patch","decision":"approve_patch","auto_destination":destination}
             actor={"id":"admin","role":"admin","disabled":False}
             conn.execute.return_value.fetchone.side_effect=[row,actor]
-            with patch.object(wc.mw,"get_workflow",return_value={"policy_status":policy}),patch.object(wc.mw,"decide") as decide,patch.object(wc.db,"insert_audit"):
+            with patch.object(wc.mw,"get_workflow",return_value={"policy_status":policy,"pipeline_id":"pipeline"}),patch.object(wc.scan_evidence,"publication_db_fresh",return_value=True),patch.object(wc.mw,"decide") as decide,patch.object(wc.db,"insert_audit"):
                 wc.advance(conn,"job")
                 self.assertEqual(decide.call_args.args[3],expected)
                 if expected=="approve_publish":
