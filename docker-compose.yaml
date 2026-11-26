@@ -68,12 +68,15 @@ x-runner-env: &runner-env
   APPSEC_PATCH_ENABLED: "true"
   APPSEC_MFA_ENCRYPTION_KEY: ${APPSEC_MFA_ENCRYPTION_KEY:-}
   APPSEC_REQUIRE_SECOND_APPROVER: ${APPSEC_REQUIRE_SECOND_APPROVER:-false}
+  APPSEC_ENABLE_OPTIMIZATION: ${APPSEC_ENABLE_OPTIMIZATION:-false}
+  APPSEC_OPTIMIZATION_VOLUME: ${APPSEC_OPTIMIZATION_VOLUME:-appsec_optimization}
 
 x-runner-volumes: &runner-volumes
   - /var/run/docker.sock:/var/run/docker.sock
   - /usr/bin/docker:/usr/local/bin/docker:ro
   - appsec_reports:/reports
   - appsec_workspaces:/workspaces
+  - optimization-data:/optimization
   - tool-updates:/tool-updates:ro
   - ./db:/db:ro
 
@@ -438,6 +441,8 @@ services:
       - maintenance
 
 volumes:
+  optimization-data:
+    name: ${APPSEC_OPTIMIZATION_VOLUME:-appsec_optimization}
   postgres-data:
   buildkit-data:
   tool-updates:

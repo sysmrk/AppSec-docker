@@ -45,6 +45,26 @@ def main() -> int:
             log_event("worker.image.cleanup", image=cleanup["image_ref"],
                       result="success" if error is None else "failed")
             continue
+        if "image" in queues:
+            from . import optimization
+            if optimization.enabled():
+                with db.connect() as conn:
+                    task=optimization.claim(conn)
+                if task:
+                    token=job_watch.CURRENT.set(("optimization",str(task["id"])))
+                    job_watch.emit("optimization")
+                    try:
+                        status,plan,result=optimization.execute(task)
+                        with db.connect() as conn:
+                            optimization.finish(conn,task,status,plan,result)
+                        job_watch.emit("success")
+                    except Exception as exc:
+                        with db.connect() as conn:
+                            optimization.finish(conn,task,"failed",error=type(exc).__name__)
+                        job_watch.emit("failed")
+                    finally:
+                        job_watch.CURRENT.reset(token)
+                    continue
         job = None
         if "image" in queues:
             with db.connect() as conn:

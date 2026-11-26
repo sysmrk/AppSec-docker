@@ -84,6 +84,11 @@ def purge_pipeline(conn, pipeline_id: str) -> dict:
     ).fetchall()
     if any(j["status"] in ("queued", "running") for j in jobs):
         raise RuntimeError("Pending or running jobs exist; finish or cancel them first")
+    active_optimization=conn.execute("""SELECT 1 FROM optimization_runs o JOIN manual_workflows w ON w.id=o.workflow_id
+        JOIN pipeline_jobs j ON j.id=w.scan_job_id WHERE j.pipeline_id=%s AND o.state IN
+        ('queued','planning','awaiting_approval','build_queued','building') LIMIT 1""",(pid,)).fetchone()
+    if active_optimization:
+        raise RuntimeError("Finish or cancel active optimization first")
     paths = set()
     for query, arg in [
         ("SELECT path FROM artifacts WHERE pipeline_id=%s", pid),

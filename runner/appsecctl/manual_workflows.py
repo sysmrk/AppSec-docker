@@ -154,6 +154,8 @@ def decide(
     ).fetchone()
     if not locked:
         raise RuntimeError("workflow not found")
+    if conn.execute("SELECT 1 FROM optimization_runs WHERE workflow_id=%s AND state IN ('queued','planning','awaiting_approval','build_queued','building') LIMIT 1",(workflow_id,)).fetchone():
+        raise RuntimeError("Finish or cancel active optimization before changing workflow approval")
 
     if action in ("approve_publish", "skip_publish"):
         if locked["decision"] != "approve_patch" or locked["publish_decision"] is not None:

@@ -44,7 +44,9 @@ def emit(event, number=None):
     if number is not None and (event not in NUMERIC or type(number) is not int or not 0<=number<=10**9):
         return
     detail=MESSAGES[event]+(": "+str(number) if number is not None else "")
-    column="image_job_id" if scope[0]=="image" else "security_job_id"
+    column={"image":"image_job_id","security":"security_job_id","optimization":"optimization_id"}.get(scope[0])
+    if not column:
+        return
     try:
         with db.connect() as conn:
             conn.execute("INSERT INTO job_watch_events ("+column+",event,detail) VALUES (%s,%s,%s)",
@@ -59,11 +61,11 @@ def emit(event, number=None):
 
 
 def read(conn, kind, ids, after=0, limit=200):
-    if kind not in ("image","security") or not 0<=after<=2**63-1 or not 1<=limit<=200:
+    if kind not in ("image","security","optimization") or not 0<=after<=2**63-1 or not 1<=limit<=200:
         raise ValueError("Invalid watch cursor")
     if not ids:
         return []
-    column="image_job_id" if kind=="image" else "security_job_id"
+    column={"image":"image_job_id","security":"security_job_id","optimization":"optimization_id"}[kind]
     return [dict(row) for row in conn.execute(
         "SELECT id,created_at,event,detail FROM job_watch_events WHERE "+column+
         " = ANY(%s::uuid[]) AND id>%s ORDER BY id LIMIT %s",

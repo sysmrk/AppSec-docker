@@ -652,6 +652,82 @@
     if (!current.busy) {clearTimeout(current.timer);poll();}
   }
 
+  function optimizationPanel(root,w) {
+    const panel=section(root,"Package optimization · local candidate");
+    const body=node("div");panel.appendChild(body);
+    const path="/api/manual-workflows/"+encodeURIComponent(w.id)+"/optimization";
+    const refresh=node("button","outline","Refresh optimization");refresh.type="button";panel.appendChild(refresh);
+    async function load() {
+      try {
+        const data=await request(path);
+        clear(body);
+        body.appendChild(node("p","info-note",data.enabled?"Explicit local-only optimization. Never publishes or replaces the existing patch.":"Optimization worker disabled; enable only in an isolated lab."));
+        const admin=state.user?.role==="admin";
+        const active=data.runs.some(r=>["queued","planning","awaiting_approval","build_queued","building"].includes(r.state));
+        if(admin && data.enabled && !active && ["awaiting_approval","awaiting_publication","completed","completed_without_publish","published","publication_blocked"].includes(w.state)) {
+          const form=node("div","approval-actions");
+          const stage=node("select");
+          for(const s of ["original","residual"]) {const o=node("option","",s==="original"?"Original scan":"After Copa patch");o.value=s;stage.appendChild(o);}
+          if(w.patch_job_status==="success")stage.value="residual";
+          const modules=[];
+          for(const name of data.modules) {
+            const label=node("label","approval-checkbox"),check=node("input");check.type="checkbox";check.value=name;
+            label.appendChild(check);label.appendChild(node("span","",name));body.appendChild(label);modules.push(check);
+          }
+          form.appendChild(stage);
+          for(const [operation,title] of [["availability","Check package repository"],["inventory","Reconcile inventory"],["debloat","Plan module removal"]]) {
+            const b=node("button","outline",title);b.type="button";b.addEventListener("click",async()=>{
+              b.disabled=true;
+              try {
+                await request(path,{method:"POST",body:JSON.stringify({operation,stage:stage.value,roots:operation==="debloat"?modules.filter(m=>m.checked).map(m=>m.value):[]})});
+                await load();
+              } catch(e) {notification(e.message,true);b.disabled=false;}
+            });form.appendChild(b);
+          }
+          body.appendChild(form);
+        }
+        if(admin) {
+          const settings=node("button","outline","Package mirror priority");settings.type="button";
+          settings.addEventListener("click",async()=>{
+            try {
+              const current=await request("/api/optimization/mirrors");
+              const value=window.prompt("Approved priority (comma-separated: tuna,debian). Empty disables availability. Only approve reachable trusted egress.",current.selected.join(","));
+              if(value===null)return;
+              await request("/api/optimization/mirrors",{method:"PUT",body:JSON.stringify({mirrors:value.split(",").map(x=>x.trim()).filter(Boolean)})});
+              notification("Mirror priority saved");
+            }catch(e){notification(e.message,true);}
+          });body.appendChild(settings);
+        }
+        for(const run of data.runs) {
+          const card=node("div","panel");card.appendChild(node("h3","",run.operation+" · "+run.stage+" · "+run.state));
+          if(run.error_code)card.appendChild(node("p","warning","Task failed: "+run.error_code+"; inspect worker diagnostics."));
+          if(run.plan) {
+            card.appendChild(node("p","info-note","Estimated findings: "+run.plan.estimated_findings+" · Packages to remove: "+run.plan.remove.length));
+            const details=node("details");details.appendChild(node("summary","","Review exact removal closure"));details.appendChild(node("pre","job-terminal",run.plan.remove.join("\n")));card.appendChild(details);
+            if(admin&&run.state==="awaiting_approval") {
+              const label=node("label","approval-checkbox"),check=node("input");check.type="checkbox";
+              label.appendChild(check);label.appendChild(node("span","","I reviewed every package and accept loss of these optional capabilities."));card.appendChild(label);
+              const b=node("button","primary","Approve local build & rescan");b.type="button";b.disabled=true;
+              check.addEventListener("change",()=>{b.disabled=!check.checked;});
+              b.addEventListener("click",async()=>{b.disabled=true;try{await request(path+"/"+run.id+"/decision",{method:"POST",body:JSON.stringify({action:"approve",plan_sha256:run.plan.plan_sha256})});await load();}catch(e){notification(e.message,true);b.disabled=false;}});
+              card.appendChild(b);
+            }
+          }
+          if(admin&&["queued","awaiting_approval","build_queued"].includes(run.state)){
+            const cancel=node("button","outline","Cancel task");cancel.type="button";cancel.addEventListener("click",async()=>{try{await request(path+"/"+run.id+"/decision",{method:"POST",body:JSON.stringify({action:"cancel"})});await load();}catch(e){notification(e.message,true);}});card.appendChild(cancel);
+          }
+          if(run.result) {
+            const detail=node("details");detail.appendChild(node("summary","","Result evidence"));detail.appendChild(node("pre","job-terminal",JSON.stringify(run.result,null,2)));card.appendChild(detail);
+            if(run.result.candidate)card.appendChild(node("p","warning","Local candidate: "+run.result.candidate+" · functional validation and publication not authorized."));
+            if(run.result.candidate_findings!=null)showMetrics(card,[["Base findings",run.result.base_findings],["Candidate findings",run.result.candidate_findings],["Introduced",run.result.introduced]]);
+          }
+          body.appendChild(card);
+        }
+      }catch(e){body.textContent=e.message;}
+    }
+    refresh.addEventListener("click",load);load();
+  }
+
   async function openGuided(workflowId, silent = false) {
     selectView("guided");
     state.selectedWorkflow = workflowId;
@@ -673,6 +749,7 @@
       }
       root.appendChild(summary);
       attachWatch(root,"/api/manual-workflows/"+encodeURIComponent(w.id)+"/watch");
+      if(w.pipeline_id)optimizationPanel(root,w);
       if (w.pipeline_id && ["awaiting_approval","awaiting_publication","completed","completed_without_publish","published","patch_failed","publication_blocked"].includes(w.state)) {
         const planBox = node("div", "panel");
         const stage = ["awaiting_publication","completed_without_publish","published","publication_blocked"].includes(w.state) ? "residual" : "original";

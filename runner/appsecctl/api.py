@@ -1284,6 +1284,79 @@ def list_manual_workflows(
         return mw.list_workflows(conn, user, limit)
 
 
+class MirrorSettingsRequest(BaseModel):
+    model_config=ConfigDict(extra="forbid")
+    mirrors: list[str] = Field(max_length=2)
+
+
+class OptimizationRequest(BaseModel):
+    model_config=ConfigDict(extra="forbid")
+    operation: str = Field(max_length=20)
+    stage: str = Field(max_length=12)
+    roots: list[str] = Field(default_factory=list,max_length=3)
+
+
+class OptimizationDecision(BaseModel):
+    model_config=ConfigDict(extra="forbid")
+    action: str = Field(max_length=10)
+    plan_sha256: str | None = Field(default=None,max_length=64)
+
+
+@app.get("/api/optimization/mirrors")
+def optimization_mirrors(user: dict[str, Any] = Depends(require_role("admin"))):
+    from . import optimization, apt_optimization
+    with db.connect() as conn:
+        return {"selected":optimization.mirrors(conn),"available":apt_optimization.MIRRORS,"enabled":optimization.enabled()}
+
+
+@app.put("/api/optimization/mirrors")
+def optimization_mirror_update(request: MirrorSettingsRequest,user: dict[str, Any] = Depends(require_role("admin"))):
+    from . import optimization
+    try:
+        with db.connect() as conn:
+            return {"selected":optimization.set_mirrors(conn,user,request.mirrors)}
+    except ValueError as exc:
+        raise HTTPException(status_code=422,detail=str(exc)) from None
+
+
+@app.get("/api/manual-workflows/{workflow_id}/optimization")
+def optimization_list(workflow_id: UUID,user: dict[str, Any] = Depends(current_user)):
+    from . import optimization, apt_optimization
+    try:
+        with db.connect() as conn:
+            return {"enabled":optimization.enabled(),"modules":apt_optimization.OPTIONAL,
+                    "runs":optimization.list_runs(conn,str(workflow_id),user)}
+    except LookupError:
+        raise HTTPException(status_code=404,detail="workflow not found") from None
+
+
+@app.post("/api/manual-workflows/{workflow_id}/optimization",status_code=201)
+def optimization_create(workflow_id: UUID,request: OptimizationRequest,user: dict[str, Any] = Depends(require_role("admin"))):
+    from . import optimization
+    try:
+        with db.connect() as conn:
+            return optimization.create(conn,str(workflow_id),user,request.operation,request.stage,request.roots)
+    except PermissionError:
+        raise HTTPException(status_code=403,detail="workflow access denied") from None
+    except ValueError as exc:
+        raise HTTPException(status_code=409,detail=str(exc)) from None
+
+
+@app.post("/api/manual-workflows/{workflow_id}/optimization/{task_id}/decision")
+def optimization_decide(workflow_id: UUID,task_id: UUID,request: OptimizationDecision,
+                        user: dict[str, Any] = Depends(require_role("admin"))):
+    from . import optimization
+    try:
+        with db.connect() as conn:
+            return optimization.decide(conn,str(workflow_id),str(task_id),user,request.action,request.plan_sha256)
+    except LookupError:
+        raise HTTPException(status_code=404,detail="optimization not found") from None
+    except PermissionError:
+        raise HTTPException(status_code=403,detail="approval denied") from None
+    except ValueError as exc:
+        raise HTTPException(status_code=409,detail=str(exc)) from None
+
+
 @app.get("/api/manual-workflows/{workflow_id}/watch")
 def workflow_watch(workflow_id: str, after: int = 0, user: dict[str, Any] = Depends(current_user)):
     from . import manual_workflows as mw, job_watch
@@ -1298,6 +1371,8 @@ def workflow_watch(workflow_id: str, after: int = 0, user: dict[str, Any] = Depe
             raise HTTPException(status_code=404,detail="workflow not found")
         ids=[str(w[k]) for k in ("scan_job_id","patch_job_id","publish_job_id") if w.get(k)]
         rows=job_watch.read(conn,"image",ids,after)
+        task_ids=[str(r["id"]) for r in conn.execute("SELECT id FROM optimization_runs WHERE workflow_id=%s",(workflow_id,)).fetchall()]
+        rows=sorted(rows+job_watch.read(conn,"optimization",task_ids,after),key=lambda r:r["id"])[:200]
     return {"events":rows,"state":w["state"],"next_cursor":rows[-1]["id"] if rows else after}
 
 
