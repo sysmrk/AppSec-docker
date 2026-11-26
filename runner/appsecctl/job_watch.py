@@ -36,6 +36,7 @@ MESSAGES={
     "plan":"Package removal plan prepared", "build":"Approved candidate build started",
     "rescan":"Candidate rescan started", "review":"Candidate review complete",
     "approval_wait":"Plan ready; waiting for administrator approval",
+    "stopped":"Stop acknowledged; no further workflow stages will run",
     "apt_index":"APT repository index received", "apt_fetch":"APT metadata/package download received",
     "apt_remove":"APT package removal observed", "apt_install":"APT package installation observed",
     "apt_upgrades":"APT reported upgrade candidates", "apt_removals":"APT reported removal candidates",
@@ -45,6 +46,16 @@ MESSAGES={
     "apt_download":"Downloading approved version-pinned archives",
 }
 NUMERIC={"elapsed","verified","trivy_packages","trivy_languages","buildkit_step","apt_upgrades","apt_removals"}
+
+
+def checkpoint():
+    scope=CURRENT.get()
+    if scope is None or scope[0] not in ("image","optimization"):
+        return
+    from . import workflow_control
+    with db.connect() as conn:
+        if workflow_control.requested(conn,*scope):
+            raise workflow_control.StopRequested("Workflow stopped at a safe execution boundary")
 
 
 def emit(event, number=None):

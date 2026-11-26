@@ -104,6 +104,7 @@
     if(view==="integrations") request("/api/integrations/status").then(d=>{
       $("integration-ai-status").textContent=d.local_ai_enabled?"Local AI configured: "+d.model+" (model connectivity verified on request)":"Local AI disabled";
     }).catch(e=>{$("integration-ai-status").textContent=e.message;});
+    if(view==="registries"&&state.user?.role==="admin")loadPackageMirrors().catch(e=>notification(e.message,true));
     if (view === "health") refreshSystemHealth().catch(error => notification(error.message, true));
     if (view === "guided") refreshGuided().catch(error => notification(error.message, true));
     if (view === "projects" && state.user?.role === "admin") loadAdminData().catch(error => notification(error.message, true));
@@ -670,7 +671,7 @@
   }
 
   function optimizationPanel(root,w) {
-    const panel=section(root,"Package optimization · local candidate");
+    const panel=section(root,"Optimization results and approval");
     const body=node("div");panel.appendChild(body);
     const path="/api/manual-workflows/"+encodeURIComponent(w.id)+"/optimization";
     const refresh=node("button","outline","Refresh optimization");refresh.type="button";panel.appendChild(refresh);
@@ -683,6 +684,8 @@
         const admin=state.user?.role==="admin";
         const active=data.runs.some(r=>["queued","planning","awaiting_approval","build_queued","building"].includes(r.state));
         if(admin && data.enabled && !active && ["awaiting_approval","awaiting_publication","completed","completed_without_publish","published","publication_blocked"].includes(w.state)) {
+          const advanced=node("details");advanced.appendChild(node("summary","","Advanced package diagnostics (optional)"));
+          advanced.appendChild(node("p","hint","Repository check finds available updates; inventory compares scanner and dpkg; native upgrade builds an alternative candidate; module removal reduces unused functionality."));
           const form=node("div","approval-actions");
           const stage=node("select");
           for(const s of ["original","residual"]) {const o=node("option","",s==="original"?"Original scan":"After Copa patch");o.value=s;stage.appendChild(o);}
@@ -690,7 +693,7 @@
           const modules=[];
           for(const name of data.modules) {
             const label=node("label","approval-checkbox"),check=node("input");check.type="checkbox";check.value=name;
-            label.appendChild(check);label.appendChild(node("span","",name));body.appendChild(label);modules.push(check);
+            label.appendChild(check);label.appendChild(node("span","",name));advanced.appendChild(label);modules.push(check);
           }
           form.appendChild(stage);
           for(const [operation,title] of [["availability","Check package repository"],["inventory","Reconcile inventory"],["upgrade","Plan native APT upgrade"],["debloat","Plan module removal"]]) {
@@ -702,19 +705,7 @@
               } catch(e) {notification(e.message,true);b.disabled=false;}
             });form.appendChild(b);
           }
-          body.appendChild(form);
-        }
-        if(admin) {
-          const settings=node("button","outline","Package mirror priority");settings.type="button";
-          settings.addEventListener("click",async()=>{
-            try {
-              const current=await request("/api/optimization/mirrors");
-              const value=window.prompt("Approved priority (comma-separated: tuna,debian). Empty disables availability. Only approve reachable trusted egress.",current.selected.join(","));
-              if(value===null)return;
-              await request("/api/optimization/mirrors",{method:"PUT",body:JSON.stringify({mirrors:value.split(",").map(x=>x.trim()).filter(Boolean)})});
-              notification("Mirror priority saved");
-            }catch(e){notification(e.message,true);}
-          });body.appendChild(settings);
+          advanced.appendChild(form);body.appendChild(advanced);
         }
         for(const run of data.runs) {
           const card=node("div","panel");card.appendChild(node("h3","",run.operation+" · "+run.stage+" · "+run.state));
@@ -771,7 +762,19 @@
       }
       root.appendChild(summary);
       attachWatch(root,"/api/manual-workflows/"+encodeURIComponent(w.id)+"/watch");
-      if(w.pipeline_id)optimizationPanel(root,w);
+      root.appendChild(node("p","info-note","Selected route: "+(w.execution_mode||"guided").replaceAll("_"," ")));
+      if(w.auto_error)root.appendChild(node("p","warning",w.auto_error));
+      if(["admin","operator"].includes(state.user?.role)&&!["stopped","stopping","publishing","published","failed","patch_failed","publish_failed","canceled"].includes(w.state)){
+        const stop=node("button","danger-button","Stop workflow");stop.type="button";
+        stop.addEventListener("click",async()=>{
+          if(!window.confirm("Stop future stages and retries? The current tool operation may finish at a safe boundary. Local images and reports are retained."))return;
+          stop.disabled=true;
+          try{await request("/api/manual-workflows/"+encodeURIComponent(w.id)+"/stop",{method:"POST"});await openGuided(w.id);}
+          catch(e){notification(e.message,true);stop.disabled=false;}
+        });root.appendChild(stop);
+      }
+      if(w.state==="stopping")root.appendChild(node("p","warning","Stop requested. Waiting for current safe tool boundary; no further stages or retries."));
+      if(w.pipeline_id && !["queued","scanning","patch_queued","patch_running","publishing","stopped","stopping"].includes(w.state))optimizationPanel(root,w);
       if (w.pipeline_id && ["awaiting_approval","awaiting_publication","completed","completed_without_publish","published","patch_failed","publication_blocked"].includes(w.state)) {
         const planBox = node("div", "panel");
         const stage = ["awaiting_publication","completed_without_publish","published","publication_blocked"].includes(w.state) ? "residual" : "original";
@@ -920,11 +923,7 @@
         }
         controls.appendChild(actions);
       }
-      if (w.state === "queued" && (state.user?.role === "admin" || state.user?.role === "operator")) {
-        const cancel = node("button", "outline", "Cancel queued scan");
-        cancel.addEventListener("click", () => decideGuided(w.id, "cancel"));
-        root.appendChild(cancel);
-      }
+
       if (["failed", "patch_failed", "publish_failed"].includes(w.state)) {
         const failure = w.publish_error || w.patch_error || w.scan_error;
         root.appendChild(node("p", "warning", "Operation failed: " +
@@ -1146,15 +1145,36 @@
   $("refresh-button").addEventListener("click", async () => { quiet(); try { await refreshOverview(); } catch (e) { notification(e.message, true); } });
   $("health-refresh-button").addEventListener("click", async () => { try { await refreshSystemHealth(); } catch (e) { notification(e.message, true); } });
   $("guided-refresh").addEventListener("click", async () => { try { await refreshGuided(); if (state.selectedWorkflow) await openGuided(state.selectedWorkflow); } catch (e) { notification(e.message, true); } });
+  $("execution-mode").addEventListener("change",()=>{
+    const mode=$("execution-mode").value;
+    $("optimization-choices").hidden=mode!=="auto_optimize";
+    $("execution-help").textContent=({guided:"Review the initial scan and decide whether to patch.",scan_only:"Scan and SBOM only; no local patch.",auto_patch:"After a verified scan, build and rescan a local Copa patch if fixes exist.",auto_optimize:"After Copa, or on the original if no fix is available, prepare a removal plan; exact removal requires approval."})[mode];
+  });
+  async function loadPackageMirrors(){
+    const data=await request("/api/optimization/mirrors");
+    $("package-mirror-choice").value=data.selected.join(",");
+    $("package-mirror-feedback").textContent=data.enabled?"Optimization enabled":"Optimization disabled on worker";
+  }
+  $("save-package-mirrors").addEventListener("click",async()=>{
+    const value=$("package-mirror-choice").value;
+    try{
+      await request("/api/optimization/mirrors",{method:"PUT",body:JSON.stringify({mirrors:value?value.split(","):[]})});
+      $("package-mirror-feedback").textContent="Saved. Applies to future APT jobs.";
+    }catch(e){notification(e.message,true);}
+  });
   $("image-form").addEventListener("submit", async event => {
     event.preventDefault();
     if (!state.user || state.user.role === "viewer") return notification("Viewer cannot start scans.", true);
-    const payload = { image: $("image-reference").value.trim(), project_id: $("image-project").value || null };
+    const mode=$("execution-mode").value;
+    const roots=mode==="auto_optimize"?Array.from($("optimization-choices").querySelectorAll("input:checked"),x=>x.value):[];
+    if(mode==="auto_optimize"&&!roots.length)return notification("Select at least one unused optional module.",true);
+    if(["auto_patch","auto_optimize"].includes(mode)&&!window.confirm("Authorize local Copa patching after a verified scan? No registry push or package removal is authorized."))return;
+    const payload = { image: $("image-reference").value.trim(), project_id: $("image-project").value || null,execution_mode:mode,optimization_roots:roots };
     try {
       const result = await request("/api/manual-workflows", { method: "POST", body: JSON.stringify(payload) });
       guidedPage = 1; selectedPipelines.clear();
       await openGuided(result.id);
-      notification("Your scan is queued. AppSec will wait for your decision before any patch or registry push.");
+      notification("Workflow queued with your selected route. Registry publication always requires separate approval.");
     } catch (error) { notification(error.message, true); }
   });
   $("repo-form").addEventListener("submit", async event => {
@@ -1191,7 +1211,7 @@
     }
     if (state.view === "guided" && state.selectedWorkflow && !["awaiting_approval", "awaiting_publication", "publication_blocked",
       "completed", "completed_without_publish", "published",
-      "failed", "patch_failed", "publish_failed", "canceled"].includes(state.workflowState)) {
+      "failed", "patch_failed", "publish_failed", "canceled","stopped"].includes(state.workflowState)) {
       openGuided(state.selectedWorkflow, true).catch(() => {});
     }
     if (state.view === "guided" && !bulkBusy) refreshGuided().catch(() => {});

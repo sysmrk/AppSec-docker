@@ -30,6 +30,7 @@ def env(name: str, default: str) -> str:
 
 def run_command(command: list[str], *, capture_errors: bool = False, environment: dict[str, str] | None = None,
                 timeout: int | None = None) -> None:
+    job_watch.checkpoint()
     print("+ " + " ".join(command), flush=True)
     if capture_errors and job_watch.CURRENT.get() is not None:
         try:
@@ -41,6 +42,7 @@ def run_command(command: list[str], *, capture_errors: bool = False, environment
     else:
         subprocess.run(command, check=True, stderr=subprocess.PIPE if capture_errors else None,
                        text=capture_errors, env=environment, timeout=timeout)
+    job_watch.checkpoint()
 
 
 def timeout_seconds(name: str, default: int) -> int:

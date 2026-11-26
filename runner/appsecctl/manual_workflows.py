@@ -19,6 +19,8 @@ def _uuid(value: str) -> UUID:
 
 
 def _state(item: dict[str, Any]) -> str:
+    if item.get("stop_requested_at"):
+        return "stopping" if item.get("optimization_running") or any(item.get(k)=="running" for k in ("scan_job_status","patch_job_status","publish_job_status")) else "stopped"
     decision = item.get("decision")
     if decision == "finish":
         return "completed"
@@ -48,16 +50,25 @@ def _state(item: dict[str, Any]) -> str:
     return "scanning" if scan_status == "running" else "queued"
 
 
-def create(conn, image: str, project_id: str | None, user_id: str) -> dict[str, str]:
+def create(conn, image: str, project_id: str | None, user_id: str, execution_mode="guided", roots=()) -> dict[str, str]:
+    from psycopg.types.json import Jsonb
+    from . import apt_optimization
+    if execution_mode not in ("guided","scan_only","auto_patch","auto_optimize"):
+        raise ValueError("Unknown workflow mode")
+    if execution_mode=="auto_optimize":
+        if not roots or len(roots)!=len(set(roots)) or not set(roots)<=set(apt_optimization.OPTIONAL):
+            raise ValueError("Select optional modules to review")
+    elif roots:
+        raise ValueError("Optional modules only apply to optimization mode")
     name = image.strip()
     if not name or len(name) > 1024 or any(x.isspace() for x in name):
         raise ValueError("enter a valid nonempty container image reference without whitespace")
     workflow_id = str(uuid4())
     scan_job = db.enqueue_pipeline(conn, name, project_id=project_id, mode="scan")
     conn.execute(
-        """INSERT INTO manual_workflows (id, requested_image, project_id, created_by, scan_job_id)
-           VALUES (%s, %s, %s, %s, %s)""",
-        (workflow_id, name, project_id, user_id, scan_job),
+        """INSERT INTO manual_workflows (id, requested_image, project_id, created_by, scan_job_id, execution_mode, optimization_roots)
+           VALUES (%s, %s, %s, %s, %s, %s, %s)""",
+        (workflow_id, name, project_id, user_id, scan_job, execution_mode, Jsonb(sorted(roots))),
     )
     return {"id": workflow_id, "image": name, "scan_job_id": scan_job, "state": "queued"}
 
@@ -69,7 +80,8 @@ _WORKFLOW_QUERY = """
            w.scan_job_id, w.patch_job_id, w.publish_job_id,
            w.decision, w.approved_by, w.approved_at,
            w.publish_decision, w.published_by, w.publish_approved_at,
-           w.created_at, w.updated_at,
+           w.created_at, w.updated_at, w.execution_mode, w.optimization_roots, w.stop_requested_at, w.auto_step, w.auto_error,
+           EXISTS (SELECT 1 FROM optimization_runs o WHERE o.workflow_id=w.id AND o.state IN ('planning','building')) AS optimization_running,
            s.status AS scan_job_status, s.last_error AS scan_error,
            p.status AS patch_job_status, p.last_error AS patch_error,
            pub.status AS publish_job_status, pub.last_error AS publish_error,
@@ -154,6 +166,8 @@ def decide(
     ).fetchone()
     if not locked:
         raise RuntimeError("workflow not found")
+    if locked.get("stop_requested_at"):
+        raise RuntimeError("Workflow stopped; start a new workflow")
     if conn.execute("SELECT 1 FROM optimization_runs WHERE workflow_id=%s AND state IN ('queued','planning','awaiting_approval','build_queued','building') LIMIT 1",(workflow_id,)).fetchone():
         raise RuntimeError("Finish or cancel active optimization before changing workflow approval")
 

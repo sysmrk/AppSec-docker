@@ -53,6 +53,8 @@ def lock_workflow(conn,wid,user):
 
 
 def require_idle(w):
+    if w.get("stop_requested_at"):
+        raise ValueError("Workflow stopped")
     if w["state"] not in ("awaiting_approval","awaiting_publication","completed","completed_without_publish","published","publication_blocked"):
         raise ValueError("Workflow must have completed scanning/patching")
     if not w.get("pipeline_id"):

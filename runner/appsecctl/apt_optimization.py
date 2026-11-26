@@ -37,10 +37,10 @@ def run(args, timeout=180, *, capture=True):
     # Host CLI has no DB dependency. Worker can attach bounded live telemetry.
     watch=sys.modules.get("appsecctl.job_watch")
     if watch is not None and watch.CURRENT.get() is not None:
-        if capture:
-            return watch.capture_output(args,timeout=timeout)
-        watch.capture_stderr(args,timeout=timeout)
-        return None
+        watch.checkpoint()
+        result=watch.capture_output(args,timeout=timeout) if capture else watch.capture_stderr(args,timeout=timeout)
+        watch.checkpoint()
+        return result
     return subprocess.run(args, check=True, text=True, timeout=timeout,
                           stdout=subprocess.PIPE if capture else sys.stderr,
                           stderr=subprocess.PIPE if capture else sys.stderr).stdout

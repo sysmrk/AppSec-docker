@@ -8,7 +8,7 @@ from . import db
 from .errors import safe_message, classify
 from .cli import run_pipeline, continue_pipeline_patch, publish_prepared_patch
 from .logging_utils import log_event
-from . import job_watch
+from . import job_watch, workflow_control
 from .reports import notify, write_html_report, write_security_sarif
 from .security import execute_security_job
 from .history import claim_removal, finish_removal
@@ -54,15 +54,19 @@ def main() -> int:
                     token=job_watch.CURRENT.set(("optimization",str(task["id"])))
                     job_watch.emit("optimization")
                     try:
+                        job_watch.checkpoint()
                         status,plan,result=optimization.execute(task)
                         with db.connect() as conn:
+                            if workflow_control.requested(conn,"optimization",str(task["id"])):
+                                status="canceled"
                             optimization.finish(conn,task,status,plan,result)
                         job_watch.emit("approval_wait" if status=="awaiting_approval" else
-                                       "failed" if status=="failed" else "success")
+                                       "stopped" if status=="canceled" else "failed" if status=="failed" else "success")
                     except Exception as exc:
                         with db.connect() as conn:
-                            optimization.finish(conn,task,"failed",error=type(exc).__name__)
-                        job_watch.emit("failed")
+                            stopped=workflow_control.requested(conn,"optimization",str(task["id"]))
+                            optimization.finish(conn,task,"canceled" if stopped else "failed",error=type(exc).__name__)
+                        job_watch.emit("stopped" if stopped else "failed")
                     finally:
                         job_watch.CURRENT.reset(token)
                     continue
@@ -80,6 +84,7 @@ def main() -> int:
             token = job_watch.CURRENT.set(("image",job_id))
             job_watch.emit("claimed")
             try:
+                job_watch.checkpoint()
                 if str(job.get("mode")) in ("patch", "continue_patch", "publish_patch") and (
                     os.environ.get("APPSEC_PATCH_ENABLED", "false").lower() not in ("1", "true", "yes")
                 ):
@@ -94,17 +99,29 @@ def main() -> int:
                     )
                 else:
                     pipeline_id = run_pipeline(image_ref, project_id, mode=str(job.get("mode") or "scan"), job_id=job_id)
+                job_watch.checkpoint()
                 with db.connect() as conn:
                     db.finish_job(conn, job_id, pipeline_id)
                     summary = db.pipeline_summary(conn, pipeline_id)
+                try:
+                    with db.connect() as conn:
+                        workflow_control.advance(conn,job_id)
+                except Exception as auto_exc:
+                    with db.connect() as conn:
+                        conn.execute("UPDATE manual_workflows SET auto_error=%s WHERE %s IN(scan_job_id,patch_job_id)",
+                                     ("Automatic next step requires review: "+type(auto_exc).__name__,job_id))
                 notify("pipeline.success", summary)
                 log_event("worker.image.finished", job_id=job_id, pipeline_id=pipeline_id)
                 job_watch.emit("success")
             except BaseException as exc:
                 with db.connect() as conn:
-                    db.fail_job(conn, job_id, safe_message(exc, 'image'))
+                    stopped=workflow_control.requested(conn,"image",job_id)
+                    if stopped:
+                        conn.execute("UPDATE pipeline_jobs SET status='canceled',finished_at=now(),last_error='Stopped by user' WHERE id=%s",(job_id,))
+                    else:
+                        db.fail_job(conn, job_id, safe_message(exc, 'image'))
                 log_event("worker.image.failed", level="error", job_id=job_id, error_code=classify(exc, "image")["code"])
-                job_watch.emit("failed")
+                job_watch.emit("stopped" if stopped else "failed")
             finally:
                 job_watch.CURRENT.reset(token)
             continue
