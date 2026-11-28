@@ -39,7 +39,7 @@ def manifest(root):
 def tool(image, args, mounts=(), env=(), timeout=300):
     name="appsec-v4-scanner-"+uuid4().hex
     cmd=["docker","run","--rm","--name",name,"--pull=never","--network=none",
-         "--user","0:0","--cap-drop","ALL","--security-opt","no-new-privileges:true",
+         "--user",f"{os.getuid()}:{os.getgid()}","--cap-drop","ALL","--security-opt","no-new-privileges:true",
          "--read-only","--tmpfs","/tmp:rw,nosuid,nodev,size=256m","--memory","2g","--pids-limit","128"]
     for host,target,readonly in mounts:
         cmd.extend(["--mount",f"type=bind,src={host},dst={target}"+(",readonly" if readonly else "")])

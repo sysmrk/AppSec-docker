@@ -65,3 +65,35 @@ dpkg version ordering. This is NOT proof that any binary can be installed.
 NOTE URLs are unverified leads; no automatic fetching or execution is done.
 Signed same-release/backports binary indexes, package identity, dependencies,
 ABI, patch applicability and workload testing remain separate gates.
+
+
+## Phase 3: upstream curl ranges before official backport experiments
+
+APT on the original Trixie image resolved curl/libcurl 8.21.0-2~bpo13+1
+with one further upgrade and two new dependencies, no removals. Default
+APT candidate remained 8.14.1-2+deb13u7 (backports priority 100).
+Do not install or autoremove yet: a newer version can introduce vulnerabilities.
+
+    curl --fail --show-error --silent --connect-timeout 15 --max-time 90 \
+      --proto '=https' --max-filesize 16777216 \
+      https://curl.se/docs/vuln.json \
+      -o fix-discovery-cache/curl-vuln.json.part &&
+    mv fix-discovery-cache/curl-vuln.json.part fix-discovery-cache/curl-vuln.json
+
+    python3 scripts/v4-curl-upstream.py \
+      --research benchmark-results/fix-research-01.json \
+      --feed fix-discovery-cache/curl-vuln.json \
+      --original-upstream 8.14.1 --candidate-upstream 8.21.0 \
+      --output benchmark-results/curl-upstream-01.json
+
+Evaluate explicit upstream introduced/fixed intervals (including
+reintroductions), count package occurrences and distinct CVEs separately,
+and flag new candidate-only upstream exposures across the full feed.
+Do not convert these results to FixedVersion or assume upstream applicability
+equals Debian binary applicability. Verify exact signed backport source,
+changelog and build configuration, then perform a bounded package-preserving
+lab test if warranted.
+
+Scanner lab CI: run offline scanner as invoking host UID/GID, not container
+root with all capabilities dropped, so private copied cache is accessible
+without broadening permissions or restoring DAC override.
