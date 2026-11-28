@@ -20,3 +20,5 @@ harbor/**/*.tgz
 /benchmark-results/
 
 /grype-cache/
+
+/fix-discovery-cache/

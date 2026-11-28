@@ -19,3 +19,5 @@ labs/v4/results/
 benchmark-results/
 
 grype-cache/
+
+fix-discovery-cache/

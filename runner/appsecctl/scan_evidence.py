@@ -80,7 +80,7 @@ def patch_eligibility(scan: dict | None) -> dict:
     return {**result, **counts, "eligible": eligible,
             "code": "PATCH_CANDIDATES_AVAILABLE" if eligible else "NO_FIXABLE_OS",
             "message": ("Known OS fixes available; Copa compatibility and image identity are checked during execution."
-                        if eligible else "No OS findings have a known fix. Finish without patching; remaining risks are not fixed.")}
+                        if eligible else "No OS findings have a scanner-reported FixedVersion. Targeted Copa is unavailable; independent fix discovery may identify additional leads.")}
 
 
 def original_patch_eligibility(conn, pipeline_id) -> dict:
@@ -108,7 +108,7 @@ def copa_report(report: dict) -> dict:
             item["Vulnerabilities"] = [v for v in item.get("Vulnerabilities") or [] if has_fix(v)]
             output["Results"].append(item)
     if not any(t["Vulnerabilities"] for t in output["Results"]):
-        raise NoFixableOS("NO_FIXABLE_OS: No fixable OS vulnerabilities for Copa; finish without patching")
+        raise NoFixableOS("NO_FIXABLE_OS: No scanner-reported FixedVersion for targeted Copa")
     return output
 
 

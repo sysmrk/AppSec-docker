@@ -50,3 +50,7 @@ Native installation uses exact verified local archives with `dpkg --install` in 
 ## Independent Syft/Grype evidence
 
 See [SCANNER-COMPARISON.md](SCANNER-COMPARISON.md). No image modification, service deployment, external AI or commercial API. The existing V3 Copa route is legacy and not yet certified against the V4 preservation requirement; do not use it for V4 acceptance or production publication.
+
+## Current priority: Fix Discovery
+
+Suspend new APK/RPM adapters, orchestration and UI redesign until the missing FixedVersion investigation is quantified. Read-only [Fix Discovery lab](FIX-DISCOVERY.md) first; then validate same-release binary availability, source patch provenance and backport feasibility. No package removal, mixed-suite installation, automated source patching or scanner suppression.
