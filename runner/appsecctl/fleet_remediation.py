@@ -152,10 +152,12 @@ def patch(scan_id):
             db.attach_scan_to_pipeline(conn,scan_id,pipeline_id)
         pipeline_id=str(pipeline_id)
     if not supports(report):
-        from . import native_apk
+        from . import native_apk, native_ubuntu
         if native_apk.supports(report):
-            return _patch_apk(scan_id,pipeline_id,source,image,report)
-        _record_plan(scan_id,{"status":"unsupported","message":"V4 mutation supports Debian 12/13 and opt-in Alpine 3.22 APK v2 main only. No legacy mutation fallback."})
+            return _patch_other(scan_id,pipeline_id,source,image,report,native_apk,"fleet_native_apk")
+        if native_ubuntu.supports(report):
+            return _patch_other(scan_id,pipeline_id,source,image,report,native_ubuntu,"fleet_native_ubuntu")
+        _record_plan(scan_id,{"status":"unsupported","message":"V4 mutation supports Debian 12/13 and opt-in Alpine 3.22 and Ubuntu 24.04 main only. No legacy mutation fallback."})
         raise scan_evidence.NoFixableOS("V4 fleet pilot: unsupported distribution; no candidate")
     if not mirrors:
         _record_plan(scan_id,{"status":"blocked","message":"Configure approved package mirrors before starting the next workflow."})
@@ -257,31 +259,31 @@ def patch(scan_id):
             backport_trial.cleanup(stable)
 
 
-def _patch_apk(scan_id,pipeline_id,source,image,report):
-    from . import native_apk, backport_trial
+def _patch_other(scan_id,pipeline_id,source,image,report,backend,strategy):
+    from . import backport_trial
     from .cli import patched_image_ref,source_repository
     candidate=None
     patch_id=None
     output=None
     tagged=False
     try:
-        candidate,plan=native_apk.attempt(image,report)
+        candidate,plan=backend.attempt(image,report)
         _record_plan(scan_id,plan)
         if not candidate:
             if plan["status"] in ("no_updates","rejected"):
-                raise scan_evidence.NoFixableOS("No eligible verified local APK update; original evidence retained")
-            raise RuntimeError("APK trial blocked: "+str(plan.get("message","required validation unavailable")))
+                raise scan_evidence.NoFixableOS("No eligible verified local native update; original evidence retained")
+            raise RuntimeError("Native trial blocked: "+str(plan.get("message","required validation unavailable")))
         patch_id=str(uuid4())
         output=source_repository(source)+":patched-"+patch_id[:12]
         with db.connect() as conn:
             db.insert_patch_started(conn,patch_id,pipeline_id,scan_id,source,patched_image_ref(source,patch_id))
             conn.execute("UPDATE patch_runs SET execution_evidence=%s WHERE id=%s",
-                         (Jsonb({"strategy":"fleet_native_apk","native_plan":plan,"publication_authorized":False}),patch_id))
+                         (Jsonb({"strategy":strategy,"native_plan":plan,"publication_authorized":False}),patch_id))
         job_watch.checkpoint()
         apt.run(["docker","tag",candidate["candidate_image_id"],output])
         tagged=True
         if scan_evidence.local_image_id(output)!=candidate["candidate_image_id"]:
-            raise RuntimeError("SCAN_EVIDENCE_INVALID: APK candidate tag mismatch")
+            raise RuntimeError("SCAN_EVIDENCE_INVALID: Native candidate tag mismatch")
         with db.connect() as conn:
             db.update_patch_success(conn,patch_id,None)
             conn.execute("UPDATE patch_runs SET local_image_id=%s,local_image_ref=%s,publication_status='prepared',execution_evidence=execution_evidence || %s WHERE id=%s",

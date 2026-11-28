@@ -247,6 +247,10 @@ def fleet_section(original, execution):
         val=plan.get("validation") or {}
         binary_html+='<h3>Native APK trial</h3><p>'+e(plan.get("status"))+' · Release: '+e(plan.get("release"))+' · Key policy SHA256: '+e(plan.get("key_policy_sha256"))+' · Signed index SHA256: '+e(plan.get("signed_index_sha256"))+'</p>'
         binary_html+='<p>Trivy reduction: '+e(val.get("trivy_net_reduction"))+' · Grype reduction: '+e(val.get("grype_net_reduction"))+' · Blockers: '+e(", ".join(val.get("blockers") or []))+'</p>'
+    if plan.get("backend")=="native_ubuntu":
+        val=plan.get("validation") or {}
+        binary_html+='<h3>Native Ubuntu APT trial</h3><p>'+e(plan.get("status"))+' · '+e(plan.get("release"))+' · '+e(plan.get("message"))+'</p>'
+        binary_html+='<p>Trivy reduction: '+e(val.get("trivy_net_reduction"))+' · Grype reduction: '+e(val.get("grype_net_reduction"))+' · Blockers: '+e(", ".join(val.get("blockers") or []))+'</p>'
     trial=plan.get("backport_trial") or {}
     if trial:
         binary_html+='<h3>Local Backports trial</h3><p>'+e(trial.get("status"))+' · '+e(trial.get("source"))+' · '+e(trial.get("message"))+'</p>'

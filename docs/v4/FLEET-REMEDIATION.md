@@ -263,3 +263,16 @@ signed archive staging and actual offline upgrade, checks exact inventory and
 basic shell execution. It bypasses the scan-evidence gate only in this test;
 scanner comparison and application workload compatibility are not covered by
 that integration test. The job is expected to need a reachable official CDN.
+
+### Ubuntu 24.04 native local trial
+
+APPSEC_V4_UBUNTU_TRIAL=true with fleet and independent scanning enables
+a separate root-default linux/amd64 Ubuntu 24.04 LTS pilot. It uses explicit
+official HTTPS noble/main, noble-updates/main and noble-security/main;
+the image's Ubuntu archive keyring and CA trust must exist in a trusted image.
+No unsigned repositories, foreign architectures, additions, removals,
+downgrades, held-package changes, arbitrary PPAs or cross-release binaries.
+No fallback on missing TLS trust. Exact pin simulation and download are
+repeated before offline build and independent scanner gate. Other Ubuntu
+versions and components are not enabled. Native trial publication blocks
+apply to all fleet_native_* strategies. Integration testing is still required.

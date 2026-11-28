@@ -96,14 +96,14 @@ apt_safe download "$@"
 '''
 
 
-def download(image,mirror,updates,dest,*,script=DOWNLOAD):
+def download(image,mirror,updates,dest,*,script=DOWNLOAD,endpoints=None):
     apt.progress("apt_download")
     args=[]
     for name,row in sorted(updates.items()):
         if not apt.PKG.fullmatch(name) or not VERSION.fullmatch(row["after"]):
             raise ValueError("Invalid package pin")
         args.append(name+"="+row["after"])
-    main,security=apt.MIRRORS[mirror]
+    main,security=endpoints if endpoints is not None else apt.MIRRORS[mirror]
     container="appsec-apt-download-"+uuid4().hex
     try:
         apt.run(["docker","create","--name",container,"--pull=never","--user","0:0",

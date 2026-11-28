@@ -858,7 +858,7 @@ def publish_prepared_patch(pipeline_id: str, publish_job_id: str) -> str:
         """, (pipeline_id, publish_job_id)).fetchone()
         if not row or row["publication_status"] != "prepared" or not row["local_image_ref"]:
             raise RuntimeError("No prepared, unpublished image exists for this workflow")
-        if (row.get("execution_evidence") or {}).get("strategy") == "fleet_native_apt":
+        if str((row.get("execution_evidence") or {}).get("strategy") or "").startswith("fleet_native_"):
             raise RuntimeError("V4 fleet test candidates are local-only; publication is blocked")
         if row["policy_status"] not in ("recommended", "not_recommended", "passed"):
             raise RuntimeError("The post-patch recommendation is missing")

@@ -117,10 +117,13 @@ printf '%s\n' 'https://dl-cdn.alpinelinux.org/alpine/v3.22/main' > "$work/reposi
 apk_safe() {
     apk --keys-dir /tmp/appsec-apk-keys --repositories-file "$work/repositories" --cache-dir "$work/cache" --no-progress "$@"
 }
+echo "APK_STAGE: update signed index" >&2
 apk_safe update >&2
-apk_safe upgrade --simulate --no-self-upgrade > "$work/plan"
+echo "APK_STAGE: simulate transaction" >&2
+apk_safe --no-network upgrade --simulate --no-self-upgrade > "$work/plan"
 cat "$work/plan"
 echo '@@COMPLETE'
+echo "APK_STAGE: validate transaction" >&2
 # Only fetch recognizable upgrades, never resolve extra packages.
 awk '/^\([0-9]+\/[0-9]+\) / {
   if ($2!="Upgrading" || NF!=6 || $5!="->") exit 1;
@@ -134,8 +137,10 @@ for pin in $(cat "$work/pins"); do
     old=$(awk -v n="$name" '/^P:/{p=substr($0,3)} /^V:/ && p==n {print substr($0,3)}' /lib/apk/db/installed)
     test -n "$old"
     test "$(apk version -t "$old" "$ver")" = '<'
+    echo "APK_STAGE: fetch exact archive" >&2
     apk_safe fetch --output /tmp/appsec-apk-output/x86_64 "$pin" >&2
 done
+echo "APK_STAGE: preserve signed index" >&2
 set -- "$work/cache"/APKINDEX.*.tar.gz
 test "$#" -eq 1
 test -f "$1"
@@ -155,7 +160,11 @@ def stage(image,keys,dest,rows):
                      "--security-opt","no-new-privileges:true","--pids-limit","128","--memory","1g",
                      "--entrypoint","/bin/sh",image,"-ec",STAGE],60)
             apt.run(["docker","cp",str(keydir),name+":/tmp/appsec-apk-keys"],30)
-            output=apt.run(["docker","start","-a",name],420)
+            try:
+                output=apt.run(["docker","start","-a",name],420)
+            except subprocess.CalledProcessError as exc:
+                # CI prints the bounded diagnostic; worker safe_message sanitizes it.
+                raise RuntimeError("APK staging failed: "+str(exc.stderr or "")[-4096:]) from exc
             if apt.run(["docker","inspect","--format","{{.State.ExitCode}}",name]).strip()!="0":
                 raise ValueError("APK staging failed")
             updates=changes(output,rows)

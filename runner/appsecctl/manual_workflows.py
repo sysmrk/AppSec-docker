@@ -223,7 +223,7 @@ def decide(
                 WHERE id=%s
             """, (user["id"], _uuid(workflow_id)))
             return {"id": workflow_id, "state": "completed_without_publish"}
-        if (prepared.get("execution_evidence") or {}).get("strategy") == "fleet_native_apt":
+        if str((prepared.get("execution_evidence") or {}).get("strategy") or "").startswith("fleet_native_"):
             raise RuntimeError("V4 fleet test candidates are local-only")
         if not confirm_push:
             raise ValueError("registry publication requires confirm_push=true")
