@@ -204,13 +204,25 @@ def fleet_section(original, execution):
     rows="".join("<tr><td>"+e(k)+"</td><td>"+e(v)+"</td></tr>" for k,v in sorted(counts.items()))
     updates=plan.get("updates") or {}
     changes="".join("<tr>"+"".join("<td>"+e(x)+"</td>" for x in (name, item.get("before"), item.get("after")))+"</tr>" for name,item in sorted(updates.items()))
+    binary=plan.get("binary_discovery") or {}
+    binary_rows="".join("<tr>"+"".join("<td>"+e(x)+"</td>" for x in (c.get("package"),c.get("before"),c.get("candidate"),c.get("source_version"),c.get("sha256"),c.get("dependency_status"),len(c.get("threshold_leads") or []),c.get("security_status")))+"</tr>" for c in binary.get("candidates") or [])
+    binary_html=""
+    if binary:
+        binary_html=('<h3>Official Backports binary discovery</h3><p>'+e(binary.get("status"))+' · '+e(binary.get("suite"))+' · Candidates: '+e(binary.get("candidate_count"))+' · Automatic selections: '+e(binary.get("automatic_selection_count"))+'</p>'
+                     '<p class="muted">'+e(binary.get("message"))+'</p><div class="table-scroll"><table><thead><tr><th>Package</th><th>Installed</th><th>Candidate</th><th>Source version</th><th>Archive SHA256</th><th>Dependency review</th><th>Threshold leads</th><th>Security review</th></tr></thead><tbody>'+binary_rows+'</tbody></table></div>')
+        for source,sim in sorted((binary.get("simulations") or {}).items()):
+            binary_html+='<p>'+e(source)+': '+e(sim.get("status"))+' · upgrades: '+e(sim.get("updates"))+' · additions: '+e(sim.get("additions"))+' · removals: '+e(sim.get("removals"))+'</p>'
+        upstream=binary.get("curl_upstream_review") or {}
+        if upstream:
+            binary_html+='<p>Curl upstream review: '+e(upstream.get("status"))+' · New exposure leads: '+e(", ".join(upstream.get("new_exposure_ids") or []) or "—")+'</p>'
     return ('<section><h2>V4 Fix Discovery &amp; signed binary plan</h2>'
             '<p>Vendor evidence: '+e(discovery.get("status"))+' · Snapshot SHA256: '+e(discovery.get("snapshot_sha256"))+'<br>Snapshot origin: '+e(discovery.get("snapshot_origin"))+' · File mtime (UTC): '+e(discovery.get("snapshot_file_mtime"))+'</p>'
             '<p>Repository plan: '+e(plan.get("status"))+' · Mirror: '+e(plan.get("mirror"))+'</p>'
             '<p class="muted">'+e(discovery.get("message"))+' '+e(plan.get("message"))+'</p>'
             '<table><thead><tr><th>Vendor evidence category</th><th>Findings</th></tr></thead><tbody>'+rows+'</tbody></table>'
             '<table><thead><tr><th>Planned existing package</th><th>Before</th><th>Candidate</th></tr></thead><tbody>'+changes+'</tbody></table>'
-            '<p class="muted">Source leads are not installed fixes. Stable/security/updates only; no package removal or custom compilation. '
+            +binary_html+
+            '<p class="muted">Source leads are not installed fixes. Stable/security/updates installation only; Backports discovery is read-only. No package removal or custom compilation. '
             'A local test candidate is not authorized for publication. Workload tests remain required.</p></section>')
 
 

@@ -117,3 +117,22 @@ This snapshot affects advisory discovery and reporting only. It does not
 enable additional repositories, change the APT candidate or promise more
 remediation. Official backports and approved vendor binaries require a
 separate candidate-selection/risk-validation implementation.
+
+
+### Official Backports candidate discovery in the UI pilot
+
+After the stable plan, the worker checks installed binaries against the selected
+official mirror's signed same-release Backports metadata, even when the stable
+transaction is empty. The disposable probe uses only stable, updates, security
+and Backports sources; no testing/unstable binaries or global pin increase.
+Highest newer Backports version, source version, archive hash and filename are
+recorded; exact-version dependency simulations are grouped by installed source.
+Bounds: 2,000 packages, 256 binary candidates and 24 simulations. Foreign
+architectures are unsupported. Optional fresh host curl feed identifies
+upstream regression leads. Newer-release thresholds are not binary fix proof.
+
+Backports decisions are REVIEW_REQUIRED. No Backports archive is downloaded
+or installed. Stable mutation remains unchanged. UI and HTML show candidates,
+dependency outcomes and security evidence. Generic exact-candidate advisory
+verification, external approved vendor/internal repositories and automated
+Backports selection remain pending. No higher patch count is promised.

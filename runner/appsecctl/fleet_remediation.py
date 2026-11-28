@@ -166,6 +166,16 @@ def patch(scan_id):
              "updates":plan["updates"],"installed_package_count":len(plan["inventory"]),
              "plan_sha256":plan["plan_sha256"],"message":"All installed packages checked using stable, updates and security repositories. No backports or removals."}
     _record_plan(scan_id,summary)
+    from . import binary_discovery
+    try:
+        summary["binary_discovery"]=binary_discovery.discover(image,report,plan)
+    except (OSError,ValueError,RuntimeError,subprocess.SubprocessError) as exc:
+        from .workflow_control import StopRequested
+        if isinstance(exc,StopRequested):
+            raise
+        summary["binary_discovery"]={"status":"unavailable","message":safe_message(exc,"patch_build"),
+                                     "automatic_selection_count":0,"publication_authorized":False}
+    _record_plan(scan_id,summary)
     job_watch.emit("apt_upgrades",len(plan["updates"]))
     if not plan["updates"]:
         job_watch.emit("fleet_no_updates")

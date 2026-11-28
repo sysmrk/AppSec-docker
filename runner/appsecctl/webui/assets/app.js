@@ -967,6 +967,16 @@
         if(fleet){
           box.appendChild(node("p","info-note","Repository plan: "+fleet.status+(fleet.message?" — "+fleet.message:"")+(fleet.mirror?" · "+fleet.mirror:"")));
           detailsTable(box,[["Package","package"],["Before","before"],["Candidate","after"]],Object.entries(fleet.updates||{}).map(([packageName,values])=>({package:packageName,...values})));
+          const binary=fleet.binary_discovery;
+          if(binary){
+            box.appendChild(node("h3","","Official Backports — candidate review"));
+            box.appendChild(node("p","info-note",binary.status+" · "+(binary.suite||"repository not verified")+" · "+(binary.message||"")));
+            if(binary.candidate_count!=null)showMetrics(box,[["Binary candidates",binary.candidate_count],["Newer-release threshold leads",binary.threshold_lead_count],["Automatically selected",binary.automatic_selection_count]]);
+            detailsTable(box,[["Package","package"],["Installed","before"],["Candidate","candidate"],["Dependencies","dependency_status"],["Security evidence","security_status"]],binary.candidates||[]);
+            detailsTable(box,[["Source","source"],["Result","status"],["Upgrades","updates"],["Additions","additions"],["Removals","removals"]],Object.entries(binary.simulations||{}).map(([source,sim])=>({source,...sim})));
+            const upstream=binary.curl_upstream_review;
+            if(upstream)box.appendChild(node("p","info-note","Optional curl upstream review: "+upstream.status+" · New exposure leads: "+(upstream.new_exposure_ids||[]).join(", ")));
+          }
         }
         box.appendChild(node("p","info-note","Local test only. Source fixes are not installable binary fixes. No package removal or custom build."));
       }
