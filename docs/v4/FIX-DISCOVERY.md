@@ -40,3 +40,28 @@ SBOM-to-report provenance is verified. Separate counts, never sum scanners.
 Next phase: signed same-release APT candidate/source metadata, native dpkg
 source identity, tracker notes/security commits, upstream and backport leads;
 no mutation or promotion until independently validated.
+
+
+## Phase 2: upstream reference discovery
+
+Download the official tracker text database (NOTEs include upstream references).
+No clone, Docker, image archive or scanner database copy is needed.
+
+    curl --fail --show-error --silent --connect-timeout 15 --max-time 180 \
+      --proto '=https' --max-filesize 134217728 \
+      https://salsa.debian.org/security-tracker-team/security-tracker/-/raw/master/data/CVE/list \
+      -o fix-discovery-cache/debian-cve-list.part &&
+    mv fix-discovery-cache/debian-cve-list.part fix-discovery-cache/debian-cve-list
+
+    python3 scripts/v4-fix-research.py \
+      --discovery benchmark-results/fix-discovery-01.json \
+      --cve-list fix-discovery-cache/debian-cve-list \
+      --output benchmark-results/fix-research-01.json
+
+The report prioritizes Critical then High then total newer-suite finding
+occurrences. All original Trivy findings remain represented. It groups source
+packages and collects the highest reported source fix per newer suite using
+dpkg version ordering. This is NOT proof that any binary can be installed.
+NOTE URLs are unverified leads; no automatic fetching or execution is done.
+Signed same-release/backports binary indexes, package identity, dependencies,
+ABI, patch applicability and workload testing remain separate gates.

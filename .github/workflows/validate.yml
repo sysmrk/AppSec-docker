@@ -25,7 +25,7 @@ jobs:
           assert any('/var/run/docker.sock' in str(v) for v in s['worker'].get('volumes',[]))
           PY
       - name: Compile Python
-        run: python -m py_compile runner/appsecctl/*.py scripts/setup-metabase.py scripts/v3-benchmark.py scripts/v4-benchmark.py scripts/v4-scanner-compare.py scripts/v4-fix-discovery.py
+        run: python -m py_compile runner/appsecctl/*.py scripts/setup-metabase.py scripts/v3-benchmark.py scripts/v4-benchmark.py scripts/v4-scanner-compare.py scripts/v4-fix-discovery.py scripts/v4-fix-research.py
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
