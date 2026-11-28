@@ -38,3 +38,23 @@ class FleetTests(unittest.TestCase):
             self.assertEqual(result["updates"],{"curl":{"before":"1.0","after":"2.0"}})
             with self.assertRaises(ValueError):
                 native_apt.plan(image,report,["tuna"])
+
+    def test_host_snapshot_age_and_provenance(self):
+        import tempfile, os, json, time
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/"tracker.json"
+            path.write_text(json.dumps({"curl":{"CVE-2026-1234":{"releases":{"trixie":{"status":"open"}}}}}))
+            result=fleet.cached_snapshot(path,"operator_host_snapshot")
+            self.assertEqual(result[2]["snapshot_origin"],"operator_host_snapshot")
+            self.assertEqual(len(result[1]),64)
+            old=time.time()-fleet.TTL-10
+            os.utime(path,(old,old))
+            self.assertIsNone(fleet.cached_snapshot(path,"operator_host_snapshot"))
+            path.write_text('{"unexpected":1}')
+            self.assertIsNone(fleet.cached_snapshot(path,"operator_host_snapshot"))
+
+    def test_curl_diagnostics(self):
+        import subprocess
+        self.assertEqual(fleet.vendor_error(subprocess.CalledProcessError(28,["curl"],stderr="secret proxy credential")),
+                         "curl exit 28: transfer timeout")

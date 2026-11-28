@@ -60,6 +60,8 @@ def compose_command(*args: str) -> list[str]:
             raise RuntimeError("Optimization requires a trusted host Docker Buildx plugin. Set APPSEC_BUILDX_PLUGIN or disable optimization.")
         os.environ["APPSEC_BUILDX_PLUGIN"]=str(plugin)
         files.extend(["-f",str(ROOT/"docker-compose.optimization.yaml")])
+    if fleet_test_enabled():
+        files.extend(["-f",str(ROOT/"docker-compose.fleet.yaml")])
     return ["docker", "compose", *files, *args]
 
 

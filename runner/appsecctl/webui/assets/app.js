@@ -959,6 +959,7 @@
         const box=section(root,"V4 Fix Discovery & signed binary plan");
         if(intel){
           box.appendChild(node("p","info-note","Vendor evidence: "+intel.status+(intel.message?" — "+intel.message:"")));
+          if(intel.snapshot_origin)box.appendChild(node("p","hint","Snapshot: "+intel.snapshot_origin+" · file mtime: "+(intel.snapshot_file_mtime||"unknown")));
           const summary=intel.summary?.trivy;
           if(summary)showMetrics(box,[["OS findings",summary.os_finding_occurrences],["Scanner FixedVersion missing",summary.blank_fixed_version]]);
           if(summary?.all_categories)detailsTable(box,[["Vendor evidence","category"],["Findings","count"]],Object.entries(summary.all_categories).map(([category,count])=>({category,count})));

@@ -6,6 +6,7 @@ packages. Stable APT plans cover every installed package, not only reported fixe
 from __future__ import annotations
 import fcntl
 import hashlib
+from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
@@ -30,20 +31,48 @@ def supports(report):
     info=(report.get("Metadata") or {}).get("OS") or {}
     return info.get("Family")=="debian" and str(info.get("Name","")).split(".")[0] in ("12","13")
 
-def _read_snapshot(path):
+def _read_snapshot(path, *, fresh=False):
     with path.open("rb") as stream:
+        modified=os.fstat(stream.fileno()).st_mtime
+        if fresh and not 0<=time.time()-modified<TTL:
+            raise ValueError("Vendor snapshot outside cache age limit")
         data=stream.read(MAX_BYTES+1)
     if not data or len(data)>MAX_BYTES:
         raise ValueError("Vendor snapshot size invalid")
     parsed=json.loads(data)
-    if not isinstance(parsed,dict) or not parsed:
+    if not isinstance(parsed,dict) or not parsed or not any(
+            isinstance(v,dict) and any(isinstance(c,dict) and isinstance(c.get("releases"),dict)
+            for c in v.values()) for v in parsed.values()):
         raise ValueError("Vendor snapshot invalid")
-    return parsed,hashlib.sha256(data).hexdigest()
+    return parsed,hashlib.sha256(data).hexdigest(),datetime.fromtimestamp(modified,timezone.utc).isoformat()
+
+def cached_snapshot(path,origin):
+    try:
+        data,digest,modified=_read_snapshot(path,fresh=True)
+        return data,digest,{"snapshot_origin":origin,"snapshot_file_mtime":modified,
+                            "snapshot_age_limit_hours":TTL//3600}
+    except (OSError,ValueError):
+        return None
+
+def vendor_error(exc):
+    # Fixed safe diagnostics; do not expose proxy credentials or arbitrary stderr.
+    if isinstance(exc,subprocess.CalledProcessError):
+        reason={5:"proxy DNS failure",6:"DNS failure",7:"connection failed",
+                18:"incomplete transfer",22:"HTTP error",28:"transfer timeout",
+                35:"TLS handshake failed",60:"TLS certificate verification failed",
+                63:"snapshot exceeds size limit"}.get(exc.returncode,"curl failed")
+        return f"curl exit {exc.returncode}: {reason}"
+    if isinstance(exc,(TimeoutError,subprocess.TimeoutExpired)):
+        return "snapshot operation timed out"
+    return type(exc).__name__
 
 def snapshot():
-    # Private worker-local cache. One refresh per six hours per worker; no
-    # stale fallback, no arbitrary URLs or insecure TLS. Not a fleet DB yet.
-    root=Path("/tmp/appsec-v4-vendor")
+    # Host file mtime is not an authenticated upstream publication timestamp.
+    supplied=cached_snapshot(Path("/vendor-snapshots/debian-tracker.json"),"operator_host_snapshot")
+    if supplied:
+        return supplied
+    # Existing persistent worker volume; single-host refresh lock.
+    root=Path("/optimization/v4-vendor")
     root.mkdir(mode=0o700,exist_ok=True)
     dest=root/"debian-tracker.json"
     with (root/"refresh.lock").open("a") as lock:
@@ -57,21 +86,20 @@ def snapshot():
                 if time.monotonic()>=deadline:
                     raise TimeoutError("Vendor cache refresh busy")
                 time.sleep(0.25)
-        if dest.is_file() and 0<=time.time()-dest.stat().st_mtime<TTL:
-            try:
-                return _read_snapshot(dest)
-            except (OSError,ValueError):
-                pass
+        cached=cached_snapshot(dest,"worker_https_cache")
+        if cached:
+            return cached
         with tempfile.NamedTemporaryFile(dir=root,delete=False) as tmp:
             path=Path(tmp.name)
         try:
-            subprocess.run(["curl","--fail","--silent","--show-error","--proto","=https",
+            subprocess.run(["curl","--disable","--fail","--silent","--show-error","--proto","=https",
                 "--connect-timeout","15","--max-time","75","--max-filesize",str(MAX_BYTES),
                 "--output",str(path),URL],check=True,timeout=80,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
             job_watch.checkpoint()
-            parsed,digest=_read_snapshot(path)
+            parsed,digest,modified=_read_snapshot(path,fresh=True)
             path.replace(dest)
-            return parsed,digest
+            return parsed,digest,{"snapshot_origin":"worker_https_download",
+                                  "snapshot_file_mtime":modified,"snapshot_age_limit_hours":TTL//3600}
         finally:
             path.unlink(missing_ok=True)
 
@@ -80,18 +108,18 @@ def discover(report):
     if not supports(report):
         return {"status":"unsupported","message":"Independent vendor adapter currently supports Debian 12/13 only."}
     try:
-        tracker,digest=snapshot()
+        tracker,digest,provenance=snapshot()
         result=fix_discovery.audit(report,tracker)
         # Preserve each vendor finding in persisted metadata, not in the raw
         # scanner artifact; never fabricate or overwrite FixedVersion.
-        return {"status":"completed","snapshot_sha256":digest,"snapshot_source":URL,
+        return {"status":"completed","snapshot_sha256":digest,"snapshot_source":URL,**provenance,
                 "summary":result["summary"],"findings":result["findings"],
                 "message":"Vendor source evidence only; exact binary availability and compatibility require separate validation."}
     except (OSError,ValueError,RuntimeError,subprocess.SubprocessError) as exc:
         from .workflow_control import StopRequested
         if isinstance(exc,StopRequested):
             raise
-        return {"status":"unavailable","message":"Vendor evidence unavailable: "+type(exc).__name__+
+        return {"status":"unavailable","message":"Vendor evidence unavailable: "+vendor_error(exc)+
                 ". No conclusion about missing fixes; signed repository checks remain independent."}
 
 def _record_plan(scan_id,plan):

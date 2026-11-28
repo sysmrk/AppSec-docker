@@ -1,0 +1,8 @@
+# V4 pilot only: public vendor snapshot supplied by the host, read-only.
+services:
+  worker:
+    volumes:
+      - ./fix-discovery-cache:/vendor-snapshots:ro
+  image-worker:
+    volumes:
+      - ./fix-discovery-cache:/vendor-snapshots:ro

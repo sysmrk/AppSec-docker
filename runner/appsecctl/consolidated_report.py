@@ -205,7 +205,7 @@ def fleet_section(original, execution):
     updates=plan.get("updates") or {}
     changes="".join("<tr>"+"".join("<td>"+e(x)+"</td>" for x in (name, item.get("before"), item.get("after")))+"</tr>" for name,item in sorted(updates.items()))
     return ('<section><h2>V4 Fix Discovery &amp; signed binary plan</h2>'
-            '<p>Vendor evidence: '+e(discovery.get("status"))+' · Snapshot SHA256: '+e(discovery.get("snapshot_sha256"))+'</p>'
+            '<p>Vendor evidence: '+e(discovery.get("status"))+' · Snapshot SHA256: '+e(discovery.get("snapshot_sha256"))+'<br>Snapshot origin: '+e(discovery.get("snapshot_origin"))+' · File mtime (UTC): '+e(discovery.get("snapshot_file_mtime"))+'</p>'
             '<p>Repository plan: '+e(plan.get("status"))+' · Mirror: '+e(plan.get("mirror"))+'</p>'
             '<p class="muted">'+e(discovery.get("message"))+' '+e(plan.get("message"))+'</p>'
             '<table><thead><tr><th>Vendor evidence category</th><th>Findings</th></tr></thead><tbody>'+rows+'</tbody></table>'

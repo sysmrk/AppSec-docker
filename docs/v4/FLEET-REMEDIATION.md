@@ -91,3 +91,29 @@ reported rather than treated as no fix. No approved official-backports
 automation, shared multi-worker cache, Grype integration or full workload
 validation yet; not production-ready. The existing legacy path remains
 when the pilot flag is off.
+
+
+### Vendor snapshot availability in restricted networks
+
+The pilot overlay exposes fix-discovery-cache as a read-only public vendor
+snapshot directory. A valid Debian Tracker JSON with file mtime under six
+hours is preferred; otherwise use a fresh persistent worker cache or
+download via verified HTTPS. Host-supplied data is labeled
+operator_host_snapshot; SHA256 records the consumed bytes, not independent
+authentication or upstream publication time. No stale fallback.
+Workers on one Docker host coordinate refresh using the existing
+optimization-data volume and a file lock; no multi-host cache yet.
+
+On a host with Debian Tracker connectivity, refresh atomically:
+
+    mkdir -p fix-discovery-cache
+    curl --disable --fail --silent --show-error --proto '=https' \
+      --connect-timeout 15 --max-time 180 --max-filesize 134217728 \
+      https://security-tracker.debian.org/tracker/data/json \
+      -o fix-discovery-cache/debian-tracker.json.part &&
+    mv fix-discovery-cache/debian-tracker.json.part fix-discovery-cache/debian-tracker.json
+
+This snapshot affects advisory discovery and reporting only. It does not
+enable additional repositories, change the APT candidate or promise more
+remediation. Official backports and approved vendor binaries require a
+separate candidate-selection/risk-validation implementation.
