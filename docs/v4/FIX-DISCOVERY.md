@@ -97,3 +97,16 @@ lab test if warranted.
 Scanner lab CI: run offline scanner as invoking host UID/GID, not container
 root with all capabilities dropped, so private copied cache is accessible
 without broadening permissions or restoring DAC override.
+
+### Range parser regression
+
+curl's upstream JSON includes empty introduced/fixed intervals at identical
+release boundaries (for example CVE-2026-11856). Accept that specific pair
+as an empty half-open interval without weakening descending-order or
+duplicate-event validation. Report unresolved original advisory IDs and
+full-feed candidate-affected/unknown counts. Zero new exposure leads is
+not a zero-risk or zero-CVE assertion. Keep both earlier and revised reports.
+
+Scanner CI: private container tmpfs uses explicit mode 1777 so the invoking
+host UID can create Syft temporary files. No additional capabilities, host
+filesystem exposure or network access.

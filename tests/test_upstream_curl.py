@@ -25,3 +25,16 @@ class UpstreamCurlTests(unittest.TestCase):
         self.assertEqual(result["unique_advisory_breakdown"]["UPSTREAM_REMEDIATION_LEAD"],1)
         self.assertEqual(result["new_upstream_exposure_leads"][0]["id"],"CVE-2026-1235")
         self.assertFalse(result["publication_authorized"])
+
+    def test_curl_same_release_introduced_fixed(self):
+        # Actual event shape in upstream CVE-2026-11856.
+        events=[{"introduced":"7.10.6"},{"fixed":"8.14.2"},
+                {"introduced":"8.15.0"},{"fixed":"8.16.1"},
+                {"introduced":"8.17.0"},{"fixed":"8.20.1"},
+                {"introduced":"8.21.0"},{"fixed":"8.21.0"}]
+        for v,expected in [("8.14.1",True),("8.14.2",False),
+                           ("8.20.0",True),("8.21.0",False),("8.23.0",False)]:
+            self.assertIs(u.in_range(events,u.version(v)),expected)
+        self.assertIsNone(u.in_range([{"introduced":"8.0.0"},{"introduced":"8.0.0"}],u.version("8.0.0")))
+        self.assertIsNone(u.in_range([{"introduced":"8.0.0"},{"fixed":"8.0.0"},{"introduced":"8.0.0"}],u.version("8.0.0")))
+        self.assertIsNone(u.in_range([{"introduced":"8.0.0"},{"last_affected":"8.0.0"}],u.version("8.0.0")))

@@ -26,7 +26,12 @@ def in_range(events,target):
             if kind not in ("introduced","fixed","last_affected"):
                 return None
             point=(0,0,0) if kind=="introduced" and value=="0" else version(value)
-            if previous is not None and point<=previous:
+            # curl publishes empty [introduced, fixed) intervals when
+            # both events occur in the same release, e.g. CVE-2026-11856.
+            # Only that specific equal-boundary pair is accepted. Other
+            # equal events and descending versions remain invalid.
+            if previous is not None and (point<previous or
+                    (point==previous and not (active and kind=="fixed" and start==point))):
                 return None
             previous=point
             if kind=="introduced":
@@ -118,16 +123,30 @@ def audit(report,feed,original,candidate):
     result=[{**r,"upstream":compare(r["id"])} for r in rows]
     original_ids={r["id"] for r in rows}
     new_leads=[]
+    unknown_leads=[]
+    candidate_affected=[]
     for ident in sorted(records):
         detail=compare(ident)
         if detail["category"]=="UPSTREAM_NEW_EXPOSURE_LEAD":
             new_leads.append({"id":ident,"in_original_findings":ident in original_ids,**detail})
+        if detail["original_affected"] is None or detail["candidate_affected"] is None:
+            unknown_leads.append({"id":ident,"in_original_findings":ident in original_ids,**detail})
+        if detail["candidate_affected"] is True:
+            candidate_affected.append({"id":ident,"in_original_findings":ident in original_ids,**detail})
     return {"schema":"appsec.curl-upstream-review/v1","image_id":report["image_id"],
             "original_upstream":original,"candidate_upstream":candidate,
             "finding_count":len(rows),"unique_advisory_count":len(original_ids),
             "finding_breakdown":dict(Counter(r["upstream"]["category"] for r in result)),
             "unique_advisory_breakdown":dict(Counter(compare(i)["category"] for i in original_ids)),
             "new_upstream_exposure_leads":new_leads,"findings":result,
+            "original_unresolved_advisory_ids":sorted(i for i in original_ids if
+                compare(i)["category"] in ("UPSTREAM_RANGE_UNKNOWN","UPSTREAM_MISSING_OR_AMBIGUOUS")),
+            "full_feed_review":{"unique_advisories":len(records),
+                "unresolved_comparison_count":len(unknown_leads),
+                "unresolved_original_findings_advisories":[r["id"] for r in unknown_leads if r["in_original_findings"]],
+                "candidate_affected_count":len(candidate_affected),
+                "candidate_affected_advisory_ids":[r["id"] for r in candidate_affected]},
+
             "publication_authorized":False,
             "limitations":["Upstream release ranges are not Debian package or build-configuration evidence.",
               "Backported patches may change applicability in either direction; do not suppress findings.",
