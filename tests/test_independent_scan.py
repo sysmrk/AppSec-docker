@@ -35,3 +35,19 @@ class IndependentTests(unittest.TestCase):
     def test_reject_ignored_matches(self):
         with self.assertRaises(ValueError):
             s.findings({"matches":[],"ignoredMatches":[{}]})
+
+    def test_manifest_id_export_requires_association_and_equal_config(self):
+        config=json.dumps({"os":"linux","architecture":"amd64","rootfs":{"diff_ids":["sha256:"+"a"*64]},"config":{"Cmd":["test"]}}).encode()
+        expected="sha256:"+"b"*64
+        inspected={"Id":expected,"Descriptor":{"digest":expected},"Os":"linux","Architecture":"amd64","RootFS":{"Layers":["sha256:"+"a"*64]},"Config":{"Cmd":["test"]}}
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/"image.tar"
+            with tarfile.open(path,"w") as t:
+                for name,data in (("manifest.json",b'[{"Config":"config.json","Layers":["layer.tar"]}]'),("config.json",config),("layer.tar",b"layer")):
+                    entry=tarfile.TarInfo(name);entry.size=len(data);t.addfile(entry,io.BytesIO(data))
+            result=s.archive_identity(path,expected,inspected)
+            self.assertEqual(result["export_binding"],"daemon_export_manifest_identity_config_and_layers")
+            with self.assertRaises(ValueError):
+                s.archive_identity(path,expected,{**inspected,"Config":{"Cmd":["other"]}})
+            with self.assertRaises(ValueError):
+                s.archive_identity(path,expected,{**inspected,"Descriptor":{}})

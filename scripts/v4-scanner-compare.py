@@ -137,7 +137,10 @@ def main(argv=None):
             sbom_path=work/"sbom.json"
             try:
                 subprocess.run(["docker","image","save","--output",str(archive),iid],check=True,timeout=args.timeout)
-                identity=independent_scan.archive_identity(archive,iid)
+                inspected=json.loads(subprocess.run(["docker","image","inspect",iid],check=True,capture_output=True,timeout=30).stdout)[0]
+                identity=independent_scan.archive_identity(archive,iid,inspected)
+                if identity["diff_ids"]!=(inspected.get("RootFS") or {}).get("Layers"):
+                    raise ValueError("Saved archive layer inventory differs from Docker inspect")
                 archive_sha=independent_scan.digest_file(archive)
                 data=tool(syft,["scan","docker-archive:/image.tar","-o","syft-json"],[(archive,"/image.tar",True)],
                           ["SYFT_CHECK_FOR_APP_UPDATE=false","XDG_CACHE_HOME=/tmp/cache","HOME=/tmp"],args.timeout)
@@ -158,7 +161,7 @@ def main(argv=None):
                 else:
                     result["grype_delta_from_original"]=match_delta(baseline_report,report)
                 result.update(image_id=iid,reference=ref,syft_packages=len(sbom["artifacts"]),
-                              syft_reported_image_id=reported,identity_method=proof["identity_method"],archive_sha256=archive_sha,sbom_sha256=hashlib.sha256(data).hexdigest(),
+                              syft_reported_image_id=reported,identity_method=proof["identity_method"],archive_identity=identity,archive_sha256=archive_sha,sbom_sha256=hashlib.sha256(data).hexdigest(),
                               package_types=dict(Counter(a.get("type","unknown") for a in sbom["artifacts"])),
                               seconds=round(time.monotonic()-t,3))
                 if args.trivy_report:

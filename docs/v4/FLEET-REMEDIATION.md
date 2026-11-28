@@ -156,3 +156,10 @@ remains. Max image inspect size 1 GiB, archive 2 GiB; existing bounded worker
 capture may reject larger JSON. Read-only cache compatibility must be tested
 on the actual Grype release. No vendor/internal repository configuration or
 automatic Backports installation is added by this change.
+
+Docker containerd-store exports may use a manifest/index identity rather
+than a config digest. When an archive manifest has been rewritten, the
+pilot requires immutable daemon inspect ID plus explicit descriptor or
+RepoDigest association, matching platform, ordered diff IDs and runtime
+configuration, then verifies Syft's identity against the exported config.
+This is an export binding, not a claim that the two digests are equivalent.

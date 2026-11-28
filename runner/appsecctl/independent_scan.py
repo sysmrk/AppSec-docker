@@ -37,7 +37,7 @@ def digest_file(path):
             h.update(block)
     return "sha256:"+h.hexdigest()
 
-def archive_identity(path,expected):
+def archive_identity(path,expected,inspected=None):
     """Validate the exact single image config in the saved archive.
 
     A Docker config digest and an OCI manifest digest are different
@@ -92,9 +92,30 @@ def archive_identity(path,expected):
                     linked.add(digest_bytes(raw))
             except (ValueError,TypeError,KeyError,IndexError,AttributeError):
                 continue
+        method="exact_config_or_linked_manifest"
         if expected!=cid and expected not in linked:
-            raise ValueError("Saved archive does not match Docker image identity")
-        return {"config_digest":cid,"manifest_digests":sorted(linked),"diff_ids":diffids}
+            # With a containerd image store, Docker may identify the
+            # manifest/index, while docker save rewrites archive manifests.
+            # The daemon export was requested by immutable ID. Require a
+            # separate immutable inspect result, explicit digest association,
+            # exact ordered diff IDs, platform and full runtime configuration.
+            # This is an export binding, not digest equivalence.
+            descriptor=(inspected or {}).get("Descriptor") or {}
+            repo_digests={d.rsplit("@",1)[-1] for d in (inspected or {}).get("RepoDigests") or []}
+            if (not inspected or inspected.get("Id")!=expected or
+                    expected not in ({descriptor.get("digest"),descriptor.get("Digest")}|repo_digests) or
+                    diffids!=(inspected.get("RootFS") or {}).get("Layers") or
+                    cfg.get("os")!=inspected.get("Os") or cfg.get("architecture")!=inspected.get("Architecture") or
+                    (cfg.get("variant") or "")!=(inspected.get("Variant") or "")):
+                raise ValueError("Saved archive does not match Docker image identity: config="+cid+" expected="+expected)
+            runtime=cfg.get("config")
+            actual=inspected.get("Config")
+            keys=("Entrypoint","Cmd","Env","WorkingDir","User","Volumes","ExposedPorts","Labels","StopSignal","Healthcheck","Shell","OnBuild","ArgsEscaped")
+            if not isinstance(runtime,dict) or not isinstance(actual,dict) or any(
+                    (runtime.get(k) or None)!=(actual.get(k) or None) for k in keys):
+                raise ValueError("Saved archive runtime configuration differs from Docker inspect")
+            method="daemon_export_manifest_identity_config_and_layers"
+        return {"config_digest":cid,"manifest_digests":sorted(linked),"diff_ids":diffids,"export_binding":method}
 
 def verify_sbom(sbom,identity):
     artifacts=sbom.get("artifacts")
@@ -227,7 +248,7 @@ def scan(image,report):
         apt.run(["docker","image","save","--output",str(archive),image],600)
         if archive.stat().st_size>MAX_ARCHIVE:
             raise ValueError("Independent archive exceeds limit")
-        identity=archive_identity(archive,image)
+        identity=archive_identity(archive,image,inspect)
         if identity["diff_ids"]!=(inspect.get("RootFS") or {}).get("Layers"):
             raise ValueError("Saved archive layer inventory differs from Docker inspect")
         archive_hash=digest_file(archive)
