@@ -60,6 +60,8 @@ def create(conn, image: str, project_id: str | None, user_id: str, execution_mod
     from psycopg.types.json import Jsonb
     import os
     if auto_destination:
+        if os.getenv("APPSEC_V4_FLEET_TEST","false").lower()=="true":
+            raise ValueError("V4 fleet test is local-only; deselect registry output before Start")
         from .registry import image_registry
         from .image_sources import image_path
         import re
@@ -201,7 +203,7 @@ def decide(
         if locked["patch_job_status"] != "success":
             raise RuntimeError("the patched image must finish scanning before publication")
         prepared = conn.execute("""
-            SELECT p.id, p.patched_image_ref, p.publication_status,
+            SELECT p.id, p.patched_image_ref, p.publication_status, p.execution_evidence,
                    EXISTS(
                        SELECT 1 FROM scan_runs sr WHERE sr.pipeline_id=p.pipeline_id
                            AND sr.phase='patched' AND sr.status='success'
@@ -221,6 +223,8 @@ def decide(
                 WHERE id=%s
             """, (user["id"], _uuid(workflow_id)))
             return {"id": workflow_id, "state": "completed_without_publish"}
+        if (prepared.get("execution_evidence") or {}).get("strategy") == "fleet_native_apt":
+            raise RuntimeError("V4 fleet test candidates are local-only")
         if not confirm_push:
             raise ValueError("registry publication requires confirm_push=true")
         if prepared["final_policy"] not in ("recommended", "not_recommended", "passed") or locked["pipeline_status"] != "success":

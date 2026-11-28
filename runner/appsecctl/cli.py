@@ -393,6 +393,10 @@ def scan_image(image_ref: str, phase: str, pipeline_id: str | None = None) -> st
                                   "trivy_db":{"fresh":db_fresh,"age_hours":round(db_age,2),"updated_at":db_metadata["UpdatedAt"],"next_update":db_metadata["NextUpdate"]},
                                   "scanner_image": trivy_image,
                                   "registry_digests": (report.get("Metadata") or {}).get("RepoDigests") or []})
+        if phase == "original":
+            from . import fleet_remediation
+            if fleet_remediation.enabled():
+                report["_appsec"]["fix_discovery"] = fleet_remediation.discover(report)
         counts, vulnerabilities = parse_trivy_report(report)
         job_watch.emit("verified",len(vulnerabilities))
         print(f"SCAN_VERIFIED phase={phase} scan_id={scan_id} image_id={expected_id} findings={len(vulnerabilities)}", flush=True)
@@ -473,6 +477,13 @@ def source_repository(image_ref: str) -> str:
 
 
 def patch_from_scan(scan_id: str, *, automatic=False) -> tuple[str, str]:
+    from . import fleet_remediation
+    if fleet_remediation.enabled():
+        return fleet_remediation.patch(scan_id)
+    return legacy_patch_from_scan(scan_id, automatic=automatic)
+
+
+def legacy_patch_from_scan(scan_id: str, *, automatic=False) -> tuple[str, str]:
     patch_id = str(uuid4())
 
     with db.connect() as conn:
@@ -706,7 +717,7 @@ def run_pipeline(image_ref: str, project_id: str | None = None, mode: str = "sca
             try:
                 _, patched_ref = patch_from_scan(original_scan_id)
             except scan_evidence.NoFixableOS:
-                print("NO_FIXABLE_OS: Patch skipped; original findings retained.", flush=True)
+                print("NO_FIXABLE_OS: No eligible update; original findings retained.", flush=True)
                 with db.connect() as conn:
                     db.insert_audit(conn, None, "patch.skipped.no_fixable_os", "pipeline", pipeline_id, {})
             else:
@@ -799,7 +810,7 @@ def publish_prepared_patch(pipeline_id: str, publish_job_id: str) -> str:
     with db.connect() as conn:
         row = conn.execute("""
             SELECT p.id, p.local_image_ref, p.patched_image_ref,
-                   p.publication_status, p.local_image_id, pol.status AS policy_status,
+                   p.publication_status, p.local_image_id, p.execution_evidence, pol.status AS policy_status,
                    pol.scanned_image_id
             FROM patch_runs p
             JOIN LATERAL (
@@ -821,6 +832,8 @@ def publish_prepared_patch(pipeline_id: str, publish_job_id: str) -> str:
         """, (pipeline_id, publish_job_id)).fetchone()
         if not row or row["publication_status"] != "prepared" or not row["local_image_ref"]:
             raise RuntimeError("No prepared, unpublished image exists for this workflow")
+        if (row.get("execution_evidence") or {}).get("strategy") == "fleet_native_apt":
+            raise RuntimeError("V4 fleet test candidates are local-only; publication is blocked")
         if row["policy_status"] not in ("recommended", "not_recommended", "passed"):
             raise RuntimeError("The post-patch recommendation is missing")
         # Revalidate auto-publication DB evidence at execution as well.

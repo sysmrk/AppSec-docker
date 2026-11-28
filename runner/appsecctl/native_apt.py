@@ -47,15 +47,17 @@ def changes(simulation, rows):
     return result
 
 
-def plan(image,report,mirrors):
-    apt.inspect(image)
+def plan(image,report,mirrors,*,generic=False):
+    base=apt.inspect(image)
+    if generic and base["Config"].get("User") not in ("","root","0","0:0",None):
+        raise ValueError("Fleet APT test supports root-default Debian images only")
     if not audit.verified({"status":"success","raw_report":report}) or report["_appsec"]["image_id"]!=image:
         raise ValueError("Verified exact base report required")
     os_info=report.get("Metadata",{}).get("OS") or {}
     if os_info.get("Family")!="debian" or str(os_info.get("Name","")).split(".")[0] not in ("12","13"):
         raise ValueError("Native backend supports Debian 12/13 only")
     rows=apt.inventory(image)
-    if "nginx" not in rows:
+    if not generic and "nginx" not in rows:
         raise ValueError("Initial native backend is limited to trusted nginx images")
     available=repo.availability(image,mirrors)
     if available["status"]!="repository_checked":
@@ -131,14 +133,14 @@ def download(image,mirror,updates,dest):
                        stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
 
 
-def build(plan_data,report,approved,authorized_mirrors):
+def build(plan_data,report,approved,authorized_mirrors,*,generic=False):
     if plan_data.get("schema")!=SCHEMA or plan_data.get("plan_sha256")!=approved or apt.plan_digest(plan_data)!=approved:
         raise ValueError("Plan digest mismatch")
     if not set(plan_data["mirror_priority"])<=set(authorized_mirrors):
         raise ValueError("Approved mirror authorization revoked")
     image=plan_data["image_id"]
     # Recheck the chosen mirror only. Never silently change source after approval.
-    fresh=plan(image,report,[plan_data["mirror"]])
+    fresh=plan(image,report,[plan_data["mirror"]],generic=generic) if generic else plan(image,report,[plan_data["mirror"]])
     if not fresh["updates"] or any(fresh[k]!=plan_data[k] for k in ("image_id","mirror","updates","inventory","report_sha256")):
         raise ValueError("Upgrade plan changed; request new approval")
     base=apt.inspect(image)
@@ -181,7 +183,7 @@ def build(plan_data,report,approved,authorized_mirrors):
                 # packages, and is never invoked with force flags.
                 "dpkg --install /tmp/appsec-debs/*.deb; "
                 "audit_after=$(dpkg --audit); test -z \"$audit_after\"; "
-                "apt-get check; nginx -t\n")
+                "apt-get check" + ("; nginx -t" if not generic or "nginx" in plan_data["inventory"] else "") + "\n")
             (root/"Dockerfile").write_text(dockerfile)
             apt.run(["docker","buildx","build","--builder","default","--progress","plain","--load",
                      "--pull=false","--network=none","--no-cache","--build-arg","BASE_IMAGE="+tag,

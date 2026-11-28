@@ -117,7 +117,9 @@ def analyze(payload: dict, *, benchmark: bool = False) -> dict:
                   and p.get("local_image_id") == patched["raw_report"]["_appsec"]["image_id"]), None)
     attempt = patch or (patches[-1] if patches else {})
     recorded = (attempt.get("execution_evidence") or {}).get("remediation_input")
-    if recorded is not None:
+    if (attempt.get("execution_evidence") or {}).get("strategy") == "fleet_native_apt":
+        result["input_status"] = "native_full_inventory"
+    elif recorded is not None:
         result["input_status"] = "matches_expected" if expected is not None and recorded == expected else "mismatch"
     elif expected is None:
         result["input_status"] = "no_os_candidates"

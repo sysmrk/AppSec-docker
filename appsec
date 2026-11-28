@@ -46,7 +46,7 @@ def compose_command(*args: str) -> list[str]:
     files = ["-f", str(COMPOSE_FILE)]
     if override.is_file():
         files.extend(["-f", str(override)])
-    if optimization_enabled():
+    if optimization_enabled() or fleet_test_enabled():
         settings=read_env()
         configured=os.environ.get("APPSEC_BUILDX_PLUGIN",settings.get("APPSEC_BUILDX_PLUGIN","")).strip().strip('"').strip("'")
         candidates=[Path(configured)] if configured else [
@@ -61,6 +61,11 @@ def compose_command(*args: str) -> list[str]:
         os.environ["APPSEC_BUILDX_PLUGIN"]=str(plugin)
         files.extend(["-f",str(ROOT/"docker-compose.optimization.yaml")])
     return ["docker", "compose", *files, *args]
+
+
+def fleet_test_enabled():
+    value=os.environ.get("APPSEC_V4_FLEET_TEST",read_env().get("APPSEC_V4_FLEET_TEST","false"))
+    return value.strip().strip('"').strip("'").lower()=="true"
 
 
 def optimization_enabled():
@@ -257,7 +262,7 @@ def start(args) -> None:
     compose("--profile", "platform", "up", "-d", "--no-build", *services)
     verify_deployment()
     verify_patch_runtime()
-    if optimization_enabled():
+    if optimization_enabled() or fleet_test_enabled():
         compose("--profile","platform","exec","-T","worker","docker","buildx","version")
     run("bash", str(ROOT / "scripts/setup-metabase.sh"))
     print("\nAppSec Control Center: http://127.0.0.1:8080")

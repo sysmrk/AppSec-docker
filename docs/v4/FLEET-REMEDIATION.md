@@ -70,3 +70,24 @@ do not equate source availability with installable fixes.
 Next deliverable: generic read-only repository candidate catalog and routing
 with exact binary provenance and security evidence. Then signed transactions
 and representative multi-image verification. No claim of production readiness.
+
+
+## Opt-in UI pilot (implementation)
+
+Set APPSEC_V4_FLEET_TEST=true before running ./appsec start (same flag
+for API and worker). The host buildx plugin is mounted read-only through
+the existing overlay; configure approved mirrors in Settings. Use trusted
+local Debian 12/13 linux/amd64 root-default images without declared
+volumes, select automatic patch and local output. The original scan
+persists Debian tracker evidence (private worker-local six-hour cache)
+and reports the actual signed stable/security/updates transaction plan.
+The engine checks all installed packages, applies only exact existing
+package upgrades, and rescans via the existing pipeline. No custom build
+of packages, no removal, no cross-suite binaries, no new dependencies,
+no registry publication. The application image itself is built with the
+verified binary archives. Unsupported targets explicitly produce no
+candidate, not a legacy mutation fallback. Vendor unavailability is
+reported rather than treated as no fix. No approved official-backports
+automation, shared multi-worker cache, Grype integration or full workload
+validation yet; not production-ready. The existing legacy path remains
+when the pilot flag is off.

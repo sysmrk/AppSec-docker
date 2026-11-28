@@ -954,6 +954,21 @@
       }
       const scans = pipeline?.scans || [], artifacts = pipeline?.artifacts || [], patches = pipeline?.patches || [], diffs = pipeline?.diffs || [];
       const orig = scans.find(s => s.phase === "original"), patched = scans.find(s => s.phase === "patched");
+      const intel=orig?.evidence?.fix_discovery, fleet=orig?.evidence?.fleet_plan;
+      if(intel||fleet){
+        const box=section(root,"V4 Fix Discovery & signed binary plan");
+        if(intel){
+          box.appendChild(node("p","info-note","Vendor evidence: "+intel.status+(intel.message?" — "+intel.message:"")));
+          const summary=intel.summary?.trivy;
+          if(summary)showMetrics(box,[["OS findings",summary.os_finding_occurrences],["Scanner FixedVersion missing",summary.blank_fixed_version]]);
+          if(summary?.all_categories)detailsTable(box,[["Vendor evidence","category"],["Findings","count"]],Object.entries(summary.all_categories).map(([category,count])=>({category,count})));
+        }
+        if(fleet){
+          box.appendChild(node("p","info-note","Repository plan: "+fleet.status+(fleet.message?" — "+fleet.message:"")+(fleet.mirror?" · "+fleet.mirror:"")));
+          detailsTable(box,[["Package","package"],["Before","before"],["Candidate","after"]],Object.entries(fleet.updates||{}).map(([packageName,values])=>({package:packageName,...values})));
+        }
+        box.appendChild(node("p","info-note","Local test only. Source fixes are not installable binary fixes. No package removal or custom build."));
+      }
       const sbomReady = artifacts.some(a => a.kind === "sbom" && (!orig || a.scan_id === orig.id));
       const sec = section(root, "Step-by-step progress");
       const ol = node("ol", "manual-timeline");
@@ -965,8 +980,8 @@
       const noCopa=!w.patch_job_id&&(terminal||w.optimization_active);
       const reason=w.execution_mode==="scan_only"?"Scan-only route selected.":data.patch_eligibility?.code==="NO_FIXABLE_OS"?"No OS findings have a reported FixedVersion; targeted Copa was skipped.":"No separate Copa job was executed.";
       const patchStrategy=pipeline?.patches?.[0]?.strategy;
-      stepItem(ol,"4. Copa "+(patchStrategy?patchStrategy+" ":"")+"patch",noCopa?reason:patchStrategy==="comprehensive"?"Comprehensive OS updates; no FixedVersion requirement.":"Build a local OS patch using Copa / BuildKit.",noCopa?"skipped":w.patch_job_status==="success"?"done":w.patch_job_status==="failed"?"failed":w.decision==="approve_patch"?"running":"waiting");
-      stepItem(ol,"5. Copa rescan",noCopa?"No Copa image to rescan. Optimization has its own verified rescan.":"Trivy scans the actual Copa output.",noCopa?"skipped":patched?.status==="success"&&diffs.length?"done":w.patch_job_status==="failed"?"failed":w.decision==="approve_patch"?"running":"waiting");
+      stepItem(ol,(intel||fleet)?"4. V4 signed package remediation":"4. Copa "+(patchStrategy?patchStrategy+" ":"")+"patch",fleet?.status==="no_updates"?"No eligible binary updates in approved repositories.":noCopa?reason:(intel||fleet)?"Check all installed packages; retain local candidate only.":patchStrategy==="comprehensive"?"Comprehensive OS updates; no FixedVersion requirement.":"Build a local OS patch using Copa / BuildKit.",noCopa?"skipped":w.patch_job_status==="success"?"done":w.patch_job_status==="failed"?"failed":w.decision==="approve_patch"?"running":"waiting");
+      stepItem(ol,"5. Patched image rescan",noCopa?"No patched image to rescan.": "Trivy scans the actual local patch output.",noCopa?"skipped":patched?.status==="success"&&diffs.length?"done":w.patch_job_status==="failed"?"failed":w.decision==="approve_patch"?"running":"waiting");
       if(w.execution_mode==="auto_optimize")stepItem(ol,"6. Optimize and rescan candidate","Compare the original and final candidate with the same frozen vulnerability DB.",pipeline?.optimization?.state==="completed"?"done":w.optimization_active?"running":pipeline?.optimization?.state==="failed"?"failed":terminal?"skipped":"waiting");
       stepItem(ol,w.execution_mode==="auto_optimize"?"7. Registry publication":"6. Registry publication",w.unattended&&!w.auto_destination?"Local output selected before Start; registry push not requested.":"Publish only with applicable authorization and verified evidence.",w.state==="published"?"done":w.state==="publishing"?"running":w.unattended&&!w.auto_destination||noCopa?"skipped":w.state==="publish_failed"?"failed":w.publish_decision==="skip_publish"?"skipped":"waiting");
       stepItem(ol,w.execution_mode==="auto_optimize"?"8. Final report":"7. Final report","Display original and actual final candidate findings; no invented patch result.",["published","completed","completed_without_publish"].includes(w.state)?"done":terminal?"failed":"waiting");
@@ -1248,7 +1263,7 @@
     const mode=$("execution-mode").value;
     $("optimization-choices").hidden=mode!=="auto_optimize";
     $("patch-output-choices").hidden=mode!=="auto_patch";
-    $("execution-help").textContent=({guided:"Review the initial scan and decide whether to patch.",scan_only:"Scan and SBOM only; no local patch.",auto_patch:"Automatically use Copa targeted updates when known fixes exist, otherwise try comprehensive OS updates; rescan and retain locally or use approved registry output.",auto_optimize:"Automatically try Copa targeted or comprehensive updates, then simulate removal of the selected unused modules and safe dependency closure, build and rescan locally, then finish. No registry push."})[mode];
+    $("execution-help").textContent=({guided:"Review the initial scan and decide whether to patch.",scan_only:"Scan and SBOM only; no local patch.",auto_patch:"Automatically prepare a local package patch and rescan. In V4 fleet-test deployments, use signed Debian binary upgrades independent of FixedVersion; select local output only.",auto_optimize:"Automatically try Copa targeted or comprehensive updates, then simulate removal of the selected unused modules and safe dependency closure, build and rescan locally, then finish. No registry push."})[mode];
   });
   $("auto-push").addEventListener("change",()=>{ $("auto-destination").disabled=!$("auto-push").checked; });
   async function loadPackageMirrors(){
