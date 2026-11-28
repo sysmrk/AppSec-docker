@@ -144,7 +144,7 @@ def main(argv=None):
                     raise ValueError("Empty Syft inventory; no zero-risk conclusion")
                 reported=(sbom.get("source",{}).get("metadata") or {}).get("imageID")
                 if reported and reported!=iid:
-                    raise ValueError("Syft image identity mismatch")
+                    raise ValueError(f"Syft image identity mismatch: expected {iid}; reported {reported!r}")
                 sbom_path.write_bytes(data)
                 report=json.loads(tool(grype,["sbom:/sbom.json","-o","json"],[(sbom_path,"/sbom.json",True),db_mount],env,args.timeout))
                 if manifest(frozen)!=hashes:

@@ -110,3 +110,29 @@ not a zero-risk or zero-CVE assertion. Keep both earlier and revised reports.
 Scanner CI: private container tmpfs uses explicit mode 1777 so the invoking
 host UID can create Syft temporary files. No additional capabilities, host
 filesystem exposure or network access.
+
+
+### Phase 4: source-only backport preflight
+
+curl CVE-2026-8932 uses historical release notation 7.7; normalize X.Y
+only inside curl upstream feed interpretation, not arbitrary package
+versions. Report every unresolved advisory ID. Upstream states libcurl
+is affected, not the CLI itself; preserve original scanner findings.
+
+For curl 8.23.0-2 (Debian testing source), check exact signed source metadata
+and simulate build dependencies against Trixie binary repositories only.
+Run inside an already available disposable Trixie image:
+
+    docker run --rm -i --pull=never --user 0:0 \
+      --memory 1g --pids-limit 128 --security-opt no-new-privileges:true \
+      --entrypoint /bin/sh ORIGINAL_IMAGE_ID \
+      -s -- curl 8.23.0-2 < scripts/v4-backport-preflight.sh
+
+The test adds only a Testing deb-src line; no Testing binaries can be
+selected from that line. It downloads metadata, not source or binary
+packages, and does not compile or install anything. Requires access to
+the explicitly configured Tsinghua mirror and sufficient free space.
+A successful simulation is a lead; build-essential, clean builder,
+tests, feature parity, ABI and runtime dependency validation remain
+mandatory. If dependencies cannot be satisfied, record the blocker
+rather than enabling Testing binaries or dropping build features.

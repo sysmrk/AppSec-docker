@@ -38,3 +38,17 @@ class UpstreamCurlTests(unittest.TestCase):
         self.assertIsNone(u.in_range([{"introduced":"8.0.0"},{"introduced":"8.0.0"}],u.version("8.0.0")))
         self.assertIsNone(u.in_range([{"introduced":"8.0.0"},{"fixed":"8.0.0"},{"introduced":"8.0.0"}],u.version("8.0.0")))
         self.assertIsNone(u.in_range([{"introduced":"8.0.0"},{"last_affected":"8.0.0"}],u.version("8.0.0")))
+
+    def test_historical_curl_release(self):
+        # Actual CVE-2026-8932 release events, including old two-part
+        # version notation and empty final interval.
+        events=[{"introduced":"7.7"},{"fixed":"8.14.2"},
+                {"introduced":"8.15.0"},{"fixed":"8.16.1"},
+                {"introduced":"8.17.0"},{"fixed":"8.20.1"},
+                {"introduced":"8.21.0"},{"fixed":"8.21.0"}]
+        for v,expected in [("7.6.0",False),("7.7.0",True),("8.14.1",True),
+                           ("8.21.0",False),("8.23.0",False)]:
+            self.assertIs(u.in_range(events,u.version(v)),expected)
+        with self.assertRaises(ValueError):
+            u.version("7.7")
+        self.assertIsNone(u.in_range([{"introduced":"7.7-rc1"}],u.version("8.23.0")))

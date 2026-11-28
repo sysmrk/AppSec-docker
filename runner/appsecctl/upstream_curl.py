@@ -10,6 +10,13 @@ def version(value):
         raise ValueError("Expected numeric upstream release, not Debian package version")
     return tuple(map(int,value.split(".")))
 
+def historical_version(value):
+    # Official curl releases used X.Y before the patch component became
+    # conventional (e.g. 7.7). Normalize only in the curl adapter.
+    if isinstance(value,str) and re.fullmatch(r"(0|[1-9]\d*)\.(0|[1-9]\d*)",value):
+        value+=".0"
+    return version(value)
+
 def in_range(events,target):
     """OSV alternating introduced/fixed intervals, including reintroduction.
     Unknown event types, malformed order, or prereleases fail closed."""
@@ -25,7 +32,7 @@ def in_range(events,target):
             kind,value=next(iter(event.items()))
             if kind not in ("introduced","fixed","last_affected"):
                 return None
-            point=(0,0,0) if kind=="introduced" and value=="0" else version(value)
+            point=(0,0,0) if kind=="introduced" and value=="0" else historical_version(value)
             # curl publishes empty [introduced, fixed) intervals when
             # both events occur in the same release, e.g. CVE-2026-11856.
             # Only that specific equal-boundary pair is accepted. Other
@@ -144,6 +151,7 @@ def audit(report,feed,original,candidate):
             "full_feed_review":{"unique_advisories":len(records),
                 "unresolved_comparison_count":len(unknown_leads),
                 "unresolved_original_findings_advisories":[r["id"] for r in unknown_leads if r["in_original_findings"]],
+                "unresolved_advisory_ids":[r["id"] for r in unknown_leads],
                 "candidate_affected_count":len(candidate_affected),
                 "candidate_affected_advisory_ids":[r["id"] for r in candidate_affected]},
 
