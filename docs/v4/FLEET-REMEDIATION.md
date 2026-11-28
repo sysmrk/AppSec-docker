@@ -163,3 +163,7 @@ pilot requires immutable daemon inspect ID plus explicit descriptor or
 RepoDigest association, matching platform, ordered diff IDs and runtime
 configuration, then verifies Syft's identity against the exported config.
 This is an export binding, not a claim that the two digests are equivalent.
+
+### Opt-in local Backports trial
+
+APPSEC_V4_BACKPORT_TRIAL=true with fleet and independent scanning enables at most one source-group trial per workflow. Positive vendor threshold lead, signed archive hash, exact existing-package dependency closure and no known upstream regression required. Re-simulate combined stable and Backports exact pins; compare with stable-only result (or original if no stable upgrade) using frozen Trivy and matching Grype DB hashes. Reject new findings, coverage/severity regression or no incremental reduction. Local only; no publication authorization or functional compatibility claim. Raw rejected trial reports are not retained. External approved repositories and dependency additions remain pending.

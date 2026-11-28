@@ -232,6 +232,10 @@ def fleet_section(original, execution):
         upstream=binary.get("curl_upstream_review") or {}
         if upstream:
             binary_html+='<p>Curl upstream review: '+e(upstream.get("status"))+' · New exposure leads: '+e(", ".join(upstream.get("new_exposure_ids") or []) or "—")+'</p>'
+    trial=plan.get("backport_trial") or {}
+    if trial:
+        binary_html+='<h3>Local Backports trial</h3><p>'+e(trial.get("status"))+' · '+e(trial.get("source"))+' · '+e(trial.get("message"))+'</p>'
+        binary_html+='<p>Incremental reduction: Trivy '+e(trial.get("trivy_net_reduction"))+' · Grype '+e(trial.get("grype_net_reduction"))+' · Blockers: '+e(", ".join(trial.get("blockers") or []) or "—")+'</p>'
     return ('<section><h2>V4 Fix Discovery &amp; signed binary plan</h2>'
             '<p>Vendor evidence: '+e(discovery.get("status"))+' · Snapshot SHA256: '+e(discovery.get("snapshot_sha256"))+'<br>Snapshot origin: '+e(discovery.get("snapshot_origin"))+' · File mtime (UTC): '+e(discovery.get("snapshot_file_mtime"))+'</p>'
             '<p>Repository plan: '+e(plan.get("status"))+' · Mirror: '+e(plan.get("mirror"))+'</p>'
@@ -239,7 +243,7 @@ def fleet_section(original, execution):
             '<table><thead><tr><th>Vendor evidence category</th><th>Findings</th></tr></thead><tbody>'+rows+'</tbody></table>'
             '<table><thead><tr><th>Planned existing package</th><th>Before</th><th>Candidate</th></tr></thead><tbody>'+changes+'</tbody></table>'
             +binary_html+
-            '<p class="muted">Source leads are not installed fixes. Stable/security/updates installation only; Backports discovery is read-only. No package removal or custom compilation. '
+            '<p class="muted">Source leads are not installed fixes. Stable/security/updates and explicitly authorized local Backports trials. No package removal or custom compilation. '
             'A local test candidate is not authorized for publication. Workload tests remain required.</p></section>')
 
 

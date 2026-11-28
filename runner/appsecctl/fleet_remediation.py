@@ -164,7 +164,7 @@ def patch(scan_id):
         raise
     summary={"status":"planned" if plan["updates"] else "no_updates","mirror":plan["mirror"],
              "updates":plan["updates"],"installed_package_count":len(plan["inventory"]),
-             "plan_sha256":plan["plan_sha256"],"message":"All installed packages checked using stable, updates and security repositories. No backports or removals."}
+             "plan_sha256":plan["plan_sha256"],"message":"All installed packages checked using stable, updates and security repositories. Optional local Backports trial evaluated separately; no removals."}
     _record_plan(scan_id,summary)
     from . import binary_discovery
     try:
@@ -176,25 +176,49 @@ def patch(scan_id):
         summary["binary_discovery"]={"status":"unavailable","message":safe_message(exc,"patch_build"),
                                      "automatic_selection_count":0,"publication_authorized":False}
     _record_plan(scan_id,summary)
+    from . import backport_trial
     job_watch.emit("apt_upgrades",len(plan["updates"]))
+    candidate=None
     if not plan["updates"]:
-        job_watch.emit("fleet_no_updates")
-        raise scan_evidence.NoFixableOS("No eligible stable updates; original evidence retained")
+        with db.connect() as conn:
+            authorized=optimization.mirrors(conn)
+        candidate,trial=backport_trial.attempt(plan,report,summary["binary_discovery"],None,authorized)
+        summary["backport_trial"]=trial
+        if candidate:
+            summary.update(status="planned",updates=candidate["updated_packages"],plan_sha256=candidate["approved_plan_sha256"])
+        try:
+            _record_plan(scan_id,summary)
+        except BaseException:
+            backport_trial.cleanup(candidate)
+            raise
+        if not candidate:
+            job_watch.emit("fleet_no_updates")
+            raise scan_evidence.NoFixableOS("No eligible verified local update; original evidence retained")
     patch_id=str(uuid4())
     output=source_repository(source)+":patched-"+patch_id[:12]
-    with db.connect() as conn:
-        db.insert_patch_started(conn,patch_id,pipeline_id,scan_id,source,patched_image_ref(source,patch_id))
-        conn.execute("UPDATE patch_runs SET execution_evidence=%s WHERE id=%s",
-                     (Jsonb({"strategy":"fleet_native_apt","package_repository":{"mirror":plan["mirror"]},
-                            "native_plan":summary,"publication_authorized":False}),patch_id))
-    candidate=None
+    try:
+        with db.connect() as conn:
+            db.insert_patch_started(conn,patch_id,pipeline_id,scan_id,source,patched_image_ref(source,patch_id))
+            conn.execute("UPDATE patch_runs SET execution_evidence=%s WHERE id=%s",
+                         (Jsonb({"strategy":"fleet_native_apt","package_repository":{"mirror":plan["mirror"]},
+                                "native_plan":summary,"publication_authorized":False}),patch_id))
+    except BaseException:
+        backport_trial.cleanup(candidate)
+        raise
+    stable=None
     tagged=False
     try:
         job_watch.emit("fleet_build")
         # Recheck the plan against the current authorized mirror set.
         with db.connect() as conn:
             authorized=optimization.mirrors(conn)
-        candidate=native_apt.build(plan,report,plan["plan_sha256"],authorized,generic=True)
+        if candidate is None:
+            stable=native_apt.build(plan,report,plan["plan_sha256"],authorized,generic=True)
+            candidate,trial=backport_trial.attempt(plan,report,summary["binary_discovery"],stable,authorized)
+            summary["backport_trial"]=trial
+            if candidate is not stable:
+                summary.update(updates=candidate["updated_packages"],plan_sha256=candidate["approved_plan_sha256"])
+            _record_plan(scan_id,summary)
         job_watch.checkpoint()
         apt.run(["docker","tag",candidate["candidate_image_id"],output])
         tagged=True
@@ -203,7 +227,7 @@ def patch(scan_id):
         with db.connect() as conn:
             db.update_patch_success(conn,patch_id,None)
             conn.execute("UPDATE patch_runs SET local_image_id=%s,local_image_ref=%s,publication_status='prepared',execution_evidence=execution_evidence || %s WHERE id=%s",
-                         (candidate["candidate_image_id"],output,Jsonb({"native_candidate":candidate}),patch_id))
+                         (candidate["candidate_image_id"],output,Jsonb({"native_candidate":candidate,"native_plan":summary}),patch_id))
         return patch_id,output
     except BaseException as exc:
         with db.connect() as conn:
@@ -212,5 +236,6 @@ def patch(scan_id):
             subprocess.run(["docker","image","rm",output],check=False,timeout=30,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
         raise
     finally:
-        if candidate:
-            subprocess.run(["docker","image","rm",candidate["candidate"]],check=False,timeout=30,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+        backport_trial.cleanup(candidate)
+        if stable and stable is not candidate:
+            backport_trial.cleanup(stable)

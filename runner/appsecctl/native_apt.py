@@ -96,7 +96,7 @@ apt_safe download "$@"
 '''
 
 
-def download(image,mirror,updates,dest):
+def download(image,mirror,updates,dest,*,script=DOWNLOAD):
     apt.progress("apt_download")
     args=[]
     for name,row in sorted(updates.items()):
@@ -108,7 +108,7 @@ def download(image,mirror,updates,dest):
     try:
         apt.run(["docker","create","--name",container,"--pull=never","--user","0:0",
                  "--security-opt","no-new-privileges:true","--pids-limit","128","--memory","1g",
-                 "--entrypoint","/bin/sh",image,"-ec",DOWNLOAD,"lab",main,security,*args],60)
+                 "--entrypoint","/bin/sh",image,"-ec",script,"lab",main,security,*args],60)
         apt.run(["docker","start","-a",container],600)
         state=apt.run(["docker","inspect","--format","{{.State.ExitCode}}",container]).strip()
         if state!="0":
@@ -143,6 +143,13 @@ def build(plan_data,report,approved,authorized_mirrors,*,generic=False):
     fresh=plan(image,report,[plan_data["mirror"]],generic=generic) if generic else plan(image,report,[plan_data["mirror"]])
     if not fresh["updates"] or any(fresh[k]!=plan_data[k] for k in ("image_id","mirror","updates","inventory","report_sha256")):
         raise ValueError("Upgrade plan changed; request new approval")
+    return _build_exact(plan_data, generic=generic)
+
+
+def _build_exact(plan_data, *, generic=False, archive_script=None, required_hashes=()):
+    """Internal exact transaction builder; callers must validate authorization."""
+    image=plan_data["image_id"]
+    approved=plan_data["plan_sha256"]
     base=apt.inspect(image)
     if base["Config"].get("User") not in ("","root","0","0:0",None):
         raise ValueError("Only root-default build images supported")
@@ -154,7 +161,9 @@ def build(plan_data,report,approved,authorized_mirrors,*,generic=False):
         with tempfile.TemporaryDirectory(prefix="appsec-native-apt-") as tmp:
             root=Path(tmp)
             dest=root/"debs";dest.mkdir()
-            hashes=download(image,plan_data["mirror"],plan_data["updates"],dest)
+            hashes=(download(image,plan_data["mirror"],plan_data["updates"],dest,script=archive_script) if archive_script else download(image,plan_data["mirror"],plan_data["updates"],dest))
+            if not set(required_hashes)<=set(hashes.values()):
+                raise ValueError("Backports archive hash changed")
             # BuildKit bind mount keeps downloaded archives out of the final
             # layer. No network and no downloads while installing.
             # Validate every .deb name/version/arch before invoking dpkg.

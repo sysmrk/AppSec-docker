@@ -1,8 +1,12 @@
 # V4 pilot only: public vendor snapshot supplied by the host, read-only.
 services:
   worker:
+    environment:
+      APPSEC_V4_BACKPORT_TRIAL: ${APPSEC_V4_BACKPORT_TRIAL:-false}
     volumes:
       - ./fix-discovery-cache:/vendor-snapshots:ro
   image-worker:
+    environment:
+      APPSEC_V4_BACKPORT_TRIAL: ${APPSEC_V4_BACKPORT_TRIAL:-false}
     volumes:
       - ./fix-discovery-cache:/vendor-snapshots:ro
