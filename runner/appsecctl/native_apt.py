@@ -19,7 +19,7 @@ from . import apt_optimization as apt, apt_repository_review as repo, remediatio
 
 SCHEMA="appsec.native-apt-plan/v1"
 VERSION=re.compile(r"[0-9][A-Za-z0-9.+:~\-]{0,191}")
-INST=re.compile(r"^Inst ([a-z0-9][a-z0-9+.-]*(?::[a-z0-9-]+)?) \[([^\]]+)\] \(([^ ]+)(?: .*)?\)$",re.M)
+INST=re.compile(r"^Inst ([a-z0-9][a-z0-9+.-]*(?::[a-z0-9-]+)?) \[([^\]]+)\] \(([^ ]+)(?: [^\r\n]*)?\)(?: \[[A-Za-z0-9+.:~ _-]+\])?$",re.M)
 CONFIG_KEYS=("Entrypoint","Cmd","User","Env","WorkingDir","ExposedPorts","Healthcheck","Volumes","StopSignal","Labels")
 
 
@@ -36,7 +36,7 @@ def changes(simulation, rows, *, allow_unchanged=False):
             continue
         match=INST.fullmatch(line)
         if not match:
-            raise ValueError("Unsupported APT upgrade line")
+            raise ValueError("Unsupported APT upgrade line: "+line[:512])
         name=apt.resolve(match[1],rows)
         old,new=match[2],match[3]
         if name in result or old!=rows[name]["version"] or not VERSION.fullmatch(old) or not VERSION.fullmatch(new) or old==new:

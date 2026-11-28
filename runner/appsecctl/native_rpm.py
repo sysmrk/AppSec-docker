@@ -313,8 +313,11 @@ def build(image,report,root=ROOT):
         iid=apt.run(["docker","image","inspect","--format","{{.Id}}",output]).strip()
         after=apt.inspect(iid)
         layers=base["RootFS"]["Layers"]
-        if iid==image or after["RootFS"]["Layers"][:len(layers)]!=layers or any(base["Config"].get(k)!=after["Config"].get(k) for k in native_apt.CONFIG_KEYS):
-            raise ValueError("RPM candidate lineage or runtime configuration changed")
+        if iid==image or after["RootFS"]["Layers"][:len(layers)]!=layers:
+            raise ValueError("RPM candidate lineage changed")
+        changed=[k for k in native_apt.CONFIG_KEYS if base["Config"].get(k)!=after["Config"].get(k)]
+        if changed:
+            raise ValueError("RPM runtime configuration changed: "+", ".join(changed))
         validate_after(before,inventory(iid,kind),updates)
         if inventory(image,kind)!=before or policy(kind,root)[0]!=trust:
             raise ValueError("Original RPM image or key policy changed")

@@ -16,6 +16,13 @@ class UbuntuTrialTests(unittest.TestCase):
         self.assertIn("apt-get download",u.DOWNLOAD)
         self.assertNotIn("trixie",u.DOWNLOAD)
 
+    def test_transient_apt_breakage_annotation(self):
+        from appsecctl import native_apt
+        line="Inst libc6 [2.39-0ubuntu1] (2.39-0ubuntu2 Ubuntu:24.04/noble-updates [amd64]) [libc-bin:amd64 ]\n1 upgraded, 0 newly installed, 0 to remove and 1 not upgraded.\n"
+        self.assertEqual(native_apt.changes(line,{"libc6":{"version":"2.39-0ubuntu1"}},allow_unchanged=True),{"libc6":{"before":"2.39-0ubuntu1","after":"2.39-0ubuntu2"}})
+        with self.assertRaises(ValueError):
+            native_apt.changes(line.replace("0 newly installed","1 newly installed"),{"libc6":{"version":"2.39-0ubuntu1"}},allow_unchanged=True)
+
     def test_disabled(self):
         with patch.object(u,"enabled",return_value=False),patch.object(u,"plan") as plan:
             self.assertEqual(u.attempt("image",{})[1]["status"],"blocked")
