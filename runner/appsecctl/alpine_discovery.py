@@ -6,7 +6,7 @@ from . import apt_optimization as apt
 from .workflow_control import StopRequested
 
 RELEASE = re.compile(r"3\.[0-9]{1,2}")
-UPGRADE = re.compile(r"\(\d+/\d+\) Upgrading ([A-Za-z0-9][A-Za-z0-9+_.-]*) \(([A-Za-z0-9+_.~-]+) -> ([A-Za-z0-9+_.~-]+)\)")
+UPGRADE = re.compile(r"\(\s*\d+/\d+\) Upgrading ([A-Za-z0-9][A-Za-z0-9+_.-]*) \(([A-Za-z0-9+_.~-]+) -> ([A-Za-z0-9+_.~-]+)\)")
 PROBE = r'''
 export LC_ALL=C
 . /etc/os-release
@@ -38,7 +38,7 @@ def parse(output):
                 raise ValueError("Ambiguous APK transaction")
             seen.add(name)
             rows.append({"package":name,"before":old,"candidate":new,"decision":"REVIEW_REQUIRED"})
-        elif re.match(r"^\(\d+/\d+\)",line):
+        elif re.match(r"^\(\s*\d+/\d+\)",line):
             blockers.append("non_upgrade_or_unknown_action")
         elif line.startswith(("ERROR:","WARNING:")):
             blockers.append("apk_diagnostic")

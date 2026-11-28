@@ -13,6 +13,7 @@ class NativeAPKTests(unittest.TestCase):
     def test_exact_transaction(self):
         before=self.inventory()
         changes=apk.changes("(1/1) Upgrading busybox (1.36.1-r1 -> 1.36.1-r2)\nOK: 7 MiB in 16 packages\n@@COMPLETE\n",before["packages"])
+        self.assertEqual(apk.changes("( 1/14) Upgrading busybox (1.36.1-r1 -> 1.36.1-r2)\nOK: 7 MiB in 16 packages\n@@COMPLETE\n",before["packages"]),changes)
         after={**before,"packages":{"busybox":{"version":"1.36.1-r2","architecture":"x86_64"}}}
         apk.validate_after(before,after,changes)
         with self.assertRaises(ValueError):

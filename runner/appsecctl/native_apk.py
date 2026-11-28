@@ -144,9 +144,10 @@ cat "$work/plan"
 echo '@@COMPLETE'
 echo "APK_STAGE: validate transaction" >&2
 # Only fetch recognizable upgrades, never resolve extra packages.
-awk '/^\([0-9]+\/[0-9]+\) / {
-  if ($2!="Upgrading" || NF!=6 || $5!="->") exit 1;
-  v=$6;sub(/\)$/,"",v);print $3 "=" v
+awk '/^\([[:space:]]*[0-9]+\/[0-9]+\)[[:space:]]/ {
+  sub(/^\([[:space:]]*[0-9]+\/[0-9]+\)[[:space:]]+/, "");
+  if ($1!="Upgrading" || NF!=5 || $4!="->") exit 1;
+  v=$5;sub(/\)$/,"",v);print $2 "=" v
 }' "$work/plan" > "$work/pins"
 count=$(wc -l < "$work/pins")
 test "$count" -le 128

@@ -113,25 +113,59 @@ with dnf.Base() as b:
         repo.skip_if_unavailable=False
         repo.enable()
     b.fill_sack(load_system_repo=True)
-    b.upgrade_all()
-    b.resolve(allow_erasing=False)
-    install=list(b.transaction.install_set)
-    remove=list(b.transaction.remove_set)
-    old={}
-    for p in remove:
-        row=ident(p); key=(row[0],row[4])
-        if key in old: raise RuntimeError("Duplicate RPM removal")
-        old[key]=row
-    new={}
-    for p in install:
-        row=ident(p); key=(row[0],row[4])
-        if key in new or key not in old or row[4] not in ("x86_64","noarch") or rpm.labelCompare(tuple(old[key][1:4]),tuple(row[1:4]))>=0:
-            raise RuntimeError("RPM transaction is not exact existing-package upgrades")
-        if p.reponame not in ("appsec-0","appsec-1"):
-            raise RuntimeError("Unapproved RPM origin")
-        new[key]=row
-    if set(old)!=set(new) or len(new)>128 or sum(p.downloadsize for p in install)>512*1024*1024:
-        raise RuntimeError("RPM transaction closure or size invalid")
+    class UnsafeClosure(RuntimeError):
+        pass
+    def closure():
+        install=list(b.transaction.install_set)
+        remove=list(b.transaction.remove_set)
+        old={}
+        for p in remove:
+            row=ident(p); key=(row[0],row[4])
+            if key in old: raise UnsafeClosure("Duplicate RPM removal")
+            old[key]=row
+        new={}
+        for p in install:
+            row=ident(p); key=(row[0],row[4])
+            if key in new or key not in old or row[4] not in ("x86_64","noarch") or rpm.labelCompare(tuple(old[key][1:4]),tuple(row[1:4]))>=0:
+                raise UnsafeClosure("Not an exact existing-package upgrade")
+            if p.reponame not in ("appsec-0","appsec-1"):
+                raise UnsafeClosure("Unapproved RPM origin")
+            new[key]=row
+        if set(old)!=set(new) or len(new)>128 or sum(p.downloadsize for p in install)>512*1024*1024:
+            raise UnsafeClosure("RPM transaction closure or size invalid")
+        return install,old
+    try:
+        b.upgrade_all()
+        b.resolve(allow_erasing=False)
+        install,old=closure()
+        scope="all"
+    except (UnsafeClosure,dnf.exceptions.DepsolveError):
+        # A full transaction can require new dependencies. Try bounded
+        # source cohorts, accumulating only closures which remain safe.
+        # No dependency or signature checks are relaxed.
+        groups={}
+        for p in b.sack.query().upgrades():
+            groups.setdefault(p.source_name or p.name,set()).add(p.name)
+        ranked=sorted(groups,key=lambda n:(-len(groups[n]),n))
+        selected=set()
+        for group in ranked[:16]:
+            trial=selected|groups[group]
+            b.reset(goal=True)
+            try:
+                for name in sorted(trial): b.upgrade(name)
+                b.resolve(allow_erasing=False)
+                chosen,_=closure()
+                if chosen: selected=trial
+            except (UnsafeClosure,dnf.exceptions.DepsolveError,dnf.exceptions.MarkingError):
+                continue
+        if not selected:
+            raise RuntimeError("No verified exact RPM upgrade closure in bounded source cohort review")
+        b.reset(goal=True)
+        for name in sorted(selected): b.upgrade(name)
+        b.resolve(allow_erasing=False)
+        install,old=closure()
+        scope="bounded_source_cohort_subset"
+    print("@@SCOPE "+scope)
     if install:
         b.download_packages(install)
     records=[]
@@ -201,9 +235,12 @@ exec /usr/bin/python3 -c "$4" "$1" "$2" "$3"
         if apt.run(["docker","inspect","--format","{{.State.ExitCode}}",name]).strip()!="0":
             raise ValueError("RPM staging failed")
         updates=parse_plan(output,before)
+        scopes=[x.split(" ",1)[1] for x in output.splitlines() if x.startswith("@@SCOPE ")]
+        if len(scopes)!=1 or scopes[0] not in ("all","bounded_source_cohort_subset"):
+            raise ValueError("RPM solver scope missing")
         if updates:
             apt.run(["docker","cp",name+":/tmp/appsec-rpm-output/.",str(dest)],180)
-        return updates
+        return updates,scopes[0]
     finally:
         subprocess.run(["docker","rm","-f",name],check=False,timeout=30,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
 
@@ -243,7 +280,7 @@ def build(image,report,root=ROOT):
             ctx=Path(tmp)
             rpms=ctx/"archives";rpms.mkdir()
             job_watch.emit("rpm_plan")
-            updates=stage(image,kind,rpms,before)
+            updates,scope=stage(image,kind,rpms,before)
             if not updates:
                 return None,{"backend":"native_rpm","status":"no_updates","distribution":kind,"publication_authorized":False}
             archive_hashes=hashes(rpms,updates)
@@ -264,10 +301,10 @@ def build(image,report,root=ROOT):
                 "set -eu; export LC_ALL=C; sha256sum -c /tmp/appsec-checksums; sh /tmp/appsec-verify.sh; "
                 "work=$(mktemp -d); trap 'rm -rf \"$work\"' EXIT; "
                 "rpm -qp --qf '"+QUERY+"' /tmp/appsec-rpm-archives/*.rpm | sort > \"$work/actual\"; "
-                "sort /tmp/appsec-expected > \"$work/expected\"; cmp \"$work/actual\" \"$work/expected\"; "
+                "sort /tmp/appsec-expected > \"$work/expected\"; test \"$(sha256sum \"$work/actual\" | cut -d' ' -f1)\" = \"$(sha256sum \"$work/expected\" | cut -d' ' -f1)\"; "
                 "rpm -U --test /tmp/appsec-rpm-archives/*.rpm; rpm -U /tmp/appsec-rpm-archives/*.rpm\n")
             data={"backend":"native_rpm","distribution":kind,"release":"9","image_id":image,"updates":updates,
-                  "key_policy_sha256":trust,"archives_sha256":archive_hashes,"repositories":REPOS[kind],"publication_authorized":False}
+                  "key_policy_sha256":trust,"archives_sha256":archive_hashes,"repositories":REPOS[kind],"selection_scope":scope,"publication_authorized":False}
             data["plan_sha256"]=apt.plan_digest(data)
             if policy(kind,root)[0]!=trust: raise ValueError("RPM trust changed")
             apt.run(["docker","tag",image,tag])

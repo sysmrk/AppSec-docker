@@ -14,7 +14,7 @@ FIXTURES={
     "rhel":("redhat","registry.access.redhat.com/ubi9/ubi:9.4"),
     "rocky":("rocky","rockylinux:9"),
     "almalinux":("alma","almalinux:9.3"),
-    "ol":("oracle","oraclelinux:9.3"),
+    "ol":("oracle","oraclelinux:9"),
 }
 KEY_PREFIX={"rhel":"RPM-GPG-KEY-redhat","rocky":"RPM-GPG-KEY-Rocky","almalinux":"RPM-GPG-KEY-AlmaLinux","ol":"RPM-GPG-KEY-oracle"}
 

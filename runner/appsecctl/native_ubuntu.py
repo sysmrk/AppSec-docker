@@ -52,7 +52,7 @@ EOF
 export APT_CONFIG="$work/apt.conf"
 apt-get update >&2
 '''
-PLAN=PREFIX+'apt-get -s --no-remove dist-upgrade\n'
+PLAN=PREFIX+'apt-get -s --no-remove upgrade\n'
 DOWNLOAD=PREFIX+': > "$work/expected"'+backport_trial.archive_script("trixie").split(': > "$work/expected"',1)[1]
 
 def enabled():
@@ -82,7 +82,7 @@ def plan(image,report):
             raise ValueError("Ubuntu repository probe failed")
     finally:
         subprocess.run(["docker","rm","-f",name],check=False,timeout=30,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
-    updates=native_apt.changes(output,rows)
+    updates=native_apt.changes(output,rows,allow_unchanged=True)
     for n,v in updates.items():
         apt.container(image,'dpkg --compare-versions "$1" lt "$2"',[v["before"],v["after"]])
         selection=apt.container(image,'dpkg --get-selections "$1"',[n])

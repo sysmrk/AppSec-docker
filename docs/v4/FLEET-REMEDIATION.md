@@ -329,3 +329,14 @@ replace with independently verified old same-release images if that happens.
 See ACCEPTANCE-TEST.md for the native CI and multi-image WSL gates. The
 administrator UI now validates and exports external policy drafts; active
 policy remains host-managed and is not silently changed by the UI.
+
+Integration corrections: APK v3.23 pads transaction counters; accept only
+the equivalent whitespace variation, not additional actions. Ubuntu uses
+conservative upgrade (not dist-upgrade), permits untouched packages, and
+still refuses additions, removals, downgrades and selected held packages.
+EL9 can attempt a bounded cumulative source-cohort subset when the full
+solver closure is unsafe. The plan records the subset scope; it is not a
+complete upgrade or a promise that all CVEs can be fixed. RPM header
+comparison uses SHA256 of sorted identity records instead of requiring cmp
+inside minimal images. Oracle CI uses the public major-version image tag;
+a no-upgrade fixture still fails the build regression.

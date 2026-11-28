@@ -23,12 +23,12 @@ INST=re.compile(r"^Inst ([a-z0-9][a-z0-9+.-]*(?::[a-z0-9-]+)?) \[([^\]]+)\] \(([
 CONFIG_KEYS=("Entrypoint","Cmd","User","Env","WorkingDir","ExposedPorts","Healthcheck","Volumes","StopSignal","Labels")
 
 
-def changes(simulation, rows):
+def changes(simulation, rows, *, allow_unchanged=False):
     summary=re.findall(r"^(\d+) upgraded, (\d+) newly installed, (\d+) to remove and (\d+) not upgraded\.$",simulation,re.M)
     if len(summary)!=1:
         raise ValueError("APT summary unavailable")
     n,added,removed,held=map(int,summary[0])
-    if added or removed or held or re.search(r"^(?:Remv|Purg) ",simulation,re.M):
+    if added or removed or (held and not allow_unchanged) or re.search(r"^(?:Remv|Purg) ",simulation,re.M):
         raise ValueError("Native upgrade would add/remove/hold packages; manual review required")
     result={}
     for line in simulation.splitlines():
