@@ -281,3 +281,23 @@ APK v2 fetch accepts package names, not exact version constraints. Plan from
 the preserved signed local index, fetch by name, reject any archive filename
 or set differing from the frozen plan, and use that original signed index
 in the offline installation. No unsigned or network-enabled build fallback.
+
+### EL9 RPM native local pilot
+
+APPSEC_V4_RPM_TRIAL=true with fleet and independent scan flags enables
+trusted linux/amd64 root-default full DNF4 images for UBI9, Rocky 9,
+AlmaLinux 9 and Oracle Linux 9. Only configured official BaseOS and
+AppStream for the matching family and major are queried. Full UBI9 is
+explicitly identified by its component label; entitled RHEL, UBI minimal,
+microdnf and DNF5 are not supported. Minor-release updates are possible
+within major 9; never mix distro families. The DNF solver must resolve
+only strictly newer installed name/architecture pairs with no unrelated
+removals or additions. Pin verified vendor keys in
+fix-discovery-cache/rpm-<kind>-keys.json and rpm-<kind>-keys/ (kind rhel,
+rocky, almalinux, ol). RPM archive signatures are required and verified
+against an isolated key database, with exact archive header and SHA256
+checks. HTTPS repository metadata is not claimed to be GPG-signed.
+Offline RPM test/install and exact final inventory precede the independent
+scanner gate. No production publication or functional compatibility claim.
+Actual integration validation remains pending; missing DNF4 Python/RPM
+tools, key policy, or unsupported dependency closures fail closed.

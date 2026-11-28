@@ -251,6 +251,10 @@ def fleet_section(original, execution):
         val=plan.get("validation") or {}
         binary_html+='<h3>Native Ubuntu APT trial</h3><p>'+e(plan.get("status"))+' · '+e(plan.get("release"))+' · '+e(plan.get("message"))+'</p>'
         binary_html+='<p>Trivy reduction: '+e(val.get("trivy_net_reduction"))+' · Grype reduction: '+e(val.get("grype_net_reduction"))+' · Blockers: '+e(", ".join(val.get("blockers") or []))+'</p>'
+    if plan.get("backend")=="native_rpm":
+        val=plan.get("validation") or {}
+        binary_html+='<h3>Native RPM trial</h3><p>'+e(plan.get("status"))+' · '+e(plan.get("distribution"))+' · '+e(plan.get("message"))+'</p>'
+        binary_html+='<p>Trivy reduction: '+e(val.get("trivy_net_reduction"))+' · Grype reduction: '+e(val.get("grype_net_reduction"))+' · Blockers: '+e(", ".join(val.get("blockers") or []))+'</p>'
     trial=plan.get("backport_trial") or {}
     if trial:
         binary_html+='<h3>Local Backports trial</h3><p>'+e(trial.get("status"))+' · '+e(trial.get("source"))+' · '+e(trial.get("message"))+'</p>'

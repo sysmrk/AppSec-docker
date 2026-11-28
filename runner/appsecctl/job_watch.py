@@ -54,6 +54,8 @@ MESSAGES={
     "fleet_plan":"V4 checking all installed packages against approved signed repositories",
     "independent_scan":"Independent offline Syft and Grype scan started",
     "independent_complete":"Independent Grype match count",
+    "rpm_plan":"Resolving official DNF4 existing-package upgrades",
+    "rpm_build":"Verifying signed RPM archives and building offline candidate",
     "ubuntu_plan":"Planning official Ubuntu APT transaction",
     "ubuntu_build":"Building exact offline Ubuntu candidate",
     "apk_plan":"Planning and staging signed Alpine APK upgrades",

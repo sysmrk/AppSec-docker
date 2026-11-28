@@ -1,0 +1,8 @@
+{
+  "schema": "appsec.rpm-keys/v1",
+  "distribution": "rocky",
+  "major": "9",
+  "keys": {
+    "RPM-GPG-KEY-example": "REPLACE_WITH_VERIFIED_SHA256"
+  }
+}

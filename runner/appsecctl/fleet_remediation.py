@@ -152,12 +152,14 @@ def patch(scan_id):
             db.attach_scan_to_pipeline(conn,scan_id,pipeline_id)
         pipeline_id=str(pipeline_id)
     if not supports(report):
-        from . import native_apk, native_ubuntu
+        from . import native_apk, native_ubuntu, native_rpm
         if native_apk.supports(report):
             return _patch_other(scan_id,pipeline_id,source,image,report,native_apk,"fleet_native_apk")
         if native_ubuntu.supports(report):
             return _patch_other(scan_id,pipeline_id,source,image,report,native_ubuntu,"fleet_native_ubuntu")
-        _record_plan(scan_id,{"status":"unsupported","message":"V4 mutation supports Debian 12/13 and opt-in Alpine 3.22 and Ubuntu 24.04 main only. No legacy mutation fallback."})
+        if native_rpm.supports(report):
+            return _patch_other(scan_id,pipeline_id,source,image,report,native_rpm,"fleet_native_rpm")
+        _record_plan(scan_id,{"status":"unsupported","message":"V4 mutation supports Debian 12/13, opt-in Alpine 3.22, Ubuntu 24.04 and EL9 RPM pilots. No legacy mutation fallback."})
         raise scan_evidence.NoFixableOS("V4 fleet pilot: unsupported distribution; no candidate")
     if not mirrors:
         _record_plan(scan_id,{"status":"blocked","message":"Configure approved package mirrors before starting the next workflow."})
