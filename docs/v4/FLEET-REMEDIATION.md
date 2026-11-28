@@ -257,3 +257,9 @@ Syft/Grype comparisons with improvement and no observed regression.
 A rejected candidate is removed and the original image remains unchanged.
 No registry publication or workload compatibility claim. Real APK staging
 and build regression and WSL validation are still required.
+
+The dedicated v4-native-apk-lab CI job exercises official Alpine 3.22.0
+signed archive staging and actual offline upgrade, checks exact inventory and
+basic shell execution. It bypasses the scan-evidence gate only in this test;
+scanner comparison and application workload compatibility are not covered by
+that integration test. The job is expected to need a reachable official CDN.

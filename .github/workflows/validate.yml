@@ -260,3 +260,16 @@ jobs:
           assert (root/"image-1-grype.json").is_file()
           assert json.loads((root/"manifest.json").read_text())["grype_db_files_sha256"]
           PY
+
+  v4-native-apk-lab:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install runner dependencies
+        run: python -m pip install -r runner/requirements.txt
+      - name: Real signed Alpine APK v2 staging and offline upgrade
+        run: PYTHONPATH=runner python tests/integration_native_apk.py
