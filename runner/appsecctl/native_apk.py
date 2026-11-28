@@ -119,8 +119,14 @@ apk_safe() {
 }
 echo "APK_STAGE: update signed index" >&2
 apk_safe update >&2
-echo "APK_STAGE: simulate transaction" >&2
-apk_safe --no-network upgrade --simulate --no-self-upgrade > "$work/plan"
+echo "APK_STAGE: preserve signed index" >&2
+set -- "$work/cache"/APKINDEX.*.tar.gz
+test "$#" -eq 1
+test -f "$1"
+cp "$1" /tmp/appsec-apk-output/x86_64/APKINDEX.tar.gz
+printf '%s\n' /tmp/appsec-apk-output > "$work/local-repositories"
+echo "APK_STAGE: simulate transaction against frozen local index" >&2
+apk --keys-dir /tmp/appsec-apk-keys --repositories-file "$work/local-repositories" --cache-dir "$work/cache" --no-network --no-progress upgrade --simulate --no-self-upgrade > "$work/plan"
 cat "$work/plan"
 echo '@@COMPLETE'
 echo "APK_STAGE: validate transaction" >&2
@@ -138,13 +144,11 @@ for pin in $(cat "$work/pins"); do
     test -n "$old"
     test "$(apk version -t "$old" "$ver")" = '<'
     echo "APK_STAGE: fetch exact archive" >&2
-    apk_safe fetch --output /tmp/appsec-apk-output/x86_64 "$pin" >&2
+    # APK v2 fetch takes package names, not name=version constraints.
+    # Fail closed if the selected remote archive changed since simulation.
+    apk_safe fetch --output /tmp/appsec-apk-output/x86_64 "$name" >&2
+    test -s "/tmp/appsec-apk-output/x86_64/$name-$ver.apk"
 done
-echo "APK_STAGE: preserve signed index" >&2
-set -- "$work/cache"/APKINDEX.*.tar.gz
-test "$#" -eq 1
-test -f "$1"
-cp "$1" /tmp/appsec-apk-output/x86_64/APKINDEX.tar.gz
 apk --keys-dir /tmp/appsec-apk-keys verify /tmp/appsec-apk-output/x86_64/*.apk >&2
 test "$(du -sk /tmp/appsec-apk-output | cut -f1)" -le 524288
 '''

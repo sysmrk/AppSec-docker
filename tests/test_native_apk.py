@@ -44,6 +44,12 @@ class NativeAPKTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 apk.verify_stage(root,updates)
 
+    def test_v2_fetch_name_and_frozen_index(self):
+        self.assertIn('fetch --output /tmp/appsec-apk-output/x86_64 "$name"',apk.STAGE)
+        self.assertNotIn('fetch --output /tmp/appsec-apk-output/x86_64 "$pin"',apk.STAGE)
+        self.assertIn('test -s "/tmp/appsec-apk-output/x86_64/$name-$ver.apk"',apk.STAGE)
+        self.assertIn('local-repositories',apk.STAGE)
+
     def test_disabled(self):
         with patch.object(apk,"enabled",return_value=False),patch.object(apk,"build") as build:
             self.assertEqual(apk.attempt("example",{})[1]["status"],"blocked")

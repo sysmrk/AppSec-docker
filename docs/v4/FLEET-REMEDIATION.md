@@ -276,3 +276,8 @@ No fallback on missing TLS trust. Exact pin simulation and download are
 repeated before offline build and independent scanner gate. Other Ubuntu
 versions and components are not enabled. Native trial publication blocks
 apply to all fleet_native_* strategies. Integration testing is still required.
+
+APK v2 fetch accepts package names, not exact version constraints. Plan from
+the preserved signed local index, fetch by name, reject any archive filename
+or set differing from the frozen plan, and use that original signed index
+in the offline installation. No unsigned or network-enabled build fallback.
