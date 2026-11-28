@@ -54,6 +54,7 @@ MESSAGES={
     "fleet_plan":"V4 checking all installed packages against approved signed repositories",
     "independent_scan":"Independent offline Syft and Grype scan started",
     "independent_complete":"Independent Grype match count",
+    "external_trial":"Building isolated external binary trial and comparing verified baseline",
     "backport_trial":"Building isolated exact-pin Backports trial and comparing stable baseline",
     "binary_discovery":"V4 discovering official Backports binaries and simulating dependencies",
     "binary_candidates":"Official Backports candidates discovered (not installed)",

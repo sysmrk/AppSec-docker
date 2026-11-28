@@ -183,7 +183,7 @@ def patch(scan_id):
     from . import approved_binaries
     summary["approved_binary_discovery"]=approved_binaries.discover(image,report,plan)
     _record_plan(scan_id,summary)
-    from . import backport_trial
+    from . import backport_trial, external_trial
     job_watch.emit("apt_upgrades",len(plan["updates"]))
     candidate=None
     if not plan["updates"]:
@@ -191,6 +191,9 @@ def patch(scan_id):
             authorized=optimization.mirrors(conn)
         candidate,trial=backport_trial.attempt(plan,report,summary["binary_discovery"],None,authorized)
         summary["backport_trial"]=trial
+        if candidate is None:
+            candidate,external=external_trial.attempt(plan,report,summary["approved_binary_discovery"],None,authorized)
+            summary["external_trial"]=external
         if candidate:
             summary.update(status="planned",updates=candidate["updated_packages"],plan_sha256=candidate["approved_plan_sha256"])
         try:
@@ -223,8 +226,11 @@ def patch(scan_id):
             stable=native_apt.build(plan,report,plan["plan_sha256"],authorized,generic=True)
             candidate,trial=backport_trial.attempt(plan,report,summary["binary_discovery"],stable,authorized)
             summary["backport_trial"]=trial
+            if candidate is stable:
+                candidate,external=external_trial.attempt(plan,report,summary["approved_binary_discovery"],stable,authorized)
+                summary["external_trial"]=external
             if candidate is not stable:
-                summary.update(updates=candidate["updated_packages"],plan_sha256=candidate["approved_plan_sha256"])
+                summary.update(updates={**plan["updates"],**candidate["updated_packages"]},plan_sha256=candidate["approved_plan_sha256"])
             _record_plan(scan_id,summary)
         job_watch.checkpoint()
         apt.run(["docker","tag",candidate["candidate_image_id"],output])

@@ -146,7 +146,7 @@ def build(plan_data,report,approved,authorized_mirrors,*,generic=False):
     return _build_exact(plan_data, generic=generic)
 
 
-def _build_exact(plan_data, *, generic=False, archive_script=None, required_hashes=()):
+def _build_exact(plan_data, *, generic=False, archive_script=None, required_hashes=(), downloader=None):
     """Internal exact transaction builder; callers must validate authorization."""
     image=plan_data["image_id"]
     approved=plan_data["plan_sha256"]
@@ -161,7 +161,12 @@ def _build_exact(plan_data, *, generic=False, archive_script=None, required_hash
         with tempfile.TemporaryDirectory(prefix="appsec-native-apt-") as tmp:
             root=Path(tmp)
             dest=root/"debs";dest.mkdir()
-            hashes=(download(image,plan_data["mirror"],plan_data["updates"],dest,script=archive_script) if archive_script else download(image,plan_data["mirror"],plan_data["updates"],dest))
+            if downloader is not None:
+                if archive_script is not None:
+                    raise ValueError("Ambiguous archive download strategy")
+                hashes=downloader(image,plan_data["updates"],dest)
+            else:
+                hashes=(download(image,plan_data["mirror"],plan_data["updates"],dest,script=archive_script) if archive_script else download(image,plan_data["mirror"],plan_data["updates"],dest))
             if not set(required_hashes)<=set(hashes.values()):
                 raise ValueError("Backports archive hash changed")
             # BuildKit bind mount keeps downloaded archives out of the final

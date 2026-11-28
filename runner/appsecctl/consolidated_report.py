@@ -247,6 +247,11 @@ def fleet_section(original, execution):
     if trial:
         binary_html+='<h3>Local Backports trial</h3><p>'+e(trial.get("status"))+' · '+e(trial.get("source"))+' · '+e(trial.get("message"))+'</p>'
         binary_html+='<p>Incremental reduction: Trivy '+e(trial.get("trivy_net_reduction"))+' · Grype '+e(trial.get("grype_net_reduction"))+' · Blockers: '+e(", ".join(trial.get("blockers") or []) or "—")+'</p>'
+    external_trial=plan.get("external_trial") or {}
+    if external_trial:
+        binary_html+='<h3>Local external binary trial</h3><p>'+e(external_trial.get("status"))+' · '+e(external_trial.get("repository_id"))+' · '+e(external_trial.get("source"))+' · '+e(external_trial.get("message"))+'</p>'
+        binary_html+='<p>Incremental reduction: Trivy '+e(external_trial.get("trivy_net_reduction"))+' · Grype '+e(external_trial.get("grype_net_reduction"))+' · Blockers: '+e(", ".join(external_trial.get("blockers") or []) or "—")+'</p>'
+        binary_html+='<p>Observed advisory CVEs no longer reported: '+e(", ".join(v["package"]+" "+v["id"] for v in external_trial.get("observed_advisory_cves") or []) or "—")+'</p>'
     return ('<section><h2>V4 Fix Discovery &amp; signed binary plan</h2>'
             '<p>Vendor evidence: '+e(discovery.get("status"))+' · Snapshot SHA256: '+e(discovery.get("snapshot_sha256"))+'<br>Snapshot origin: '+e(discovery.get("snapshot_origin"))+' · File mtime (UTC): '+e(discovery.get("snapshot_file_mtime"))+'</p>'
             '<p>Repository plan: '+e(plan.get("status"))+' · Mirror: '+e(plan.get("mirror"))+'</p>'

@@ -216,3 +216,24 @@ archive origin before authorizing any trial. No automatic CVE suppression.
 All external candidates remain REVIEW_REQUIRED. The existing stable and
 Backports paths are unchanged. An actual dual-scanner external trial and
 functional tests remain pending.
+
+### Opt-in external local trial
+
+Set APPSEC_V4_EXTERNAL_TRIAL=true only for trusted test images, together
+with APPSEC_V4_FLEET_TEST=true and APPSEC_V4_INDEPENDENT_SCAN=true. An
+operator-pinned external advisory snapshot is mandatory. Official stable
+updates take precedence; an already selected Backports trial is not chained
+with an external trial. At most one external source group is considered,
+in configured repository order. Recheck policy, keyring and advisory hashes,
+simulate exact existing-package upgrades against the actual stable baseline,
+download only from that isolated source, and verify the exact archive size
+and SHA256 set before an offline build. Reject new packages, removals, held
+packages, downgrades and extra upgrades. Compare the new image against the
+stable baseline with frozen Trivy and matching independent Syft/Grype evidence;
+require a matched original advisory CVE to disappear from Trivy, no introduced
+findings or severity/coverage regressions, and incremental improvement.
+A failed trial retains the baseline. No automatic publication, CVE suppression,
+or proof of functional compatibility. External assertions are still
+operator-provided; verify the upstream source independently. No configured
+external sources by default. Real external repository integration testing
+and WSL testing remain required.
