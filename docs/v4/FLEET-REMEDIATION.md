@@ -167,3 +167,30 @@ This is an export binding, not a claim that the two digests are equivalent.
 ### Opt-in local Backports trial
 
 APPSEC_V4_BACKPORT_TRIAL=true with fleet and independent scanning enables at most one source-group trial per workflow. Positive vendor threshold lead, signed archive hash, exact existing-package dependency closure and no known upstream regression required. Re-simulate combined stable and Backports exact pins; compare with stable-only result (or original if no stable upgrade) using frozen Trivy and matching Grype DB hashes. Reject new findings, coverage/severity regression or no incremental reduction. Local only; no publication authorization or functional compatibility claim. Raw rejected trial reports are not retained. External approved repositories and dependency additions remain pending.
+
+### Approved external binary sources and Alpine preview
+
+The fleet pilot optionally reads `fix-discovery-cache/approved-binaries.json`
+from the existing read-only host mount. Copy the example from
+`docs/v4/approved-binaries.example.json`, substitute an operator-approved
+HTTPS repository, exact Debian codename and component, and explicitly allow
+only packages owned by that source. Place its independently verified binary
+OpenPGP keyring in `fix-discovery-cache/<id>.gpg` and use its SHA256 in the
+policy. Never obtain trust solely from the repository itself. No credentials,
+redirects, unsigned sources, custom builds or cross-suite binaries. Up to
+four sources, 64 package names each, in configured order. Each source is
+probed separately; no change to the stable/Backports install path. The
+catalog records exact archive metadata where unambiguous; dependency, vendor
+advisory and compatibility validation are not implemented for external
+candidates. They are never selected, downloaded, installed or published.
+A private repository must be reachable with trusted TLS; no auth support yet.
+
+For Alpine 3.x, the original scan now attempts an APK upgrade simulation
+in a disposable trusted local linux/amd64 image, using the matching
+release's official main/community repositories and image-provided keys.
+No edge, release upgrade, package changes, archive downloads or publication.
+This is a preview only, not proof of an eligible fix: lifecycle, pinned
+signing keys, exact archive evidence, dependency closure, compatibility and
+dual-scanner candidate selection remain pending. RPM and Ubuntu remain
+unsupported for V4 mutation. The HTML report retains discovery results.
+No new UI controls, external repository defaults, or production claims.

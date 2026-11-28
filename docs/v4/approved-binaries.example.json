@@ -1,0 +1,15 @@
+{
+  "schema": "appsec.approved-binaries/v1",
+  "repositories": [
+    {
+      "id": "example-vendor",
+      "url": "https://packages.example.org/debian",
+      "suite": "trixie",
+      "component": "main",
+      "keyring_sha256": "REPLACE_WITH_SHA256_OF_VERIFIED_KEYRING",
+      "packages": [
+        "example-package"
+      ]
+    }
+  ]
+}

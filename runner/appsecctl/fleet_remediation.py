@@ -106,7 +106,11 @@ def snapshot():
 def discover(report):
     job_watch.emit("fix_discovery")
     if not supports(report):
-        return {"status":"unsupported","message":"Independent vendor adapter currently supports Debian 12/13 only."}
+        info=(report.get("Metadata") or {}).get("OS") or {}
+        if info.get("Family")=="alpine":
+            from . import alpine_discovery
+            return alpine_discovery.discover(report)
+        return {"status":"unsupported","message":"Vendor discovery: Debian 12/13; Alpine APK preview; RPM and other families pending."}
     try:
         tracker,digest,provenance=snapshot()
         result=fix_discovery.audit(report,tracker)
@@ -148,7 +152,7 @@ def patch(scan_id):
             db.attach_scan_to_pipeline(conn,scan_id,pipeline_id)
         pipeline_id=str(pipeline_id)
     if not supports(report):
-        _record_plan(scan_id,{"status":"unsupported","message":"V4 fleet pilot supports Debian 12/13 only; no legacy mutation fallback."})
+        _record_plan(scan_id,{"status":"unsupported","message":"V4 mutation supports Debian 12/13 only; Alpine discovery is read-only. No legacy mutation fallback."})
         raise scan_evidence.NoFixableOS("V4 fleet pilot: unsupported distribution; no candidate")
     if not mirrors:
         _record_plan(scan_id,{"status":"blocked","message":"Configure approved package mirrors before starting the next workflow."})
@@ -175,6 +179,9 @@ def patch(scan_id):
             raise
         summary["binary_discovery"]={"status":"unavailable","message":safe_message(exc,"patch_build"),
                                      "automatic_selection_count":0,"publication_authorized":False}
+    _record_plan(scan_id,summary)
+    from . import approved_binaries
+    summary["approved_binary_discovery"]=approved_binaries.discover(image,report,plan)
     _record_plan(scan_id,summary)
     from . import backport_trial
     job_watch.emit("apt_upgrades",len(plan["updates"]))

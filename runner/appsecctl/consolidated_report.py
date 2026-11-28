@@ -232,6 +232,17 @@ def fleet_section(original, execution):
         upstream=binary.get("curl_upstream_review") or {}
         if upstream:
             binary_html+='<p>Curl upstream review: '+e(upstream.get("status"))+' · New exposure leads: '+e(", ".join(upstream.get("new_exposure_ids") or []) or "—")+'</p>'
+    external=plan.get("approved_binary_discovery") or {}
+    if external:
+        binary_html+='<h3>Approved external binary sources (review only)</h3><p>'+e(external.get("status"))+' · Policy SHA256: '+e(external.get("policy_sha256"))+'</p>'
+        for source in external.get("repositories") or []:
+            binary_html+='<p>'+e(source.get("id"))+' · '+e(source.get("status"))+' · '+e(source.get("suite"))+' · Keyring SHA256: '+e(source.get("keyring_sha256"))+'</p>'
+            for c in source.get("candidates") or []:
+                binary_html+='<p>'+e(c.get("package"))+' · '+e(c.get("before"))+' → '+e(c.get("candidate"))+' · '+e(c.get("status"))+' · Archive SHA256: '+e(c.get("sha256"))+'</p>'
+    if discovery.get("repository")=="official Alpine main/community":
+        binary_html+='<h3>Alpine APK candidate preview (review only)</h3><p>Release: '+e(discovery.get("release"))+' · Candidates: '+e(discovery.get("candidate_count"))+'</p>'
+        for c in discovery.get("candidates") or []:
+            binary_html+='<p>'+e(c.get("package"))+' · '+e(c.get("before"))+' → '+e(c.get("candidate"))+'</p>'
     trial=plan.get("backport_trial") or {}
     if trial:
         binary_html+='<h3>Local Backports trial</h3><p>'+e(trial.get("status"))+' · '+e(trial.get("source"))+' · '+e(trial.get("message"))+'</p>'
