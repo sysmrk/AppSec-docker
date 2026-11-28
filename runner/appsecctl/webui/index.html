@@ -98,9 +98,9 @@
             <label for="execution-mode">What should AppSec do?</label>
             <select id="execution-mode">
               <option value="scan_only">Scan only — finish after scan and SBOM</option>
-              <option value="auto_patch">Scan &amp; patch — targeted or comprehensive OS updates</option>
+              <option value="auto_patch" selected>Scan &amp; patch — approved OS package updates</option>
             </select>
-            <p id="execution-help" class="hint">Scan and SBOM only; finish automatically.</p>
+            <p id="execution-help" class="hint">Scan, prepare a local package patch when available, and rescan automatically.</p>
             <fieldset id="optimization-choices" hidden><legend>Optional nginx capabilities to remove</legend>
               <label class="approval-checkbox"><input type="checkbox" value="nginx-module-image-filter"><span>Image filter — image resizing and conversion</span></label>
               <label class="approval-checkbox"><input type="checkbox" value="nginx-module-xslt"><span>XSLT — XML transformations</span></label>
@@ -108,7 +108,7 @@
               <p class="hint">Select only capabilities your application does not use. AppSec validates the simulated dependency closure and fails closed if unsafe. Debian 12/13 nginx lab only; no automatic publication.</p>
               <label class="approval-checkbox"><input id="optimization-authorize" type="checkbox"><span>I authorize removal of the selected modules and validated unused dependencies in a local candidate. This may affect application behavior.</span></label>
             </fieldset>
-            <fieldset id="patch-output-choices" hidden><legend>Final patched image output</legend>
+            <fieldset id="patch-output-choices"><legend>Final patched image output</legend>
               <label class="approval-checkbox"><input id="auto-push" type="checkbox"><span>Push automatically to an approved registry only if the final recommendation passes</span></label>
               <label for="auto-destination">Destination (registry.example.org/team/image:tag)</label>
               <input id="auto-destination" placeholder="registry.example.org/team/image:patched" maxlength="1024" disabled>

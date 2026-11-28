@@ -1261,7 +1261,7 @@
   $("guided-refresh").addEventListener("click", async () => { try { await refreshGuided(); if (state.selectedWorkflow) await openGuided(state.selectedWorkflow); } catch (e) { notification(e.message, true); } });
   $("execution-mode").addEventListener("change",()=>{
     const mode=$("execution-mode").value;
-    $("optimization-choices").hidden=mode!=="auto_optimize";
+    $("optimization-choices").hidden=true;
     $("patch-output-choices").hidden=mode!=="auto_patch";
     $("execution-help").textContent=({guided:"Review the initial scan and decide whether to patch.",scan_only:"Scan and SBOM only; no local patch.",auto_patch:"Automatically prepare a local package patch and rescan. In V4 fleet-test deployments, use signed Debian binary upgrades independent of FixedVersion; select local output only.",auto_optimize:"Automatically try Copa targeted or comprehensive updates, then simulate removal of the selected unused modules and safe dependency closure, build and rescan locally, then finish. No registry push."})[mode];
   });

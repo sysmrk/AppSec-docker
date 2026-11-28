@@ -49,6 +49,7 @@ MESSAGES={
     "apt_index":"APT repository index received", "apt_fetch":"APT metadata/package download received",
     "apt_remove":"APT package removal observed", "apt_install":"APT package installation observed",
     "apt_upgrades":"APT reported upgrade candidates", "apt_removals":"APT reported removal candidates",
+    "fleet_scanner_fixes":"Scanner-reported OS fixes (not a limit on V4 candidate discovery)",
     "fix_discovery":"V4 independent vendor fix discovery started",
     "fleet_plan":"V4 checking all installed packages against approved signed repositories",
     "fleet_build":"V4 building package-preserving local candidate",
@@ -58,7 +59,7 @@ MESSAGES={
     "apt_simulate":"Simulating package changes",
     "apt_download":"Downloading approved version-pinned archives",
 }
-NUMERIC={"db_fallback","copa_eligible","elapsed","verified","trivy_packages","trivy_languages","buildkit_step","apt_upgrades","apt_removals"}
+NUMERIC={"db_fallback","copa_eligible","fleet_scanner_fixes","elapsed","verified","trivy_packages","trivy_languages","buildkit_step","apt_upgrades","apt_removals"}
 
 
 def checkpoint():

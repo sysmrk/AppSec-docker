@@ -42,3 +42,11 @@ class WorkflowControlTests(unittest.TestCase):
         with patch.dict("os.environ",{"APPSEC_PATCH_ENABLED":"true"}), patch.object(wc.mw,"get_workflow",return_value={"pipeline_id":"pipeline"}), patch.object(wc.scan_evidence,"original_patch_eligibility",return_value={"eligible":False,"code":"NO_FIXABLE_OS","os_fixable":0}), patch.object(wc.mw,"decide") as decide, patch.object(wc.db,"insert_audit"):
             wc.advance(conn,"job")
             self.assertEqual(decide.call_args.args[3],"approve_patch")
+
+    def test_no_update_completion_does_not_publish(self):
+        conn=Mock()
+        row={"id":"workflow","created_by":"admin","project_id":None,"execution_mode":"auto_patch","unattended":True,"mode":"continue_patch","decision":"finish"}
+        conn.execute.return_value.fetchone.side_effect=[row,{"id":"admin","role":"admin","disabled":False}]
+        with patch.object(wc.mw,"get_workflow",return_value={"pipeline_id":"pipeline"}),patch.object(wc.mw,"decide") as decide:
+            wc.advance(conn,"job")
+            decide.assert_not_called()

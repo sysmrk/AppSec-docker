@@ -84,7 +84,10 @@ def advance(conn,job_id):
         if eligibility["code"]=="SCAN_EVIDENCE_INVALID":
             raise RuntimeError("Verified original scan unavailable; cannot determine Copa eligibility")
         from . import job_watch
-        job_watch.emit("copa_eligible",eligibility["os_fixable"])
+        if os.getenv("APPSEC_V4_FLEET_TEST","false").lower()=="true":
+            job_watch.emit("fleet_scanner_fixes",eligibility["os_fixable"])
+        else:
+            job_watch.emit("copa_eligible",eligibility["os_fixable"])
         if os.getenv("APPSEC_PATCH_ENABLED","false").lower() in ("1","true","yes") and (eligibility["eligible"] or unattended):
             mw.decide(conn,wid,actor,"approve_patch")
             db.insert_audit(conn,str(actor["id"]),"manual.auto_patch","manual_workflow",wid,{})
@@ -102,6 +105,10 @@ def advance(conn,job_id):
             conn.execute("UPDATE manual_workflows SET auto_error='No eligible local Copa patch; review original findings' WHERE id=%s",(wid,))
             return
     if unattended and mode=="auto_patch" and row["mode"]=="continue_patch":
+        # The patch job may have completed with no eligible update and already
+        # closed the workflow. Do not attempt to publish a nonexistent image.
+        if row.get("decision")=="finish":
+            return
         destination=row.get("auto_destination")
         if destination:
             from .scan_evidence import publication_db_fresh
