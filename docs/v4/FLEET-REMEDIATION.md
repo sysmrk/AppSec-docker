@@ -301,3 +301,15 @@ Offline RPM test/install and exact final inventory precede the independent
 scanner gate. No production publication or functional compatibility claim.
 Actual integration validation remains pending; missing DNF4 Python/RPM
 tools, key policy, or unsupported dependency closures fail closed.
+
+### APK v3 tool support (v2 repository format)
+
+Extend the native pilot to Alpine 3.23 and 3.24 main; they ship APK v3
+but retain v2 package/index format. Validate the actual tool major and
+release, use a release-specific pinned key policy
+(alpine-3.23-keys.json and alpine-3.23-keys/, likewise 3.24).
+The upstream signed APKINDEX.tar.gz is preserved and loaded by the local
+APK solver; no unsigned fallback. True v3 ADB package/index format,
+community, other branches and mixed releases remain unsupported.
+CI runs the real archive/build regression separately for all three
+releases. Upstream lifecycle: https://www.alpinelinux.org/releases/.

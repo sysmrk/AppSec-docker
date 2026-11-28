@@ -264,6 +264,10 @@ jobs:
   v4-native-apk-lab:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        alpine: ["3.22", "3.23", "3.24"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -272,4 +276,4 @@ jobs:
       - name: Install runner dependencies
         run: python -m pip install -r runner/requirements.txt
       - name: Real signed Alpine APK v2 staging and offline upgrade
-        run: PYTHONPATH=runner python tests/integration_native_apk.py
+        run: PYTHONPATH=runner python tests/integration_native_apk.py ${{ matrix.alpine }}

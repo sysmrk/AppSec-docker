@@ -50,6 +50,12 @@ class NativeAPKTests(unittest.TestCase):
         self.assertIn('test -s "/tmp/appsec-apk-output/x86_64/$name-$ver.apk"',apk.STAGE)
         self.assertIn('local-repositories',apk.STAGE)
 
+    def test_supported_v3_releases(self):
+        for release in ("3.23","3.24"):
+            self.assertEqual(apk.SUPPORTED[release][0],"3")
+            self.assertTrue(apk.supports({"Metadata":{"OS":{"Family":"alpine","Name":release+".0"}}}))
+        self.assertFalse(apk.supports({"Metadata":{"OS":{"Family":"alpine","Name":"3.21.0"}}}))
+
     def test_disabled(self):
         with patch.object(apk,"enabled",return_value=False),patch.object(apk,"build") as build:
             self.assertEqual(apk.attempt("example",{})[1]["status"],"blocked")

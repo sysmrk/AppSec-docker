@@ -15,7 +15,7 @@ from . import native_apt, remediation_audit as audit
 from .workflow_control import StopRequested
 
 RELEASE="3.22"
-END=date(2027,5,1)
+SUPPORTED={"3.22":("2",date(2027,5,1)),"3.23":("3",date(2027,11,1)),"3.24":("3",date(2028,6,1))}
 ROOT=Path("/vendor-snapshots")
 NAME=re.compile(r"[A-Za-z0-9][A-Za-z0-9+_.-]{0,127}")
 VERSION=re.compile(r"[0-9][A-Za-z0-9+_.~-]{0,191}")
@@ -25,9 +25,13 @@ MAX_BYTES=512*1024*1024
 def enabled():
     return os.getenv("APPSEC_V4_APK_TRIAL","false").lower()=="true"
 
-def supports(report):
+def release_for(report):
     info=(report.get("Metadata") or {}).get("OS") or {}
-    return info.get("Family")=="alpine" and ".".join(str(info.get("Name","")).split(".")[:2])==RELEASE and date.today()<END
+    release=".".join(str(info.get("Name","")).split(".")[:2])
+    return release if info.get("Family")=="alpine" and release in SUPPORTED and date.today()<SUPPORTED[release][1] else None
+
+def supports(report):
+    return release_for(report) is not None
 
 def digest(path):
     h=hashlib.sha256()
@@ -36,10 +40,13 @@ def digest(path):
             h.update(block)
     return h.hexdigest()
 
-def policy(root=ROOT):
-    data=ab.read_bounded(root/"alpine-keys.json",65536)
+def policy(root=ROOT,release=RELEASE):
+    if release not in SUPPORTED:
+        raise ValueError("Unsupported Alpine key scope")
+    prefix="alpine-keys" if release==RELEASE else "alpine-"+release+"-keys"
+    data=ab.read_bounded(root/(prefix+".json"),65536)
     doc=json.loads(data)
-    if not isinstance(doc,dict) or set(doc)!={"schema","release","keys"} or doc["schema"]!="appsec.alpine-keys/v1" or doc["release"]!=RELEASE:
+    if not isinstance(doc,dict) or set(doc)!={"schema","release","keys"} or doc["schema"]!="appsec.alpine-keys/v1" or doc["release"]!=release:
         raise ValueError("Invalid Alpine trust policy")
     keys=doc["keys"]
     if not isinstance(keys,dict) or not 1<=len(keys)<=32:
@@ -48,23 +55,23 @@ def policy(root=ROOT):
     for name,sha in keys.items():
         if not KEY.fullmatch(name) or not isinstance(sha,str) or not ab.DIGEST.fullmatch(sha):
             raise ValueError("Invalid Alpine key identity")
-        raw=ab.read_bounded(root/"alpine-keys"/name,65536)
+        raw=ab.read_bounded(root/prefix/name,65536)
         if hashlib.sha256(raw).hexdigest()!=sha:
             raise ValueError("Alpine key digest mismatch")
         content[name]=raw
     return hashlib.sha256(data).hexdigest(),content
 
-def inventory(image):
+def inventory(image,release=RELEASE):
     output=apt.container(image,r'''
 export LC_ALL=C
 test "$(cut -d. -f1,2 /etc/alpine-release)" = "$1"
 test "$(apk --print-arch)" = x86_64
-apk --version | grep -Eq '(^| )2\.[0-9]'
+apk --version | grep -Eq "(^| )$2\\.[0-9]"
 awk -F: '/^P:/{p=substr($0,3)} /^V:/{v=substr($0,3)} /^A:/{a=substr($0,3)}
   /^$/{if(p!=""){print p "\t" v "\t" a};p=v=a=""} END{if(p!=""){print p "\t" v "\t" a}}' /lib/apk/db/installed
 printf '@@WORLD\t'; sha256sum /etc/apk/world | cut -d' ' -f1
 printf '@@REPOSITORIES\t'; sha256sum /etc/apk/repositories | cut -d' ' -f1
-''',[RELEASE])
+''',[release,SUPPORTED[release][0]])
     return parse_inventory(output)
 
 def parse_inventory(output):
@@ -106,24 +113,30 @@ export LC_ALL=C
 unset SSL_NO_VERIFY_HOSTNAME
 . /etc/os-release
 test "$ID" = alpine
-test "$(cut -d. -f1,2 /etc/alpine-release)" = 3.22
+test "$(cut -d. -f1,2 /etc/alpine-release)" = "$1"
 test "$(apk --print-arch)" = x86_64
-apk --version | grep -Eq '(^| )2\.[0-9]'
+apk --version | grep -Eq "(^| )$2\\.[0-9]"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 test ! -e /tmp/appsec-apk-output
 mkdir -p "$work/cache" /tmp/appsec-apk-output/x86_64
-printf '%s\n' 'https://dl-cdn.alpinelinux.org/alpine/v3.22/main' > "$work/repositories"
+printf '%s\n' "https://dl-cdn.alpinelinux.org/alpine/v$1/main" > "$work/repositories"
 apk_safe() {
     apk --keys-dir /tmp/appsec-apk-keys --repositories-file "$work/repositories" --cache-dir "$work/cache" --no-progress "$@"
 }
 echo "APK_STAGE: update signed index" >&2
 apk_safe update >&2
 echo "APK_STAGE: preserve signed index" >&2
-set -- "$work/cache"/APKINDEX.*.tar.gz
-test "$#" -eq 1
-test -f "$1"
-cp "$1" /tmp/appsec-apk-output/x86_64/APKINDEX.tar.gz
+if test "$2" = 2; then
+    set -- "$work/cache"/APKINDEX.*.tar.gz
+    test "$#" -eq 1
+    test -f "$1"
+    cp "$1" /tmp/appsec-apk-output/x86_64/APKINDEX.tar.gz
+else
+    # APK v3 on these releases still serves signed v2 index/package format.
+    # The local APK solver validates that index; never bypass signature checks.
+    wget -q -O /tmp/appsec-apk-output/x86_64/APKINDEX.tar.gz "https://dl-cdn.alpinelinux.org/alpine/v$1/main/x86_64/APKINDEX.tar.gz"
+fi
 printf '%s\n' /tmp/appsec-apk-output > "$work/local-repositories"
 echo "APK_STAGE: simulate transaction against frozen local index" >&2
 apk --keys-dir /tmp/appsec-apk-keys --repositories-file "$work/local-repositories" --cache-dir "$work/cache" --no-network --no-progress upgrade --simulate --no-self-upgrade > "$work/plan"
@@ -153,7 +166,7 @@ apk --keys-dir /tmp/appsec-apk-keys verify /tmp/appsec-apk-output/x86_64/*.apk >
 test "$(du -sk /tmp/appsec-apk-output | cut -f1)" -le 524288
 '''
 
-def stage(image,keys,dest,rows):
+def stage(image,keys,dest,rows,release=RELEASE):
     name="appsec-apk-stage-"+uuid4().hex
     try:
         with tempfile.TemporaryDirectory(prefix="appsec-apk-keys-") as tmp:
@@ -162,7 +175,7 @@ def stage(image,keys,dest,rows):
                 (keydir/k).write_bytes(data)
             apt.run(["docker","create","--name",name,"--pull=never","--user","0:0",
                      "--security-opt","no-new-privileges:true","--pids-limit","128","--memory","1g",
-                     "--entrypoint","/bin/sh",image,"-ec",STAGE],60)
+                     "--entrypoint","/bin/sh",image,"-ec",STAGE,"stage",release,SUPPORTED[release][0]],60)
             apt.run(["docker","cp",str(keydir),name+":/tmp/appsec-apk-keys"],30)
             try:
                 output=apt.run(["docker","start","-a",name],420)
@@ -199,8 +212,9 @@ def build(image,report,root=ROOT):
     base=apt.inspect(image)
     if base["Config"].get("User") not in ("","root","0","0:0",None):
         raise ValueError("Root-default Alpine images only")
-    trust,keys=policy(root)
-    before=inventory(image)
+    release=release_for(report)
+    trust,keys=policy(root,release)
+    before=inventory(image,release)
     uid=uuid4().hex
     tag="appsec-lab/apk-base:"+uid
     output="appsec-lab/apk-upgraded:"+uid
@@ -210,11 +224,11 @@ def build(image,report,root=ROOT):
             ctx=Path(tmp)
             repo=ctx/"repository";repo.mkdir()
             job_watch.emit("apk_plan")
-            updates=stage(image,keys,repo,before["packages"])
+            updates=stage(image,keys,repo,before["packages"],release)
             if not updates:
-                return None,{"status":"no_updates","backend":"native_apk","release":RELEASE,"publication_authorized":False}
+                return None,{"status":"no_updates","backend":"native_apk","release":release,"publication_authorized":False}
             hashes=verify_stage(repo,updates)
-            if policy(root)[0]!=trust:
+            if policy(root,release)[0]!=trust:
                 raise ValueError("Alpine trust policy changed")
             keydir=ctx/"keys";keydir.mkdir()
             for k,data in keys.items():
@@ -230,7 +244,7 @@ def build(image,report,root=ROOT):
                 "printf '%s\\n' /tmp/appsec-repository > \"$work/repositories\"; "
                 "apk --keys-dir /tmp/appsec-keys verify /tmp/appsec-repository/x86_64/*.apk; "
                 "apk --keys-dir /tmp/appsec-keys --repositories-file \"$work/repositories\" --cache-dir \"$work/cache\" --no-network upgrade --no-self-upgrade\n")
-            plan={"backend":"native_apk","release":RELEASE,"image_id":image,"updates":updates,"inventory":before,
+            plan={"backend":"native_apk","release":release,"image_id":image,"updates":updates,"inventory":before,
                   "key_policy_sha256":trust,"signed_index_sha256":hashes["APKINDEX.tar.gz"],"archives_sha256":hashes,
                   "publication_authorized":False}
             plan["plan_sha256"]=apt.plan_digest(plan)
@@ -242,8 +256,8 @@ def build(image,report,root=ROOT):
         layers=base["RootFS"]["Layers"]
         if iid==image or after["RootFS"]["Layers"][:len(layers)]!=layers or any(base["Config"].get(k)!=after["Config"].get(k) for k in native_apt.CONFIG_KEYS):
             raise ValueError("APK candidate lineage or runtime configuration changed")
-        validate_after(before,inventory(iid),updates)
-        if inventory(image)!=before or policy(root)[0]!=trust:
+        validate_after(before,inventory(iid,release),updates)
+        if inventory(image,release)!=before or policy(root,release)[0]!=trust:
             raise ValueError("Original image or trust policy changed")
         candidate={"schema":"appsec.native-apk-candidate/v1","candidate":output,"candidate_image_id":iid,
                    "base_image_id":image,"updated_packages":updates,"approved_plan_sha256":plan["plan_sha256"],

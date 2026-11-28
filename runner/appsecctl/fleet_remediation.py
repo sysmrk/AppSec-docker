@@ -159,7 +159,7 @@ def patch(scan_id):
             return _patch_other(scan_id,pipeline_id,source,image,report,native_ubuntu,"fleet_native_ubuntu")
         if native_rpm.supports(report):
             return _patch_other(scan_id,pipeline_id,source,image,report,native_rpm,"fleet_native_rpm")
-        _record_plan(scan_id,{"status":"unsupported","message":"V4 mutation supports Debian 12/13, opt-in Alpine 3.22, Ubuntu 24.04 and EL9 RPM pilots. No legacy mutation fallback."})
+        _record_plan(scan_id,{"status":"unsupported","message":"V4 mutation supports Debian 12/13, opt-in Alpine 3.22/3.23/3.24, Ubuntu 24.04 and EL9 RPM pilots. No legacy mutation fallback."})
         raise scan_evidence.NoFixableOS("V4 fleet pilot: unsupported distribution; no candidate")
     if not mirrors:
         _record_plan(scan_id,{"status":"blocked","message":"Configure approved package mirrors before starting the next workflow."})
