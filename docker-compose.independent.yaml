@@ -1,0 +1,18 @@
+# Explicit offline V4 scanner pilot; trusted local Docker host only.
+x-independent-env: &independent-env
+  APPSEC_V4_INDEPENDENT_SCAN: "true"
+  APPSEC_SCANNER_WORK_HOST: ${APPSEC_SCANNER_WORK_HOST:?Run ./appsec start}
+  APPSEC_GRYPE_CACHE_HOST: ${APPSEC_GRYPE_CACHE_HOST:?Run ./appsec start}
+  APPSEC_SYFT_IMAGE: ${APPSEC_SYFT_IMAGE:-anchore/syft:latest}
+  APPSEC_GRYPE_IMAGE: ${APPSEC_GRYPE_IMAGE:-anchore/grype:latest}
+services:
+  worker:
+    environment: *independent-env
+    volumes:
+      - ${APPSEC_SCANNER_WORK_HOST}:/scanner-work
+      - ${APPSEC_GRYPE_CACHE_HOST}:/grype-cache:ro
+  image-worker:
+    environment: *independent-env
+    volumes:
+      - ${APPSEC_SCANNER_WORK_HOST}:/scanner-work
+      - ${APPSEC_GRYPE_CACHE_HOST}:/grype-cache:ro

@@ -62,12 +62,26 @@ def compose_command(*args: str) -> list[str]:
         files.extend(["-f",str(ROOT/"docker-compose.optimization.yaml")])
     if fleet_test_enabled():
         files.extend(["-f",str(ROOT/"docker-compose.fleet.yaml")])
+        if independent_scan_enabled():
+            work=ROOT/"independent-scan-work"
+            cache=ROOT/"grype-cache"
+            if work.is_symlink() or cache.is_symlink():
+                raise RuntimeError("Independent scanner directories must not be symlinks")
+            work.mkdir(mode=0o700,exist_ok=True)
+            cache.mkdir(mode=0o700,exist_ok=True)
+            os.environ["APPSEC_SCANNER_WORK_HOST"]=str(work.resolve())
+            os.environ["APPSEC_GRYPE_CACHE_HOST"]=str(cache.resolve())
+            files.extend(["-f",str(ROOT/"docker-compose.independent.yaml")])
     return ["docker", "compose", *files, *args]
 
 
 def fleet_test_enabled():
     value=os.environ.get("APPSEC_V4_FLEET_TEST",read_env().get("APPSEC_V4_FLEET_TEST","false"))
     return value.strip().strip('"').strip("'").lower()=="true"
+
+
+def independent_scan_enabled():
+    return os.environ.get("APPSEC_V4_INDEPENDENT_SCAN",read_env().get("APPSEC_V4_INDEPENDENT_SCAN","false")).strip().strip('"').strip("'").lower()=="true"
 
 
 def optimization_enabled():

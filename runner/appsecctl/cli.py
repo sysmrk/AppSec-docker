@@ -397,6 +397,23 @@ def scan_image(image_ref: str, phase: str, pipeline_id: str | None = None) -> st
             from . import fleet_remediation
             if fleet_remediation.enabled():
                 report["_appsec"]["fix_discovery"] = fleet_remediation.discover(report)
+        independent_artifacts=[]
+        if phase in ("original","patched"):
+            from . import fleet_remediation, independent_scan
+            if fleet_remediation.enabled() and independent_scan.enabled():
+                try:
+                    summary,sbom,grype=independent_scan.scan(expected_id,report)
+                    for kind,data in (("syft-report",sbom),("grype-report",grype)):
+                        path=reports_dir/report_name(kind+"-"+phase,scan_id)
+                        with path.open("x",encoding="utf-8") as out:
+                            json.dump(data,out,ensure_ascii=False,separators=(",",":"))
+                        independent_artifacts.append((kind,str(path)))
+                    report["_appsec"]["independent_scan"]=summary
+                except (OSError,ValueError,RuntimeError,KeyError,TypeError,subprocess.SubprocessError) as exc:
+                    from .workflow_control import StopRequested
+                    if isinstance(exc,StopRequested):
+                        raise
+                    report["_appsec"]["independent_scan"]={"status":"unavailable","message":safe_message(exc,"scan")}
         counts, vulnerabilities = parse_trivy_report(report)
         job_watch.emit("verified",len(vulnerabilities))
         print(f"SCAN_VERIFIED phase={phase} scan_id={scan_id} image_id={expected_id} findings={len(vulnerabilities)}", flush=True)
@@ -404,6 +421,8 @@ def scan_image(image_ref: str, phase: str, pipeline_id: str | None = None) -> st
             db.update_scan_success(conn, scan_id, str(report_path), report, counts)
             db.insert_vulnerabilities(conn, scan_id, vulnerabilities)
             db.insert_artifact(conn, pipeline_id, scan_id, image_ref, "trivy-report", "json", str(report_path))
+            for kind,path in independent_artifacts:
+                db.insert_artifact(conn,pipeline_id,scan_id,image_ref,kind,"json",path)
     except BaseException as exc:
         with db.connect() as conn:
             db.update_scan_failed(conn, scan_id, safe_message(exc, 'scan'))
@@ -648,6 +667,13 @@ def create_diff(pipeline_id: str, original_scan_id: str, patched_scan_id: str) -
                                 (pipeline_id, patched_record["image_ref"])).fetchone()
         if not expected or expected["local_image_id"] != patched_record["raw_report"]["_appsec"]["image_id"]:
             raise RuntimeError("SCAN_EVIDENCE_INVALID: Rescan does not match the prepared patch")
+        a=original_record["raw_report"]["_appsec"].get("independent_scan")
+        b=patched_record["raw_report"]["_appsec"].get("independent_scan")
+        if a or b:
+            from . import independent_scan
+            from psycopg.types.json import Jsonb
+            comparison=independent_scan.compare(a,b)
+            conn.execute("UPDATE scan_runs SET raw_report=jsonb_set(raw_report,'{_appsec,independent_comparison}',%s,true) WHERE id=%s",(Jsonb(comparison),patched_scan_id))
         original = db.vulnerabilities_for_scan(conn, original_scan_id)
         patched = db.vulnerabilities_for_scan(conn, patched_scan_id)
 

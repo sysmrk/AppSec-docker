@@ -191,6 +191,23 @@ def package_upgrades(original, patched, verified, finding_rows=()):
 
 
 
+def independent_section(a,b):
+    original=a.get("independent_scan") or {}
+    patched=b.get("independent_scan") or {}
+    comparison=b.get("independent_comparison") or {}
+    if not original and not patched:
+        return ""
+    html='<section><h2>Independent Syft / Grype evidence</h2>'
+    for label,record in (("Original",original),("Patched",patched)):
+        html+='<p>'+e(label)+': '+e(record.get("status"))+' · packages: '+e(record.get("package_count"))+' · Grype matches: '+e(record.get("matches"))+' · '+e(record.get("message"))+'</p>'
+        if record.get("status")=="completed":
+            overlap=record.get("exact_id_overlap") or {}
+            html+='<p class="muted">Exact advisory ID overlap: '+e(overlap.get("common"))+' · Trivy only: '+e(overlap.get("trivy_only"))+' · Grype only: '+e(overlap.get("grype_only"))+' · scanner-reported fix matches: '+e(len(record.get("reported_fixes") or []))+'</p>'
+    if comparison:
+        html+='<p>Comparison: '+e(comparison.get("status"))+' · No longer reported: '+e(comparison.get("no_longer_reported_count"))+' · Introduced: '+e(comparison.get("introduced_count"))+' · '+e(comparison.get("message"))+'</p>'
+    return html+'<p class="muted">Independent counts are not additive. This evidence does not authorize publication or automatically suppress findings. Raw JSON artifacts retain exact findings.</p></section>'
+
+
 def fleet_section(original, execution):
     evidence=((original or {}).get("raw_report") or {}).get("_appsec") or {}
     discovery=evidence.get("fix_discovery")
@@ -408,7 +425,7 @@ def render(resource_id: str, payload: dict[str, Any]) -> str:
         ('<p class="muted">Coverage unknown: ' + e(states["Coverage unknown"]) + ' displayed original findings; do not treat them as fixed.</p>' if states["Coverage unknown"] else "") + "</section>" +
         '<section><div class="section-title"><h2>Post-fix recommendation</h2><p>Advisory only — never a pass/fail gate</p></div>'
         + recommendation + "</section>" +
-        fleet_section(original, exec_evidence) + remediation_section(remediation) + plan_section(payload, verified_pair) +
+        fleet_section(original, exec_evidence) + independent_section(a,b) + remediation_section(remediation) + plan_section(payload, verified_pair) +
         ('<section><h2>Execution diagnostics</h2>' + "".join(errors) + "</section>" if errors else "") +
         '<section><div class="section-title"><h2>Evidence, without the clutter</h2>'
         '<p>Full unified finding table. Raw Trivy JSON and SBOM retain LOW.</p></div>' +

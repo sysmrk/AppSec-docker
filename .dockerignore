@@ -21,3 +21,5 @@ benchmark-results/
 grype-cache/
 
 fix-discovery-cache/
+
+independent-scan-work/

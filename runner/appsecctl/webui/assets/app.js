@@ -954,6 +954,21 @@
       }
       const scans = pipeline?.scans || [], artifacts = pipeline?.artifacts || [], patches = pipeline?.patches || [], diffs = pipeline?.diffs || [];
       const orig = scans.find(s => s.phase === "original"), patched = scans.find(s => s.phase === "patched");
+      const independent=orig?.evidence?.independent_scan, independentFinal=patched?.evidence?.independent_scan, independentDiff=patched?.evidence?.independent_comparison;
+      if(independent||independentFinal){
+        const box=section(root,"Independent Syft / Grype evidence");
+        for(const [label,record] of [["Original",independent],["Patched",independentFinal]]){
+          if(!record)continue;
+          box.appendChild(node("p","info-note",label+" · "+record.status+" · "+(record.message||"")));
+          if(record.status==="completed"){
+            showMetrics(box,[["Syft packages",record.package_count],["Grype matches",record.matches],["Grype reported fixes",(record.reported_fixes||[]).length]]);
+            const overlap=record.exact_id_overlap||{};
+            box.appendChild(node("p","hint","Exact advisory ID overlap: "+overlap.common+" · Trivy only: "+overlap.trivy_only+" · Grype only: "+overlap.grype_only));
+          }
+        }
+        if(independentDiff)box.appendChild(node("p","info-note","Comparison: "+independentDiff.status+" · No longer reported: "+(independentDiff.no_longer_reported_count??"—")+" · Introduced: "+(independentDiff.introduced_count??"—")));
+        box.appendChild(node("p","hint","Independent evidence only; counts are not additive. No automatic suppression or publication."));
+      }
       const intel=orig?.evidence?.fix_discovery, fleet=orig?.evidence?.fleet_plan;
       if(intel||fleet){
         const box=section(root,"V4 Fix Discovery & signed binary plan");

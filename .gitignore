@@ -22,3 +22,5 @@ harbor/**/*.tgz
 /grype-cache/
 
 /fix-discovery-cache/
+
+/independent-scan-work/

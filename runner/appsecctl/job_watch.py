@@ -52,6 +52,8 @@ MESSAGES={
     "fleet_scanner_fixes":"Scanner-reported OS fixes (not a limit on V4 candidate discovery)",
     "fix_discovery":"V4 independent vendor fix discovery started",
     "fleet_plan":"V4 checking all installed packages against approved signed repositories",
+    "independent_scan":"Independent offline Syft and Grype scan started",
+    "independent_complete":"Independent Grype match count",
     "binary_discovery":"V4 discovering official Backports binaries and simulating dependencies",
     "binary_candidates":"Official Backports candidates discovered (not installed)",
     "fleet_build":"V4 building package-preserving local candidate",
@@ -61,7 +63,7 @@ MESSAGES={
     "apt_simulate":"Simulating package changes",
     "apt_download":"Downloading approved version-pinned archives",
 }
-NUMERIC={"binary_candidates","db_fallback","copa_eligible","fleet_scanner_fixes","elapsed","verified","trivy_packages","trivy_languages","buildkit_step","apt_upgrades","apt_removals"}
+NUMERIC={"independent_complete","binary_candidates","db_fallback","copa_eligible","fleet_scanner_fixes","elapsed","verified","trivy_packages","trivy_languages","buildkit_step","apt_upgrades","apt_removals"}
 
 
 def checkpoint():

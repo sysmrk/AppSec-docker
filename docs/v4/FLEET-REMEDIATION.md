@@ -136,3 +136,23 @@ or installed. Stable mutation remains unchanged. UI and HTML show candidates,
 dependency outcomes and security evidence. Generic exact-candidate advisory
 verification, external approved vendor/internal repositories and automated
 Backports selection remain pending. No higher patch count is promised.
+
+
+### Independent scanner UI pilot
+
+Set APPSEC_V4_INDEPENDENT_SCAN=true together with APPSEC_V4_FLEET_TEST=true.
+Preload trusted Syft and Grype images (APPSEC_SYFT_IMAGE and APPSEC_GRYPE_IMAGE),
+and refresh the existing host grype-cache with the approved Grype binary
+before starting jobs. Do not update that cache while scans are running.
+The overlay binds only the project scanner working directory and DB cache,
+and scanner containers receive only the per-job input directory and read-only
+Grype database. No socket, egress, implicit pull, or DB update. Raw Syft and
+Grype JSON are separate artifacts; results compare only matching scanner image
+IDs and database hashes, not mixed scanner counts. The engine verifies the
+single archive config and layer identity; differing scanner IDs are only
+accepted if exactly bound to that config. This is optional evidence, not yet
+an automatic remediation selector. The current local-only publication block
+remains. Max image inspect size 1 GiB, archive 2 GiB; existing bounded worker
+capture may reject larger JSON. Read-only cache compatibility must be tested
+on the actual Grype release. No vendor/internal repository configuration or
+automatic Backports installation is added by this change.

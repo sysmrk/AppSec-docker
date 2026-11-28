@@ -15,7 +15,7 @@ import time
 from uuid import uuid4
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/"runner"))
-from appsecctl import benchmark as bench, scan_evidence
+from appsecctl import benchmark as bench, scan_evidence, independent_scan
 
 
 def manifest(root):
@@ -137,14 +137,17 @@ def main(argv=None):
             sbom_path=work/"sbom.json"
             try:
                 subprocess.run(["docker","image","save","--output",str(archive),iid],check=True,timeout=args.timeout)
+                identity=independent_scan.archive_identity(archive,iid)
+                archive_sha=independent_scan.digest_file(archive)
                 data=tool(syft,["scan","docker-archive:/image.tar","-o","syft-json"],[(archive,"/image.tar",True)],
                           ["SYFT_CHECK_FOR_APP_UPDATE=false","XDG_CACHE_HOME=/tmp/cache","HOME=/tmp"],args.timeout)
                 sbom=json.loads(data)
                 if not isinstance(sbom.get("artifacts"),list) or not sbom["artifacts"]:
                     raise ValueError("Empty Syft inventory; no zero-risk conclusion")
                 reported=(sbom.get("source",{}).get("metadata") or {}).get("imageID")
-                if reported and reported!=iid:
-                    raise ValueError(f"Syft image identity mismatch: expected {iid}; reported {reported!r}")
+                proof=independent_scan.verify_sbom(sbom,identity)
+                if independent_scan.digest_file(archive)!=archive_sha:
+                    raise ValueError("Scanner archive changed")
                 sbom_path.write_bytes(data)
                 report=json.loads(tool(grype,["sbom:/sbom.json","-o","json"],[(sbom_path,"/sbom.json",True),db_mount],env,args.timeout))
                 if manifest(frozen)!=hashes:
@@ -155,7 +158,7 @@ def main(argv=None):
                 else:
                     result["grype_delta_from_original"]=match_delta(baseline_report,report)
                 result.update(image_id=iid,reference=ref,syft_packages=len(sbom["artifacts"]),
-                              syft_reported_image_id=reported,sbom_sha256=hashlib.sha256(data).hexdigest(),
+                              syft_reported_image_id=reported,identity_method=proof["identity_method"],archive_sha256=archive_sha,sbom_sha256=hashlib.sha256(data).hexdigest(),
                               package_types=dict(Counter(a.get("type","unknown") for a in sbom["artifacts"])),
                               seconds=round(time.monotonic()-t,3))
                 if args.trivy_report:
