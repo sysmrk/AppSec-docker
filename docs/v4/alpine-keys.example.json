@@ -1,0 +1,7 @@
+{
+  "schema": "appsec.alpine-keys/v1",
+  "release": "3.22",
+  "keys": {
+    "REPLACE_WITH_OFFICIAL_KEY.rsa.pub": "REPLACE_WITH_VERIFIED_SHA256"
+  }
+}

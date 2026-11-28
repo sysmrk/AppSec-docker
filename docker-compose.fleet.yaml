@@ -4,11 +4,13 @@ services:
     environment:
       APPSEC_V4_BACKPORT_TRIAL: ${APPSEC_V4_BACKPORT_TRIAL:-false}
       APPSEC_V4_EXTERNAL_TRIAL: ${APPSEC_V4_EXTERNAL_TRIAL:-false}
+      APPSEC_V4_APK_TRIAL: ${APPSEC_V4_APK_TRIAL:-false}
     volumes:
       - ./fix-discovery-cache:/vendor-snapshots:ro
   image-worker:
     environment:
       APPSEC_V4_BACKPORT_TRIAL: ${APPSEC_V4_BACKPORT_TRIAL:-false}
       APPSEC_V4_EXTERNAL_TRIAL: ${APPSEC_V4_EXTERNAL_TRIAL:-false}
+      APPSEC_V4_APK_TRIAL: ${APPSEC_V4_APK_TRIAL:-false}
     volumes:
       - ./fix-discovery-cache:/vendor-snapshots:ro

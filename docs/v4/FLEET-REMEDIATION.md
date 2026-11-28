@@ -237,3 +237,23 @@ or proof of functional compatibility. External assertions are still
 operator-provided; verify the upstream source independently. No configured
 external sources by default. Real external repository integration testing
 and WSL testing remain required.
+
+### Native APK local trial
+
+APPSEC_V4_APK_TRIAL=true, APPSEC_V4_FLEET_TEST=true and
+APPSEC_V4_INDEPENDENT_SCAN=true enable an experimental Alpine 3.22 APK v2
+linux/amd64 root-default route. Other Alpine releases remain preview only.
+The pilot uses official v3.22/main exclusively and expires on 2027-05-01
+(https://www.alpinelinux.org/releases/); community and edge are not approved.
+Provide independently verified official signing public keys in
+fix-discovery-cache/alpine-keys/ and pin their SHA256 in
+fix-discovery-cache/alpine-keys.json (see alpine-keys.example.json).
+No automatic trust of the input image key store. No external APK mirrors
+or package removal. The disposable container stages exact archives and the
+signed index; the offline build uses that index and the pinned keys.
+Validate complete installed inventory, world and repository configuration,
+image lineage and runtime configuration. Require frozen Trivy and matching
+Syft/Grype comparisons with improvement and no observed regression.
+A rejected candidate is removed and the original image remains unchanged.
+No registry publication or workload compatibility claim. Real APK staging
+and build regression and WSL validation are still required.

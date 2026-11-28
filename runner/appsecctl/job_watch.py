@@ -54,6 +54,8 @@ MESSAGES={
     "fleet_plan":"V4 checking all installed packages against approved signed repositories",
     "independent_scan":"Independent offline Syft and Grype scan started",
     "independent_complete":"Independent Grype match count",
+    "apk_plan":"Planning and staging signed Alpine APK upgrades",
+    "apk_build":"Building offline Alpine candidate with exact archives",
     "external_trial":"Building isolated external binary trial and comparing verified baseline",
     "backport_trial":"Building isolated exact-pin Backports trial and comparing stable baseline",
     "binary_discovery":"V4 discovering official Backports binaries and simulating dependencies",
