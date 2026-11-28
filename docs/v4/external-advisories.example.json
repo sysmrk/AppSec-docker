@@ -1,0 +1,15 @@
+{
+  "schema": "appsec.external-advisories/v1",
+  "repository_id": "example-vendor",
+  "suite": "trixie",
+  "records": [
+    {
+      "package": "example-package",
+      "version": "2.0-1",
+      "architecture": "amd64",
+      "archive_sha256": "REPLACE_WITH_EXACT_ARCHIVE_SHA256",
+      "cve": "CVE-2026-1234",
+      "advisory_url": "https://packages.example.org/advisories/example"
+    }
+  ]
+}

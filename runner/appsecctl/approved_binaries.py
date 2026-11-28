@@ -31,7 +31,7 @@ def validate(document):
         raise ValueError("At most four approved sources")
     seen = set()
     for row in rows:
-        if not isinstance(row, dict) or set(row) != {"id", "url", "suite", "component", "keyring_sha256", "packages"}:
+        if not isinstance(row, dict) or not {"id", "url", "suite", "component", "keyring_sha256", "packages"} <= set(row) or set(row) - {"id", "url", "suite", "component", "keyring_sha256", "packages", "advisory_sha256"}:
             raise ValueError("Invalid repository fields")
         if any(not isinstance(row[k], str) for k in ("id", "url", "suite", "component", "keyring_sha256")):
             raise ValueError("Invalid repository values")
@@ -42,6 +42,8 @@ def validate(document):
             or not re.fullmatch(r"https://[A-Za-z0-9.-]+(?::[0-9]{1,5})?(?:/[A-Za-z0-9._~-]+)*/?",row["url"])
             or not url.hostname or url.username or url.password or any(p in (".","..") for p in url.path.split("/"))):
             raise ValueError("Invalid repository identity, HTTPS endpoint or key hash")
+        if "advisory_sha256" in row and (not isinstance(row["advisory_sha256"],str) or not DIGEST.fullmatch(row["advisory_sha256"])):
+            raise ValueError("Invalid advisory snapshot digest")
         pkgs = row["packages"]
         if not isinstance(pkgs,list) or not 1<=len(pkgs)<=64 or any(not isinstance(n,str) or not NAME.fullmatch(n) for n in pkgs) or len(set(pkgs))!=len(pkgs):
             raise ValueError("Explicit package allowlist required")
@@ -57,52 +59,108 @@ start = PROBE.index("printf 'deb ")
 end = PROBE.index('cat > "$work/apt.conf"',start)
 PROBE = PROBE[:start] + "printf 'deb [signed-by=%s] %s %s %s\\n' \"$key\" \"$main\" \"$suite\" \"$component\" > \"$work/sources.list\"\n" + PROBE[end:]
 PROBE += r'''
+: > "$work/pins"
+dpkg --get-selections | awk '$2=="hold"{print "@@HOLD\t"$1}'
 for name do
   old=$(dpkg-query -W -f='${Version}' "$name")
   src=$(dpkg-query -W -f='${source:Package}' "$name")
+  srcver=$(dpkg-query -W -f='${source:Version}' "$name")
   best=
-  for ver in $(apt-cache madison "$name" | awk -F '|' 'NF==3 {gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2}'); do
+  apt-cache madison "$name" > "$work/madison"
+  for ver in $(awk -F '|' -v origin="$main" -v suite="$suite/$component" '
+  function trim(x){gsub(/^[[:space:]]+|[[:space:]]+$/,"",x);return x}
+  NF==3 {n=split(trim($3),a,/[[:space:]]+/);
+  if(n==4 && (a[1]==origin || a[1]==origin "/") && a[2]==suite &&
+     (a[3]=="amd64" || a[3]=="all") && a[4]=="Packages") print trim($2)}' "$work/madison"); do
     if dpkg --compare-versions "$ver" gt "$old" &&
        { test -z "$best" || dpkg --compare-versions "$ver" gt "$best"; }; then best=$ver; fi
   done
   test -n "$best" || continue
-  printf '@@PACKAGE\t%s\t%s\t%s\t%s\n' "$name" "$old" "$src" "$best"
-  apt-cache show "$name=$best" | awk '/^(Package|Version|Architecture|Source|SHA256|Size|Filename): /{print} /^$/{print ""}'
+  printf '@@PACKAGE\t%s\t%s\t%s\t%s\t%s\n' "$name" "$old" "$src" "$srcver" "$best"
+  apt-cache show "$name=$best" > "$work/show"
+  awk '/^(Package|Version|Architecture|Source|SHA256|Size|Filename): /{print} /^$/{print ""}' "$work/show"
   echo '@@ENDPACKAGE'
+  printf '%s %s=%s\n' "$src" "$name" "$best" >> "$work/pins"
+done
+groups=0
+for src in $(awk '{print $1}' "$work/pins" | sort -u); do
+  groups=$((groups+1))
+  if test "$groups" -gt 16; then echo '@@SIMLIMIT'; break; fi
+  printf '@@SIM\t%s\n' "$src"
+  set -- $(awk -v s="$src" '$1==s{print $2}' "$work/pins")
+  if apt-get -s --no-remove --no-install-recommends install "$@" > "$work/sim" 2>&1; then
+    echo '@@EXIT 0'
+  else
+    echo '@@EXIT 1'
+  fi
+  cat "$work/sim"
+  echo '@@ENDSIM'
 done
 echo '@@COMPLETE'
 '''
 
-def parse(output, inventory, allowed):
-    lines=output.splitlines()
-    if not lines or lines[-1]!="@@COMPLETE":
-        raise ValueError("Incomplete approved repository probe")
-    i=0
-    seen=set()
-    result=[]
-    while i<len(lines)-1:
-        parts=lines[i].split("\t")
-        if len(parts)!=5 or parts[0]!="@@PACKAGE":
-            raise ValueError("Unexpected candidate marker")
-        _,name,old,src,new=parts
-        if (name in seen or name not in allowed or name not in inventory or inventory[name]["version"]!=old
-            or not NAME.fullmatch(src) or not native_apt.VERSION.fullmatch(new) or not native_apt.VERSION.fullmatch(old)
-            or vendor.ge(old,new)):
-            raise ValueError("Candidate identity mismatch")
-        end=lines.index("@@ENDPACKAGE",i+1)
-        candidate={"package":name,"before":old,"candidate":new,"installed_source":src,
-                   "decision":"REVIEW_REQUIRED","security_status":"unverified"}
-        try:
-            candidate.update(binary.metadata("\n".join(lines[i+1:end]),name,new))
-            candidate["status"]="signed_binary_found" if candidate["source_package"]==src else "source_identity_changed"
-        except ValueError:
-            candidate["status"]="binary_identity_unverified"
-        result.append(candidate)
-        seen.add(name)
-        i=end+1
+def parse(output, inventory, allowed, findings=()):
+    result=binary.parse(output,inventory,findings)
+    rows=result["candidates"]
+    if len(rows)>64 or len(result["simulations"])>16 or any(c["package"] not in allowed for c in rows):
+        raise ValueError("External candidate scope exceeded")
+    for source,sim in result["simulations"].items():
+        expected={c["package"]:{"before":c["before"],"after":c["candidate"]}
+                  for c in rows if c["installed_source"]==source}
+        if sim["status"]=="existing_package_upgrades_only" and sim.get("changes")!=expected:
+            sim["status"]="additional_upgrades_not_authorized"
+    for c in rows:
+        sim=result["simulations"].get(c["installed_source"],{})
+        c["dependency_status"]=sim.get("status","not_simulated")
     return result
 
-def probe(image,row,inventory,root):
+def advisories(data, row):
+    """Operator-pinned assertions, not independent vendor authentication."""
+    if hashlib.sha256(data).hexdigest()!=row.get("advisory_sha256"):
+        raise ValueError("Advisory digest mismatch")
+    doc=json.loads(data)
+    if not isinstance(doc,dict) or set(doc)!={"schema","repository_id","suite","records"} or doc["schema"]!="appsec.external-advisories/v1" or doc["repository_id"]!=row["id"] or doc["suite"]!=row["suite"]:
+        raise ValueError("Advisory scope mismatch")
+    records=doc["records"]
+    if not isinstance(records,list) or len(records)>2000:
+        raise ValueError("Invalid advisory record count")
+    out={}
+    for record in records:
+        if not isinstance(record,dict) or set(record)!={"package","version","architecture","archive_sha256","cve","advisory_url"} or any(not isinstance(v,str) for v in record.values()):
+            raise ValueError("Invalid advisory record")
+        url=urlsplit(record["advisory_url"])
+        if (record["package"] not in row["packages"] or not native_apt.VERSION.fullmatch(record["version"]) or record["architecture"] not in ("amd64","all")
+            or not DIGEST.fullmatch(record["archive_sha256"]) or not re.fullmatch(r"CVE-\d{4}-\d{4,}",record["cve"])
+            or url.scheme!="https" or not url.hostname or url.username or url.password or len(record["advisory_url"])>2048
+            or any(ord(ch)<33 or ord(ch)==127 for ch in record["advisory_url"])):
+            raise ValueError("Invalid advisory identity")
+        key=(record["package"],record["version"],record["architecture"],record["archive_sha256"],record["cve"])
+        if key in out:
+            raise ValueError("Duplicate advisory assertion")
+        out[key]=record["advisory_url"]
+    return out
+
+def correlate(candidates, findings, assertions):
+    for c in candidates:
+        # Preserve original scanner evidence and match all available identities.
+        related=sorted({v["id"] for v in findings if v.get("scanner")=="trivy"
+            and v.get("source_package")==c["installed_source"]
+            and v.get("installed_source_version")==c["installed_source_version"]
+            and v.get("package","").split(":")[0]==c["package"].split(":")[0]
+            and v.get("installed_binary_version")==c["before"]
+            and isinstance(v.get("id"),str) and re.fullmatch(r"CVE-\d{4}-\d{4,}",v["id"])})
+        matches=[]
+        if c["status"]=="signed_binary_found":
+            for cve in related:
+                key=(c["package"].split(":")[0],c["candidate"],c["architecture"],c["sha256"],cve)
+                if key in assertions:
+                    matches.append({"id":cve,"advisory_url":assertions[key]})
+        c["original_cve_ids"]=related
+        c["operator_advisory_matches"]=matches
+        c["security_status"]="operator_assertion_matched" if matches else "unverified"
+        c["decision"]="REVIEW_REQUIRED"
+
+def probe(image,row,inventory,root,findings=()):
     names=sorted(n for n in inventory if n.split(":")[0] in row["packages"] and (":" not in n or n.endswith(":amd64")))
     if not names:
         return {"id":row["id"],"status":"not_applicable","candidates":[]}
@@ -124,9 +182,19 @@ def probe(image,row,inventory,root):
             output=apt.run(["docker","start","-a",name],180)
             if apt.run(["docker","inspect","--format","{{.State.ExitCode}}",name]).strip()!="0":
                 raise ValueError("Approved repository probe failed")
-        return {"id":row["id"],"status":"completed","repository":row["url"],"suite":row["suite"],
+        parsed=parse(output,inventory,names,findings)
+        assertions={}
+        advisory_status="not_configured"
+        if "advisory_sha256" in row:
+            try:
+                assertions=advisories(read_bounded(root/(row["id"]+".advisories.json"),1024*1024),row)
+                advisory_status="operator_snapshot_matched"
+            except (OSError,ValueError):
+                advisory_status="unavailable_or_invalid"
+        correlate(parsed["candidates"],findings,assertions)
+        return {**parsed,"id":row["id"],"repository":row["url"],"suite":row["suite"],
                 "component":row["component"],"keyring_sha256":row["keyring_sha256"],
-                "candidates":parse(output,inventory,names)}
+                "advisory_status":advisory_status,"advisory_sha256":row.get("advisory_sha256")}
     finally:
         subprocess.run(["docker","rm","-f",name],check=False,timeout=30,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
 
@@ -140,16 +208,18 @@ def discover(image,report,plan,root=ROOT):
         rows=validate(json.loads(data))
         release=vendor.RELEASES[str(report["Metadata"]["OS"]["Name"]).split(".")[0]]
         result["policy_sha256"]=hashlib.sha256(data).hexdigest()
+        evidence=(report.get("_appsec") or {}).get("fix_discovery") or {}
+        findings=evidence.get("findings") or []
         for row in rows:
             if row["suite"]!=release:
                 continue
             try:
-                result["repositories"].append(probe(image,row,plan["inventory"],root))
+                result["repositories"].append(probe(image,row,plan["inventory"],root,findings))
             except StopRequested:
                 raise
             except (ValueError,OSError,RuntimeError,subprocess.SubprocessError):
                 result["repositories"].append({"id":row["id"],"status":"unavailable","candidates":[]})
-        result["status"]="partial" if any(r["status"]=="unavailable" for r in result["repositories"]) else "completed"
+        result["status"]="partial" if any(r["status"] in ("unavailable","partial") for r in result["repositories"]) else "completed"
         result["candidate_count"]=sum(len(r["candidates"]) for r in result["repositories"])
     except StopRequested:
         raise

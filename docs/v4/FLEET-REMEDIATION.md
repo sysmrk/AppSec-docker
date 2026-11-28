@@ -194,3 +194,25 @@ signing keys, exact archive evidence, dependency closure, compatibility and
 dual-scanner candidate selection remain pending. RPM and Ubuntu remain
 unsupported for V4 mutation. The HTML report retains discovery results.
 No new UI controls, external repository defaults, or production claims.
+
+### External exact dependency and advisory review
+
+Each independently configured source now simulates exact candidate pins by
+installed source package (up to 16 groups per repository), using only that
+repository and the installed package state. Reject held packages, downgrades,
+removals, additions and changes outside the exact candidate group. A conflict
+can mean the isolated source lacks dependencies; never mix repositories to
+hide the conflict. No archive installation or selection is enabled.
+
+Optionally add `advisory_sha256` to a repository policy entry and place
+`<id>.advisories.json` in the same host snapshot directory. The JSON schema
+is `appsec.external-advisories/v1`, with repository_id, suite, and records
+containing package, version, architecture, archive_sha256, cve and
+advisory_url. See external-advisories.example.json. Only an exact match to
+the signed archive metadata and original Trivy binary/source/CVE identity is
+recorded. The digest pins the operator's assertions, not the authenticity or
+correctness of an upstream advisory; independently verify the advisory and
+archive origin before authorizing any trial. No automatic CVE suppression.
+All external candidates remain REVIEW_REQUIRED. The existing stable and
+Backports paths are unchanged. An actual dual-scanner external trial and
+functional tests remain pending.

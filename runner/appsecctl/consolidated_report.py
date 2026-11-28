@@ -236,9 +236,9 @@ def fleet_section(original, execution):
     if external:
         binary_html+='<h3>Approved external binary sources (review only)</h3><p>'+e(external.get("status"))+' · Policy SHA256: '+e(external.get("policy_sha256"))+'</p>'
         for source in external.get("repositories") or []:
-            binary_html+='<p>'+e(source.get("id"))+' · '+e(source.get("status"))+' · '+e(source.get("suite"))+' · Keyring SHA256: '+e(source.get("keyring_sha256"))+'</p>'
+            binary_html+='<p>'+e(source.get("id"))+' · '+e(source.get("status"))+' · '+e(source.get("suite"))+' · Keyring SHA256: '+e(source.get("keyring_sha256"))+' · Advisory evidence: '+e(source.get("advisory_status"))+'</p>'
             for c in source.get("candidates") or []:
-                binary_html+='<p>'+e(c.get("package"))+' · '+e(c.get("before"))+' → '+e(c.get("candidate"))+' · '+e(c.get("status"))+' · Archive SHA256: '+e(c.get("sha256"))+'</p>'
+                binary_html+='<p>'+e(c.get("package"))+' · '+e(c.get("before"))+' → '+e(c.get("candidate"))+' · '+e(c.get("status"))+' · Archive SHA256: '+e(c.get("sha256"))+' · Dependencies: '+e(c.get("dependency_status"))+' · Security: '+e(c.get("security_status"))+' · Matched CVEs: '+e(", ".join(v["id"] for v in c.get("operator_advisory_matches") or []))+'</p>'
     if discovery.get("repository")=="official Alpine main/community":
         binary_html+='<h3>Alpine APK candidate preview (review only)</h3><p>Release: '+e(discovery.get("release"))+' · Candidates: '+e(discovery.get("candidate_count"))+'</p>'
         for c in discovery.get("candidates") or []:
