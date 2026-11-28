@@ -1,6 +1,6 @@
 # AppSec Control Center — v4 development branch (Plan A)
 
-V4 is an experimental, in-place remediation redesign based on V3. The stable release remains v2.0.0. Start with the [V4 roadmap and independent benchmark](docs/v4/ROADMAP.md). No new production engine is enabled until its benchmark and workload validation pass.
+V4 is an experimental, in-place remediation redesign based on V3. The stable release remains v2.0.0. Start with the [V4 roadmap and independent benchmark](docs/v4/ROADMAP.md). No new production engine is enabled until its benchmark and workload validation pass. Fleet remediation targets approved existing binary packages, not custom package compilation, debloating or cross-release binary mixing. See [fleet remediation design](docs/v4/FLEET-REMEDIATION.md).
 
 ## Stable baseline: AppSec Control Center v2
 

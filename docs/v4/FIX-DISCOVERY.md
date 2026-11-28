@@ -1,4 +1,6 @@
-# V4 Fix Discovery — phase 1
+# V4 Fix Discovery — research record
+
+**Scope update:** custom package compilation/backports are excluded from operational V4 by owner decision. Phase 4 is historical research only; do not proceed to building packages. Official signed binary backports remain a candidate source, subject to policy and validation. See [fleet remediation design](FLEET-REMEDIATION.md).
 
 The earlier Trivy run had 452 blank FixedVersion findings. Blank is a scanner
 observation, not proof of absence of a fix. Trivy's targeted Copa input filters
@@ -112,7 +114,7 @@ host UID can create Syft temporary files. No additional capabilities, host
 filesystem exposure or network access.
 
 
-### Phase 4: source-only backport preflight
+### Historical phase 4: source-only backport preflight (closed; do not continue to build)
 
 curl CVE-2026-8932 uses historical release notation 7.7; normalize X.Y
 only inside curl upstream feed interpretation, not arbitrary package

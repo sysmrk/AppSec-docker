@@ -53,4 +53,4 @@ See [SCANNER-COMPARISON.md](SCANNER-COMPARISON.md). No image modification, servi
 
 ## Current priority: Fix Discovery
 
-Suspend new APK/RPM adapters, orchestration and UI redesign until the missing FixedVersion investigation is quantified. Read-only [Fix Discovery lab](FIX-DISCOVERY.md) first; then validate same-release binary availability, source patch provenance and backport feasibility. No package removal, mixed-suite installation, automated source patching or scanner suppression.
+Owner scope: a fleet of approximately 1,000 projects/images. Custom package builds, custom security backports and source compilation by AppSec are excluded from V4 operational remediation. Preserve research evidence, but do not develop a package factory or per-application patch recipes. Prioritize generic signed binary candidate discovery, dependency simulation and verification, then distro adapters and shared caching. See [fleet remediation design](FLEET-REMEDIATION.md). No package removal, mixed-suite binary installation, automated source patching or scanner suppression.
