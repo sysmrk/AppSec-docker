@@ -1389,6 +1389,30 @@ def optimization_mirror_update(request: MirrorSettingsRequest,user: dict[str, An
         raise HTTPException(status_code=422,detail=str(exc)) from None
 
 
+class ExternalPolicyDraft(BaseModel):
+    model_config=ConfigDict(extra="forbid")
+    document: str = Field(max_length=65536)
+
+
+@app.post("/api/package-sources/validate")
+def validate_external_policy_draft(request: ExternalPolicyDraft,user: dict[str, Any] = Depends(require_role("admin"))):
+    import json
+    import hashlib
+    from . import approved_binaries
+    try:
+        raw=request.document.encode("utf-8")
+        if len(raw)>65536:
+            raise ValueError("Policy exceeds 64 KiB")
+        rows=approved_binaries.validate(json.loads(raw))
+        canonical=json.dumps({"schema":"appsec.approved-binaries/v1","repositories":rows},indent=2,ensure_ascii=True)+"\n"
+        if len(canonical.encode("utf-8"))>65536:
+            raise ValueError("Canonical policy exceeds 64 KiB")
+        return {"status":"valid_draft","repository_count":len(rows),"document":canonical,
+                "sha256":hashlib.sha256(canonical.encode()).hexdigest(),"active":False}
+    except (ValueError,TypeError):
+        raise HTTPException(status_code=422,detail="Invalid external repository policy; check HTTPS, release, allowlist and SHA256 values") from None
+
+
 @app.get("/api/manual-workflows/{workflow_id}/optimization")
 def optimization_list(workflow_id: UUID,user: dict[str, Any] = Depends(current_user)):
     from . import optimization, apt_optimization

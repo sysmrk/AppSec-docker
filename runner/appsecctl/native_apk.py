@@ -97,7 +97,7 @@ def parse_inventory(output):
 def changes(output,rows):
     parsed=discovery.parse(output)
     if parsed["status"]!="completed":
-        raise ValueError("APK simulation contains unsupported actions")
+        raise ValueError("APK simulation contains unsupported actions: "+str(parsed.get("blockers"))+"; bounded output: "+output[-2048:])
     result={}
     for c in parsed["candidates"]:
         n=c["package"]; old=c["before"]; new=c["candidate"]

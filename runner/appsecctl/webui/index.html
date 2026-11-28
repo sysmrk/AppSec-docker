@@ -207,7 +207,7 @@
         <section id="view-registries" class="view" hidden>
           <section id="package-source-settings" class="panel form-panel">
             <h2>Package repositories</h2>
-            <p class="hint">Used by Debian APT availability and native upgrade only. Scanner databases and container image registries have separate settings. Configure once; users do not need to choose a mirror per scan.</p>
+            <p class="hint">Debian APT mirrors only. Ubuntu, Alpine and RPM trials use separately approved official sources. Scanner databases and container image registries have separate settings.</p>
             <label for="package-mirror-choice">Approved mirror priority</label>
             <select id="package-mirror-choice">
               <option value="">Disabled — no package repository egress</option>
@@ -218,6 +218,17 @@
             </select>
             <button type="button" id="save-package-mirrors" class="primary">Save package repositories</button>
             <p id="package-mirror-feedback" class="hint" role="status"></p>
+          </section>
+          <section id="external-source-settings" class="panel form-panel">
+            <h2>Approved external binary policy</h2>
+            <p class="hint">Prepare an administrator-reviewed Debian external repository allowlist. Validation does not contact the repository, verify keys or activate a source. Save the validated file to fix-discovery-cache/approved-binaries.json on the worker host and provision verified key and advisory snapshots before starting a job.</p>
+            <label for="external-policy-draft">Repository policy (JSON)</label>
+            <textarea id="external-policy-draft" rows="12" maxlength="65536" spellcheck="false">{
+  "schema": "appsec.approved-binaries/v1",
+  "repositories": []
+}</textarea>
+            <button type="button" id="validate-external-policy" class="primary">Validate and download policy draft</button>
+            <p id="external-policy-feedback" class="hint" role="status">No active policy is changed here.</p>
           </section>
           <div class="page-heading"><div><p class="eyebrow">REGISTRY GOVERNANCE</p><h1>Registries</h1><p class="muted">Configure trusted HTTPS registries and approved publishing scope. Credentials stay on the worker or Secret Manager.</p></div></div>
           <form id="registry-form" class="panel form-panel">

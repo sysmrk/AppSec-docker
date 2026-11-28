@@ -325,3 +325,7 @@ disposable APT probe/download container only (no TLS bypass, no change to
 the original image). Full dual-scanner workflow and service tests are still
 separate acceptance gates. The old public fixture tags may disappear;
 replace with independently verified old same-release images if that happens.
+
+See ACCEPTANCE-TEST.md for the native CI and multi-image WSL gates. The
+administrator UI now validates and exports external policy drafts; active
+policy remains host-managed and is not silently changed by the UI.

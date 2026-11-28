@@ -1289,7 +1289,7 @@
     const mode=$("execution-mode").value;
     $("optimization-choices").hidden=true;
     $("patch-output-choices").hidden=mode!=="auto_patch";
-    $("execution-help").textContent=({guided:"Review the initial scan and decide whether to patch.",scan_only:"Scan and SBOM only; no local patch.",auto_patch:"Automatically prepare a local package patch and rescan. In V4 fleet-test deployments, use signed Debian binary upgrades independent of FixedVersion; select local output only.",auto_optimize:"Automatically try Copa targeted or comprehensive updates, then simulate removal of the selected unused modules and safe dependency closure, build and rescan locally, then finish. No registry push."})[mode];
+    $("execution-help").textContent=({guided:"Review the initial scan and decide whether to patch.",scan_only:"Scan and SBOM only; no local patch.",auto_patch:"Automatically prepare a local package patch and rescan. In V4 fleet-test deployments, route supported distributions to their opt-in signed native engines; select local output only.",auto_optimize:"Automatically try Copa targeted or comprehensive updates, then simulate removal of the selected unused modules and safe dependency closure, build and rescan locally, then finish. No registry push."})[mode];
   });
   $("auto-push").addEventListener("change",()=>{ $("auto-destination").disabled=!$("auto-push").checked; });
   async function loadPackageMirrors(){
@@ -1303,6 +1303,18 @@
       await request("/api/optimization/mirrors",{method:"PUT",body:JSON.stringify({mirrors:value?value.split(","):[]})});
       $("package-mirror-feedback").textContent="Saved. Applies to future APT jobs.";
     }catch(e){notification(e.message,true);}
+  });
+  $("validate-external-policy").addEventListener("click",async()=>{
+    const feedback=$("external-policy-feedback");
+    try{
+      const data=await request("/api/package-sources/validate",{method:"POST",body:JSON.stringify({document:$("external-policy-draft").value})});
+      if(data.status!=="valid_draft"||data.active!==false)throw new Error("Draft validation response invalid");
+      const url=URL.createObjectURL(new Blob([data.document],{type:"application/json"}));
+      const a=document.createElement("a");
+      a.href=url;a.download="approved-binaries.json";document.body.appendChild(a);a.click();a.remove();
+      setTimeout(()=>URL.revokeObjectURL(url),1000);
+      feedback.textContent="Valid draft ("+data.repository_count+" sources). SHA256: "+data.sha256+". Not active; deploy on the worker host.";
+    }catch(e){feedback.textContent="Validation failed. "+e.message;}
   });
   $("image-form").addEventListener("submit", async event => {
     event.preventDefault();
