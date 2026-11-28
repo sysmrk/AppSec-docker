@@ -277,3 +277,31 @@ jobs:
         run: python -m pip install -r runner/requirements.txt
       - name: Real signed Alpine APK v2 staging and offline upgrade
         run: PYTHONPATH=runner python tests/integration_native_apk.py ${{ matrix.alpine }}
+
+  v4-native-ubuntu-lab:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r runner/requirements.txt
+      - name: Real signed Ubuntu APT upgrade
+        run: PYTHONPATH=runner python tests/integration_native_ubuntu.py
+
+  v4-native-rpm-lab:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        distribution: [rhel, rocky, almalinux, ol]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r runner/requirements.txt
+      - name: Real signed RPM upgrade
+        run: PYTHONPATH=runner python tests/integration_native_rpm.py ${{ matrix.distribution }}

@@ -313,3 +313,15 @@ APK solver; no unsigned fallback. True v3 ADB package/index format,
 community, other branches and mixed releases remain unsupported.
 CI runs the real archive/build regression separately for all three
 releases. Upstream lifecycle: https://www.alpinelinux.org/releases/.
+
+### Native cross-distribution integration gates
+
+CI runs actual package-engine jobs for Ubuntu and four EL9 families in
+addition to three Alpine releases. The tests bypass only original scanner
+evidence to isolate the package engine; they do not bypass repository or
+archive integrity checks. A fixture without an upgrade fails rather than
+claiming a successful build. Ubuntu uses the worker's CA bundle in its
+disposable APT probe/download container only (no TLS bypass, no change to
+the original image). Full dual-scanner workflow and service tests are still
+separate acceptance gates. The old public fixture tags may disappear;
+replace with independently verified old same-release images if that happens.

@@ -3,11 +3,13 @@ import hashlib
 import os
 import subprocess
 from uuid import uuid4
+from pathlib import Path
 from . import apt_optimization as apt, native_apt, remediation_audit as audit
 from . import backport_trial, independent_scan, job_watch
 from .workflow_control import StopRequested
 
 MIRROR="ubuntu-official"
+CA_BUNDLE=Path("/etc/ssl/certs/ca-certificates.crt")
 ENDPOINTS=("https://archive.ubuntu.com/ubuntu","https://security.ubuntu.com/ubuntu")
 PREFIX=r'''
 export LC_ALL=C
@@ -18,6 +20,7 @@ test "$(dpkg --print-architecture)" = amd64
 test -z "$(dpkg --print-foreign-architectures)"
 key=/usr/share/keyrings/ubuntu-archive-keyring.gpg
 test -f "$key"
+test -s /tmp/appsec-ubuntu-ca.pem
 main="$1"; security="$2"; shift 2
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
@@ -40,6 +43,7 @@ Acquire::https::AllowRedirect "false";
 Acquire::http::AllowRedirect "false";
 Acquire::Check-Valid-Until "true";
 Acquire::AllowInsecureRepositories "false";
+Acquire::https::CaInfo "/tmp/appsec-ubuntu-ca.pem";
 Acquire::https::Verify-Peer "true";
 Acquire::https::Verify-Host "true";
 APT::Get::AllowUnauthenticated "false";
@@ -67,9 +71,15 @@ def plan(image,report):
     rows=apt.inventory(image)
     name="appsec-ubuntu-probe-"+uuid4().hex
     try:
-        output=apt.run(["docker","run","--rm","--pull=never","--name",name,"--user","0:0",
+        if not CA_BUNDLE.is_file() or not CA_BUNDLE.stat().st_size:
+            raise ValueError("Trusted worker CA bundle unavailable")
+        apt.run(["docker","create","--pull=never","--name",name,"--user","0:0",
                  "--security-opt","no-new-privileges:true","--pids-limit","128","--memory","1g",
-                 "--entrypoint","/bin/sh",image,"-ec",PLAN,"lab",*ENDPOINTS],300)
+                 "--entrypoint","/bin/sh",image,"-ec",PLAN,"lab",*ENDPOINTS],60)
+        apt.run(["docker","cp",str(CA_BUNDLE),name+":/tmp/appsec-ubuntu-ca.pem"],30)
+        output=apt.run(["docker","start","-a",name],300)
+        if apt.run(["docker","inspect","--format","{{.State.ExitCode}}",name]).strip()!="0":
+            raise ValueError("Ubuntu repository probe failed")
     finally:
         subprocess.run(["docker","rm","-f",name],check=False,timeout=30,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
     updates=native_apt.changes(output,rows)
@@ -84,6 +94,12 @@ def plan(image,report):
     result["plan_sha256"]=apt.plan_digest(result)
     return result
 
+def build(data):
+    if data["plan_sha256"]!=apt.plan_digest(data) or data.get("backend")!="native_ubuntu":
+        raise ValueError("Ubuntu exact plan digest mismatch")
+    return native_apt._build_exact(data,generic=True,
+        downloader=lambda image,updates,dest:native_apt.download(image,MIRROR,updates,dest,script=DOWNLOAD,endpoints=ENDPOINTS,ca_bundle=CA_BUNDLE))
+
 def attempt(image,report):
     if not enabled() or not independent_scan.enabled():
         return None,{"status":"blocked","backend":"native_ubuntu","message":"Ubuntu trial and independent scan must be enabled","publication_authorized":False}
@@ -95,8 +111,7 @@ def attempt(image,report):
         if not data["updates"]:
             return None,{**data,"status":"no_updates"}
         job_watch.emit("ubuntu_build")
-        candidate=native_apt._build_exact(data,generic=True,
-            downloader=lambda image,updates,dest:native_apt.download(image,MIRROR,updates,dest,script=DOWNLOAD,endpoints=ENDPOINTS))
+        candidate=build(data)
         from .optimization import offline_compare
         reports,hashes,scanner=offline_compare([image,candidate["candidate_image_id"]],report["_appsec"]["scanner_image"])
         a,_,_=independent_scan.scan(image,reports[0]["raw_report"])

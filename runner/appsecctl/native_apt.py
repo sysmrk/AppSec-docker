@@ -96,7 +96,7 @@ apt_safe download "$@"
 '''
 
 
-def download(image,mirror,updates,dest,*,script=DOWNLOAD,endpoints=None):
+def download(image,mirror,updates,dest,*,script=DOWNLOAD,endpoints=None,ca_bundle=None):
     apt.progress("apt_download")
     args=[]
     for name,row in sorted(updates.items()):
@@ -109,6 +109,8 @@ def download(image,mirror,updates,dest,*,script=DOWNLOAD,endpoints=None):
         apt.run(["docker","create","--name",container,"--pull=never","--user","0:0",
                  "--security-opt","no-new-privileges:true","--pids-limit","128","--memory","1g",
                  "--entrypoint","/bin/sh",image,"-ec",script,"lab",main,security,*args],60)
+        if ca_bundle is not None:
+            apt.run(["docker","cp",str(ca_bundle),container+":/tmp/appsec-ubuntu-ca.pem"],30)
         apt.run(["docker","start","-a",container],600)
         state=apt.run(["docker","inspect","--format","{{.State.ExitCode}}",container]).strip()
         if state!="0":
